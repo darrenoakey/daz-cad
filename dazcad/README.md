@@ -25,16 +25,29 @@ Note: CadQuery requires Python 3.8+ and may have additional system dependencies.
 
 5. View the 3D result on the right (use mouse to rotate/zoom)
 
+The server runs in debug mode with auto-reload enabled, so any changes to the server files will automatically restart the server.
+
 ## Example Code
+
+The default example shows how to create an assembly with multiple colored parts:
 
 ```python
 import cadquery as cq
+from cadquery import Color
 
-# Create a simple box
-box = cq.Workplane("XY").box(10, 10, 10)
+# Create an assembly with two colored boxes
+assembly = cq.Assembly()
 
-# Show the result
-show_object(box, "MyBox", "#FF0000")
+# Create first box (red)
+box1 = cq.Workplane("XY").box(10, 10, 10)
+assembly.add(box1, name="RedBox", color=Color("red"))
+
+# Create second box (blue) positioned to the right
+box2 = cq.Workplane("XY").box(10, 10, 10)
+assembly.add(box2, name="BlueBox", loc=cq.Location((15, 0, 0)), color=Color("blue"))
+
+# Show the assembly - it contains both colored parts
+show_object(assembly, "ColoredAssembly")
 ```
 
 ## Features
@@ -42,8 +55,9 @@ show_object(box, "MyBox", "#FF0000")
 - Live CadQuery code execution
 - 3D visualization with Three.js
 - Mouse-controlled camera (rotate/zoom/pan)
-- Colored object support
+- Support for CadQuery Assemblies with multiple colored parts
 - Error handling and output display
+- Auto-reload on file changes (debug mode)
 
 ## Troubleshooting
 

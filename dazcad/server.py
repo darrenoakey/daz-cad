@@ -47,6 +47,95 @@ async def script(_request):
     return await response.file('script.js')
 
 
+def color_to_hex(color_tuple):
+    """Convert Color tuple to hex string."""
+    if color_tuple:
+        # Color tuple is (r, g, b, a) with values 0-1
+        r = int(color_tuple[0] * 255)
+        g = int(color_tuple[1] * 255)
+        b = int(color_tuple[2] * 255)
+        return f"#{r:02x}{g:02x}{b:02x}"
+    return "#808080"
+
+
+def export_shape_to_stl(shape):
+    """Export a shape to STL and return base64 encoded data."""
+    with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        # Export to STL
+        cq.exporters.export(shape, tmp_path, exportType='STL')
+
+        # Read STL file and encode to base64
+        with open(tmp_path, 'rb') as f:
+            stl_data = base64.b64encode(f.read()).decode('utf-8')
+        return stl_data
+
+    finally:
+        # Clean up temporary file
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def process_assembly(shown):
+    """Process an Assembly object and return list of result objects."""
+    results = []
+    obj = shown['object']
+
+    for child in obj.children:
+        shape = child.shape
+        part_name = child.name
+        color_tuple = child.color.toTuple() if child.color else None
+        part_color = color_to_hex(color_tuple)
+
+        stl_data = export_shape_to_stl(shape)
+
+        results.append({
+            'name': f"{shown['name']}_{part_name}",
+            'color': part_color,
+            'stl': stl_data
+        })
+
+    return results
+
+
+def process_regular_object(shown):
+    """Process a regular CadQuery object and return result object."""
+    obj = shown['object']
+
+    # Skip if not a CadQuery object
+    if not hasattr(obj, 'val') and not hasattr(obj, 'exportStl'):
+        return None
+
+    # Create temporary STL file
+    with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        # Export to STL using CadQuery's built-in exporter
+        if hasattr(obj, 'exportStl'):
+            obj.exportStl(tmp_path)
+        else:
+            # For other CadQuery objects, try to export
+            cq.exporters.export(obj, tmp_path, exportType='STL')
+
+        # Read STL file and encode to base64
+        with open(tmp_path, 'rb') as f:
+            stl_data = base64.b64encode(f.read()).decode('utf-8')
+
+        return {
+            'name': shown['name'],
+            'color': shown['color'] or '#808080',
+            'stl': stl_data
+        }
+
+    finally:
+        # Clean up temporary file
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 @app.route("/run", methods=["POST"])
 async def run_code(request):
     """Execute CadQuery code and return 3D data."""
@@ -60,9 +149,15 @@ async def run_code(request):
         if not code:
             return json_response({'error': 'No code provided'}, status=400)
 
+        # Import Color for exec environment
+        # pylint: disable=import-outside-toplevel
+        from cadquery import Color
+        # pylint: enable=import-outside-toplevel
+
         # Prepare execution environment
         exec_globals = {
             'cq': cq,
+            'Color': Color,
             'show_object': show_object,
             '__name__': '__main__'
         }
@@ -85,36 +180,19 @@ async def run_code(request):
         for shown in shown_objects:
             obj = shown['object']
 
-            # Skip if not a CadQuery object
-            if not hasattr(obj, 'val') and not hasattr(obj, 'exportStl'):
-                continue
+            # Check if it's an Assembly
+            is_assembly = (hasattr(obj, '__class__') and
+                          obj.__class__.__name__ == 'Assembly')
 
-            # Create temporary STL file
-            with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp:
-                tmp_path = tmp.name
-
-            try:
-                # Export to STL using CadQuery's built-in exporter
-                if hasattr(obj, 'exportStl'):
-                    obj.exportStl(tmp_path)
-                else:
-                    # For other CadQuery objects, try to export
-                    cq.exporters.export(obj, tmp_path, exportType='STL')
-
-                # Read STL file and encode to base64
-                with open(tmp_path, 'rb') as f:
-                    stl_data = base64.b64encode(f.read()).decode('utf-8')
-
-                result_objects.append({
-                    'name': shown['name'],
-                    'color': shown['color'] or '#808080',
-                    'stl': stl_data
-                })
-
-            finally:
-                # Clean up temporary file
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
+            if is_assembly:
+                # Process assembly parts
+                results = process_assembly(shown)
+                result_objects.extend(results)
+            else:
+                # Process regular object
+                result = process_regular_object(shown)
+                if result:
+                    result_objects.append(result)
 
         return json_response({
             'success': True,
@@ -142,4 +220,5 @@ class ServerTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8000)
+    # Run in debug mode with auto-reload
+    app.run(host="127.0.0.1", port=8000, debug=True, auto_reload=True)
