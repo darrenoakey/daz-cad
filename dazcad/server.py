@@ -52,9 +52,10 @@ def color_to_hex(color_tuple):
     """Convert Color tuple to hex string."""
     if color_tuple:
         # Color tuple is (r, g, b, a) with values 0-1
-        r = int(color_tuple[0] * 255)
-        g = int(color_tuple[1] * 255)
-        b = int(color_tuple[2] * 255)
+        # Use round() for more accurate conversion
+        r = round(color_tuple[0] * 255)
+        g = round(color_tuple[1] * 255)
+        b = round(color_tuple[2] * 255)
         return f"#{r:02x}{g:02x}{b:02x}"
     return "#808080"
 
@@ -87,34 +88,31 @@ def process_assembly(shown):
     print(f"Processing assembly with {len(obj.children)} children")
 
     for i, child in enumerate(obj.children):
-        print(f"Processing child {i}: {child.name}")
+        print(f"\nProcessing child {i}: {child.name}")
 
-        # Get the shape with proper transformation applied
-        transformed_shape = child.shape
-        if child.loc:
-            # Apply the location transformation
-            transformed_shape = child.shape.moved(child.loc)
+        # Assembly children have an 'obj' attribute containing the shape
+        if hasattr(child, 'obj'):
+            shape = child.obj
 
-        # Wrap in CadQuery object for export
-        cq_obj = cq.Workplane().add(transformed_shape)
+            try:
+                # Export the shape
+                stl_data = export_shape_to_stl(shape)
 
-        color_tuple = child.color.toTuple() if child.color else None
-        part_color = color_to_hex(color_tuple)
-        print(f"  Color: {part_color}")
+                color_tuple = child.color.toTuple() if child.color else None
+                part_color = color_to_hex(color_tuple)
 
-        # pylint: disable=broad-exception-caught
-        try:
-            stl_data = export_shape_to_stl(cq_obj)
+                results.append({
+                    'name': f"{shown['name']}_{child.name}",
+                    'color': part_color,
+                    'stl': stl_data
+                })
+                print(f"  Successfully exported {child.name} with color {part_color}")
 
-            results.append({
-                'name': f"{shown['name']}_{child.name}",
-                'color': part_color,
-                'stl': stl_data
-            })
-            print(f"  Successfully exported {child.name}")
-        except Exception as e:
-            print(f"  Error exporting {child.name}: {e}")
-        # pylint: enable=broad-exception-caught
+            # pylint: disable=broad-exception-caught
+            except Exception as e:
+                print(f"  Error exporting {child.name}: {e}")
+                traceback.print_exc()
+            # pylint: enable=broad-exception-caught
 
     return results
 
@@ -155,6 +153,32 @@ def process_regular_object(shown):
             os.unlink(tmp_path)
 
 
+def process_objects(shown_objs):
+    """Process all shown objects and return results."""
+    result_objects = []
+
+    for shown in shown_objs:
+        obj = shown['object']
+        print(f"\nProcessing shown object: {shown['name']}")
+        print(f"Object type: {type(obj)}")
+
+        # Check if it's an Assembly
+        is_assembly = isinstance(obj, cq.Assembly)
+        print(f"Is assembly: {is_assembly}")
+
+        if is_assembly:
+            # Process assembly parts
+            results = process_assembly(shown)
+            result_objects.extend(results)
+        else:
+            # Process regular object
+            result = process_regular_object(shown)
+            if result:
+                result_objects.append(result)
+
+    return result_objects
+
+
 @app.route("/run", methods=["POST"])
 async def run_code(request):
     """Execute CadQuery code and return 3D data."""
@@ -168,9 +192,9 @@ async def run_code(request):
         if not code:
             return json_response({'error': 'No code provided'}, status=400)
 
-        # Import Color and Assembly for exec environment
+        # Import everything needed for exec environment
         # pylint: disable=import-outside-toplevel
-        from cadquery import Color, Assembly
+        from cadquery import Color, Assembly, Location, Workplane, Vector
         # pylint: enable=import-outside-toplevel
 
         # Prepare execution environment
@@ -178,6 +202,9 @@ async def run_code(request):
             'cq': cq,
             'Color': Color,
             'Assembly': Assembly,
+            'Location': Location,
+            'Workplane': Workplane,
+            'Vector': Vector,
             'show_object': show_object,
             '__name__': '__main__'
         }
@@ -195,26 +222,9 @@ async def run_code(request):
             sys.stdout = old_stdout
 
         # Process shown objects
-        result_objects = []
+        result_objects = process_objects(shown_objects)
 
-        for shown in shown_objects:
-            obj = shown['object']
-
-            # Check if it's an Assembly
-            is_assembly = (hasattr(obj, '__class__') and
-                          obj.__class__.__name__ == 'Assembly')
-
-            if is_assembly:
-                # Process assembly parts
-                results = process_assembly(shown)
-                result_objects.extend(results)
-            else:
-                # Process regular object
-                result = process_regular_object(shown)
-                if result:
-                    result_objects.append(result)
-
-        print(f"Total objects to return: {len(result_objects)}")
+        print(f"\nTotal objects to return: {len(result_objects)}")
 
         return json_response({
             'success': True,
