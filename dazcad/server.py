@@ -1,6 +1,7 @@
 """Sanic server for DazCAD - a simple CadQuery runner."""
 
 import base64
+import os
 import sys
 import tempfile
 import unittest
@@ -9,13 +10,6 @@ from io import StringIO
 import cadquery as cq
 from sanic import Sanic, response
 from sanic.response import json as json_response
-
-# These imports may show as errors in pylint but are correct for CadQuery
-# pylint: disable=no-name-in-module
-from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.StlAPI import StlAPI_Writer
-from OCP.TopoDS import TopoDS_Shape
-# pylint: enable=no-name-in-module
 
 
 app = Sanic("dazcad")
@@ -91,31 +85,36 @@ async def run_code(request):
         for shown in shown_objects:
             obj = shown['object']
 
-            # Convert to STL
-            if hasattr(obj, 'val'):
-                shape = obj.val()
-            elif isinstance(obj, TopoDS_Shape):
-                shape = obj
-            else:
+            # Skip if not a CadQuery object
+            if not hasattr(obj, 'val') and not hasattr(obj, 'exportStl'):
                 continue
 
-            # Generate mesh
-            mesh = BRepMesh_IncrementalMesh(shape, 0.1)
-            mesh.Perform()
-
-            # Write STL to bytes
+            # Create temporary STL file
             with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp:
-                writer = StlAPI_Writer()
-                writer.Write(shape, tmp.name)
-                tmp.seek(0)
-                with open(tmp.name, 'rb') as f:
+                tmp_path = tmp.name
+
+            try:
+                # Export to STL using CadQuery's built-in exporter
+                if hasattr(obj, 'exportStl'):
+                    obj.exportStl(tmp_path)
+                else:
+                    # For other CadQuery objects, try to export
+                    cq.exporters.export(obj, tmp_path, exportType='STL')
+
+                # Read STL file and encode to base64
+                with open(tmp_path, 'rb') as f:
                     stl_data = base64.b64encode(f.read()).decode('utf-8')
 
-            result_objects.append({
-                'name': shown['name'],
-                'color': shown['color'] or '#808080',
-                'stl': stl_data
-            })
+                result_objects.append({
+                    'name': shown['name'],
+                    'color': shown['color'] or '#808080',
+                    'stl': stl_data
+                })
+
+            finally:
+                # Clean up temporary file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
 
         return json_response({
             'success': True,

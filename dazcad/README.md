@@ -8,6 +8,8 @@ A minimal web-based CadQuery development environment with 3D visualization.
 pip install -r requirements.txt
 ```
 
+Note: CadQuery requires Python 3.8+ and may have additional system dependencies. See the [CadQuery installation guide](https://cadquery.readthedocs.io/en/latest/installation.html) for details.
+
 ## Usage
 
 1. Run the server:
@@ -42,3 +44,10 @@ show_object(box, "MyBox", "#FF0000")
 - Mouse-controlled camera (rotate/zoom/pan)
 - Colored object support
 - Error handling and output display
+
+## Troubleshooting
+
+If you encounter import errors with OCP or CadQuery:
+- Make sure you have Python 3.8 or later
+- Consider using a conda environment: `conda install -c conda-forge cadquery`
+- Check the CadQuery documentation for platform-specific installation instructions
