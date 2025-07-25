@@ -18,11 +18,21 @@
             <div class="editor-panel">
                 <textarea id="codeEditor" placeholder="Enter your CadQuery code here...">import cadquery as cq
 
-# Create a simple box
-box = cq.Workplane("XY").box(10, 10, 10)
+# Create first box (red)
+box1 = cq.Workplane("XY").box(10, 10, 10)
 
-# Show the result
-show_object(box, "MyBox", "#FF0000")</textarea>
+# Create second box (blue) offset to the right
+box2 = cq.Workplane("XY").center(15, 0).box(10, 10, 10)
+
+# Show both objects with different colors
+show_object(box1, "RedBox", "#FF0000")
+show_object(box2, "BlueBox", "#0080FF")
+
+# You can also create a single assembly if needed
+assembly = box1.union(box2)
+show_object(assembly, "Assembly", "#00FF00")
+
+print("Created an assembly with two colored boxes!")</textarea>
             </div>
             <div class="viewer-panel">
                 <div id="viewer3d"></div>
