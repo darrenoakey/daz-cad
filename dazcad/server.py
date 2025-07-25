@@ -4,6 +4,7 @@ import base64
 import os
 import sys
 import tempfile
+import traceback
 import unittest
 from io import StringIO
 
@@ -83,19 +84,37 @@ def process_assembly(shown):
     results = []
     obj = shown['object']
 
-    for child in obj.children:
-        shape = child.shape
-        part_name = child.name
+    print(f"Processing assembly with {len(obj.children)} children")
+
+    for i, child in enumerate(obj.children):
+        print(f"Processing child {i}: {child.name}")
+
+        # Get the shape with proper transformation applied
+        transformed_shape = child.shape
+        if child.loc:
+            # Apply the location transformation
+            transformed_shape = child.shape.moved(child.loc)
+
+        # Wrap in CadQuery object for export
+        cq_obj = cq.Workplane().add(transformed_shape)
+
         color_tuple = child.color.toTuple() if child.color else None
         part_color = color_to_hex(color_tuple)
+        print(f"  Color: {part_color}")
 
-        stl_data = export_shape_to_stl(shape)
+        # pylint: disable=broad-exception-caught
+        try:
+            stl_data = export_shape_to_stl(cq_obj)
 
-        results.append({
-            'name': f"{shown['name']}_{part_name}",
-            'color': part_color,
-            'stl': stl_data
-        })
+            results.append({
+                'name': f"{shown['name']}_{child.name}",
+                'color': part_color,
+                'stl': stl_data
+            })
+            print(f"  Successfully exported {child.name}")
+        except Exception as e:
+            print(f"  Error exporting {child.name}: {e}")
+        # pylint: enable=broad-exception-caught
 
     return results
 
@@ -149,15 +168,16 @@ async def run_code(request):
         if not code:
             return json_response({'error': 'No code provided'}, status=400)
 
-        # Import Color for exec environment
+        # Import Color and Assembly for exec environment
         # pylint: disable=import-outside-toplevel
-        from cadquery import Color
+        from cadquery import Color, Assembly
         # pylint: enable=import-outside-toplevel
 
         # Prepare execution environment
         exec_globals = {
             'cq': cq,
             'Color': Color,
+            'Assembly': Assembly,
             'show_object': show_object,
             '__name__': '__main__'
         }
@@ -194,6 +214,8 @@ async def run_code(request):
                 if result:
                     result_objects.append(result)
 
+        print(f"Total objects to return: {len(result_objects)}")
+
         return json_response({
             'success': True,
             'objects': result_objects,
@@ -202,6 +224,8 @@ async def run_code(request):
 
     # pylint: disable=broad-exception-caught
     except Exception as e:
+        print(f"Error in run_code: {e}")
+        traceback.print_exc()
         return json_response({
             'success': False,
             'error': str(e)

@@ -17,18 +17,17 @@
         <div class="main-content">
             <div class="editor-panel">
                 <textarea id="codeEditor" placeholder="Enter your CadQuery code here...">import cadquery as cq
-from cadquery import Color
 
 # Create an assembly with two colored boxes
 assembly = cq.Assembly()
 
 # Create first box (red)
 box1 = cq.Workplane("XY").box(10, 10, 10)
-assembly.add(box1, name="RedBox", color=Color("red"))
+assembly.add(box1, name="RedBox", color=cq.Color("red"))
 
 # Create second box (blue) positioned to the right
 box2 = cq.Workplane("XY").box(10, 10, 10)
-assembly.add(box2, name="BlueBox", loc=cq.Location((15, 0, 0)), color=Color("blue"))
+assembly.add(box2, name="BlueBox", loc=cq.Location((15, 0, 0)), color=cq.Color("blue"))
 
 # Show the assembly - it contains both colored parts
 show_object(assembly, "ColoredAssembly")
