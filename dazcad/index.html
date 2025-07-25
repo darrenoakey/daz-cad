@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DazCAD - CadQuery Runner</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="toolbar">
+            <button id="runButton" class="run-button">Run</button>
+        </div>
+        <div class="main-content">
+            <div class="editor-panel">
+                <textarea id="codeEditor" placeholder="Enter your CadQuery code here...">import cadquery as cq
+
+# Create a simple box
+box = cq.Workplane("XY").box(10, 10, 10)
+
+# Show the result
+show_object(box, "MyBox", "#FF0000")</textarea>
+            </div>
+            <div class="viewer-panel">
+                <div id="viewer3d"></div>
+                <div id="output" class="output-panel"></div>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
