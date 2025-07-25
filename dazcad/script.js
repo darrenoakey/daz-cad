@@ -79,7 +79,7 @@ function clearScene() {
     currentObjects = [];
 }
 
-function loadSTL(stlData, name, color) {
+function loadSTL(stlData, name, color, transform) {
     const loader = new THREE.STLLoader();
     
     // Convert base64 to binary
@@ -105,11 +105,28 @@ function loadSTL(stlData, name, color) {
     mesh.receiveShadow = true;
     mesh.name = name;
     
-    // Center the geometry
-    geometry.computeBoundingBox();
-    const center = new THREE.Vector3();
-    geometry.boundingBox.getCenter(center);
-    geometry.translate(-center.x, -center.y, -center.z);
+    // Apply transformation if provided
+    if (transform && transform.length === 16) {
+        // Create a Matrix4 from the array (row-major order)
+        const matrix = new THREE.Matrix4();
+        matrix.set(
+            transform[0], transform[1], transform[2], transform[3],
+            transform[4], transform[5], transform[6], transform[7],
+            transform[8], transform[9], transform[10], transform[11],
+            transform[12], transform[13], transform[14], transform[15]
+        );
+        
+        // Apply the transformation to the mesh
+        mesh.applyMatrix4(matrix);
+        
+        console.log(`Applied transform to ${name}:`, transform);
+    } else {
+        // No transform, center the geometry at origin
+        geometry.computeBoundingBox();
+        const center = new THREE.Vector3();
+        geometry.boundingBox.getCenter(center);
+        geometry.translate(-center.x, -center.y, -center.z);
+    }
     
     // Add to scene
     scene.add(mesh);
@@ -165,7 +182,7 @@ async function runCode() {
             
             // Load new objects
             result.objects.forEach(obj => {
-                loadSTL(obj.stl, obj.name, obj.color);
+                loadSTL(obj.stl, obj.name, obj.color, obj.transform);
             });
             
             // Show output

@@ -80,6 +80,35 @@ def export_shape_to_stl(shape):
             os.unlink(tmp_path)
 
 
+def get_location_matrix(location):
+    """Convert CadQuery Location to a transformation matrix."""
+    if not location:
+        return None
+
+    # Get the transformation matrix from the location
+    trsf = location.wrapped.Transformation()
+
+    # Extract the 4x4 transformation matrix values
+    # Format: row-major order for Three.js
+    matrix = []
+    for i in range(1, 4):  # OCC uses 1-based indexing for matrix values
+        for j in range(1, 4):
+            matrix.append(trsf.Value(i, j))
+        # Add translation component
+        trans = trsf.TranslationPart()
+        if i == 1:
+            matrix.append(trans.X())
+        elif i == 2:
+            matrix.append(trans.Y())
+        else:
+            matrix.append(trans.Z())
+
+    # Add bottom row [0, 0, 0, 1]
+    matrix.extend([0, 0, 0, 1])
+
+    return matrix
+
+
 def process_assembly(shown):
     """Process an Assembly object and return list of result objects."""
     results = []
@@ -95,16 +124,23 @@ def process_assembly(shown):
             shape = child.obj
 
             try:
-                # Export the shape
+                # Export the shape at origin (untransformed)
                 stl_data = export_shape_to_stl(shape)
 
                 color_tuple = child.color.toTuple() if child.color else None
                 part_color = color_to_hex(color_tuple)
 
+                # Get transformation matrix if location exists
+                transform = None
+                if hasattr(child, 'loc') and child.loc:
+                    transform = get_location_matrix(child.loc)
+                    print(f"  Transform matrix: {transform}")
+
                 results.append({
                     'name': f"{shown['name']}_{child.name}",
                     'color': part_color,
-                    'stl': stl_data
+                    'stl': stl_data,
+                    'transform': transform  # Include transformation matrix
                 })
                 print(f"  Successfully exported {child.name} with color {part_color}")
 
@@ -144,7 +180,8 @@ def process_regular_object(shown):
         return {
             'name': shown['name'],
             'color': shown['color'] or '#808080',
-            'stl': stl_data
+            'stl': stl_data,
+            'transform': None  # No transform for regular objects
         }
 
     finally:
