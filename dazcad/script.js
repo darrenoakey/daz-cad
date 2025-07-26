@@ -5,9 +5,15 @@ document.addEventListener('DOMContentLoaded', function() {
     initChat();
     document.getElementById('runButton').addEventListener('click', runCode);
     
-    // Add download button event listeners
+    // Add download button event listeners for all supported formats
     document.getElementById('downloadStlButton').addEventListener('click', () => downloadModel('stl'));
     document.getElementById('downloadStepButton').addEventListener('click', () => downloadModel('step'));
+    
+    // Check if 3MF button exists before adding listener (may not be supported)
+    const threeMfButton = document.getElementById('download3mfButton');
+    if (threeMfButton) {
+        threeMfButton.addEventListener('click', () => downloadModel('3mf'));
+    }
     
     // Auto-run the code when the page first loads
     setTimeout(() => {
@@ -23,8 +29,20 @@ function downloadModel(format) {
     // Validate the model name (remove invalid characters)
     const sanitizedName = modelName.replace(/[^a-zA-Z0-9_-]/g, '_');
     
-    // Show download indicator
-    const button = document.getElementById(`download${format.charAt(0).toUpperCase() + format.slice(1)}Button`);
+    // Show download indicator - handle different button naming conventions
+    let buttonId;
+    if (format === '3mf') {
+        buttonId = 'download3mfButton';
+    } else {
+        buttonId = `download${format.charAt(0).toUpperCase() + format.slice(1)}Button`;
+    }
+    
+    const button = document.getElementById(buttonId);
+    if (!button) {
+        console.error(`Download button for format ${format} not found`);
+        return;
+    }
+    
     const originalText = button.textContent;
     button.textContent = 'Downloading...';
     button.disabled = true;
@@ -46,3 +64,23 @@ function downloadModel(format) {
         button.disabled = false;
     }, 2000);
 }
+
+// Check if 3MF format is supported by making a test request
+async function check3MFSupport() {
+    try {
+        const response = await fetch('/download/3mf?name=test', { method: 'HEAD' });
+        const threeMfButton = document.getElementById('download3mfButton');
+        
+        if (response.status === 400 && threeMfButton) {
+            // 3MF not supported, hide the button
+            threeMfButton.style.display = 'none';
+            console.log('3MF format not supported in this CadQuery version');
+        }
+    } catch (error) {
+        console.log('Could not check 3MF support:', error);
+    }
+}
+
+// Check 3MF support after page loads (optional feature detection)
+// Uncomment this line if you want automatic 3MF button hiding when not supported
+// setTimeout(check3MFSupport, 2000);

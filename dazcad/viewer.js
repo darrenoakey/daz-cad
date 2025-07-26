@@ -1,3 +1,16 @@
+/*
+ * DazCAD 3D Viewer - Z-UP Coordinate System Implementation
+ * 
+ * 🚨 CRITICAL: This viewer uses Z-UP coordinate system to match CadQuery/OpenCascade
+ * 📖 READ coordinate_system_docs.js for COMPREHENSIVE documentation before making changes!
+ * 
+ * Key Rules:
+ * 1. THREE.Object3D.DefaultUp = new THREE.Vector3(0, 0, 1) - NEVER change this!
+ * 2. Grid MUST be rotated to XY plane: grid.rotateX(Math.PI / 2)
+ * 3. Apply backend transformations directly - no coordinate conversion!
+ * 4. Camera positioned isometrically: (X, Y, Z) not (0, 0, Z)
+ */
+
 let scene, camera, renderer, controls;
 let currentObjects = [];
 
@@ -31,33 +44,40 @@ function createAxisLabel(text, position, color) {
 }
 
 function initViewer() {
-    // Set Three.js to use Z-up coordinate system to match CadQuery
+    // 🚨 CRITICAL: Set Z-up coordinate system - MUST be first line!
+    // See coordinate_system_docs.js for detailed explanation
     THREE.Object3D.DefaultUp = new THREE.Vector3(0, 0, 1);
+    
+    console.log('🔧 Coordinate System: Z-up initialized');
+    console.log('📖 See coordinate_system_docs.js for comprehensive documentation');
     
     const container = document.getElementById('viewer3d');
     const w = container.clientWidth;
     const h = container.clientHeight;
 
+    // Create scene with dark background suitable for CAD visualization
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0a0a);
     scene.fog = new THREE.Fog(0x0a0a0a, 200, 1000);
 
+    // Setup camera - isometric view to show all three axes
     camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
-    // Start with a wider view to show the full grid
-    camera.position.set(80, 80, 80);
-
+    camera.position.set(80, 80, 80); // Classic CAD isometric view
+    
+    // Create renderer with antialiasing
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(w, h);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(renderer.domElement);
 
+    // Setup orbit controls (automatically respects Z-up)
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
+    // Add lighting
     scene.add(new THREE.AmbientLight(0x404040, 2));
-
     const dirLight = new THREE.DirectionalLight(0xffffff, 1);
     dirLight.position.set(50, 100, 50);
     dirLight.castShadow = true;
@@ -69,28 +89,29 @@ function initViewer() {
     dirLight.shadow.camera.bottom = -100;
     scene.add(dirLight);
 
-    // Create grid in XY plane (rotated from default XZ plane)
+    // 🚨 CRITICAL: Create grid in XY plane (Z=0) to match CAD workplane
     const grid = new THREE.GridHelper(100, 20, 0x444444, 0x222222);
-    grid.rotateX(Math.PI / 2); // Rotate to XY plane to match CadQuery
+    grid.rotateX(Math.PI / 2); // Rotate from XZ to XY plane
     scene.add(grid);
     
-    // Add a gray Z-axis line to provide context
+    // Add Z-axis reference line (vertical in Z-up world)
     const zGeometry = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
         new THREE.Vector3(0, 0, 50)
     ]);
-    const zMaterial = new THREE.LineBasicMaterial({ color: 0x444444 }); // Same gray as grid
+    const zMaterial = new THREE.LineBasicMaterial({ color: 0x444444 });
     const zLine = new THREE.Line(zGeometry, zMaterial);
     scene.add(zLine);
     
-    // Add colored X, Y, Z labels slightly beyond the grid edges (55 units from center)
-    const xLabel = createAxisLabel('X', new THREE.Vector3(55, 0, 0), '#ff0000');
-    const yLabel = createAxisLabel('Y', new THREE.Vector3(0, 55, 0), '#00ff00');
-    const zLabel = createAxisLabel('Z', new THREE.Vector3(0, 0, 55), '#0000ff');
+    // Add axis labels with standard CAD colors: RGB = XYZ
+    const xLabel = createAxisLabel('X', new THREE.Vector3(55, 0, 0), '#ff0000');  // Red
+    const yLabel = createAxisLabel('Y', new THREE.Vector3(0, 55, 0), '#00ff00');  // Green  
+    const zLabel = createAxisLabel('Z', new THREE.Vector3(0, 0, 55), '#0000ff');  // Blue
     scene.add(xLabel);
     scene.add(yLabel);
     scene.add(zLabel);
 
+    // Setup responsive behavior and start render loop
     window.addEventListener('resize', onWindowResize, false);
     animate();
 }
@@ -116,7 +137,7 @@ function clearScene() {
 }
 
 function loadSTL(stlData, name, color, transform) {
-    console.log(`Loading STL for ${name}:`, { color, transform });
+    console.log(`🔧 Loading STL: ${name}`);
     
     const loader = new THREE.STLLoader();
     const binaryString = atob(stlData);
@@ -135,62 +156,49 @@ function loadSTL(stlData, name, color, transform) {
     mesh.receiveShadow = true;
     mesh.name = name;
     
-    console.log(`Mesh ${name} initial position:`, mesh.position);
-    
-    // Apply transformation matrix if provided (for assembly objects with locations)
+    // 🚨 CRITICAL: Handle transformations in Z-up coordinate system
     if (transform && transform.length === 16) {
-        console.log(`Applying transform to ${name}:`, transform);
+        // Extract translation from row-major matrix (backend format)
+        // See coordinate_system_docs.js for detailed matrix explanation
+        const tx = transform[3];  // X translation (right/left)
+        const ty = transform[7];  // Y translation (forward/back)  
+        const tz = transform[11]; // Z translation (up/down)
         
-        // Backend sends row-major format: [m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44]
-        // Extract the translation values directly from positions [3], [7], [11]
-        const tx = transform[3];  // m14 - X translation
-        const ty = transform[7];  // m24 - Y translation  
-        const tz = transform[11]; // m34 - Z translation
-        
-        console.log(`Translation extracted: x=${tx}, y=${ty}, z=${tz}`);
-        
-        // For now, just apply the translation directly
+        // Apply directly - no coordinate conversion needed!
         mesh.position.set(tx, ty, tz);
+        console.log(`🔧 Applied transform: (${tx}, ${ty}, ${tz})`);
         
-        // TODO: Also apply rotation and scaling from the matrix if needed
-        // For basic assemblies, translation is usually the main requirement
-        
-        console.log(`Mesh ${name} position after transform:`, mesh.position);
+        // TODO: Add rotation/scaling extraction for advanced assemblies
     } else {
-        console.log(`No transform for ${name}, centering geometry`);
-        // Center geometry at origin if no transform (for single objects)
+        // Center single objects at origin for best default view
         geometry.computeBoundingBox();
         const center = new THREE.Vector3();
         geometry.boundingBox.getCenter(center);
         geometry.translate(-center.x, -center.y, -center.z);
-        console.log(`Centered ${name} by offset:`, center);
+        console.log(`🔧 Centered object at origin`);
     }
     
     scene.add(mesh);
     currentObjects.push(mesh);
-    
-    console.log(`Final mesh ${name} world position:`, mesh.getWorldPosition(new THREE.Vector3()));
-    
     fitCameraToObjects();
 }
 
 function fitCameraToObjects() {
     if (currentObjects.length === 0) return;
+    
+    // Calculate bounding box and position camera isometrically
     const box = new THREE.Box3();
     currentObjects.forEach(obj => box.expandByObject(obj));
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
+    
     const fov = camera.fov * (Math.PI / 180);
-    // Increase the multiplier to zoom out more and show more of the grid
     const cameraZ = Math.abs(maxDim / (2 * Math.tan(fov / 2))) * 3.0;
+    
+    // Maintain isometric view in Z-up coordinate system
     camera.position.set(center.x + cameraZ, center.y + cameraZ, center.z + cameraZ);
     camera.lookAt(center);
     controls.target = center;
     controls.update();
-    
-    console.log('Camera fitted to objects:', {
-        boundingBox: { center, size },
-        cameraPosition: camera.position
-    });
 }
