@@ -42,30 +42,52 @@ def export_shape_to_stl(shape):
 
 
 def get_location_matrix(location):
-    """Convert CadQuery Location to a transformation matrix."""
+    """Convert CadQuery Location to a transformation matrix for Three.js."""
     if not location:
         return None
 
     # Get the transformation matrix from the location
     trsf = location.wrapped.Transformation()
 
-    # Extract the 4x4 transformation matrix values
-    # Format: row-major order for Three.js
-    matrix = []
-    for i in range(1, 4):  # OCC uses 1-based indexing for matrix values
-        for j in range(1, 4):
-            matrix.append(trsf.Value(i, j))
-        # Add translation component
-        trans = trsf.TranslationPart()
-        if i == 1:
-            matrix.append(trans.X())
-        elif i == 2:
-            matrix.append(trans.Y())
-        else:
-            matrix.append(trans.Z())
+    # Extract the 3x3 rotation matrix and translation from OCC
+    # CadQuery uses: X=right, Y=forward/back, Z=up
+    # Three.js uses: X=right, Y=up, Z=forward/back
+    # So we need to swap Y and Z coordinates
 
-    # Add bottom row [0, 0, 0, 1]
-    matrix.extend([0, 0, 0, 1])
+    matrix = []
+
+    # First row (X axis) - keep X, swap Y↔Z
+    matrix.extend([
+        trsf.Value(1, 1),  # XX stays
+        trsf.Value(1, 3),  # XZ → XY
+        trsf.Value(1, 2),  # XY → XZ
+        0
+    ])
+
+    # Second row (Y axis) - this becomes Z in Three.js, so use CadQuery's Z row
+    matrix.extend([
+        trsf.Value(3, 1),  # ZX → YX
+        trsf.Value(3, 3),  # ZZ → YY
+        trsf.Value(3, 2),  # ZY → YZ
+        0
+    ])
+
+    # Third row (Z axis) - this becomes Y in Three.js, so use CadQuery's Y row
+    matrix.extend([
+        trsf.Value(2, 1),  # YX → ZX
+        trsf.Value(2, 3),  # YZ → ZY
+        trsf.Value(2, 2),  # YY → ZZ
+        0
+    ])
+
+    # Translation - swap Y and Z coordinates
+    trans = trsf.TranslationPart()
+    matrix.extend([
+        trans.X(),  # X stays the same
+        trans.Z(),  # Z becomes Y (up)
+        trans.Y(),  # Y becomes Z (forward/back)
+        1
+    ])
 
     return matrix
 
@@ -78,7 +100,7 @@ def process_assembly(shown):
     print(f"Processing assembly with {len(obj.children)} children")
 
     for i, child in enumerate(obj.children):
-        print(f"\nProcessing child {i}: {child.name}")
+        print(f"\\nProcessing child {i}: {child.name}")
 
         # Assembly children have an 'obj' attribute containing the shape
         if hasattr(child, 'obj'):
@@ -155,7 +177,7 @@ def process_objects(shown_objs):
 
     for shown in shown_objs:
         obj = shown['object']
-        print(f"\nProcessing shown object: {shown['name']}")
+        print(f"\\nProcessing shown object: {shown['name']}")
         print(f"Object type: {type(obj)}")
 
         # Check if it's an Assembly
@@ -199,3 +221,20 @@ class CadQueryProcessorTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result['name'], 'TestBox')
         self.assertEqual(result['color'], '#ff0000')
+
+    def test_coordinate_transformation(self):
+        """Test that coordinates are properly transformed from CadQuery to Three.js"""
+        # Create a simple location with translation only
+        # In CadQuery: move 1 unit right (X), 2 units forward (Y), 3 units up (Z)
+        location = cq.Location((1, 2, 3), (0, 0, 0))  # translation, rotation
+        matrix = get_location_matrix(location)
+
+        # In the resulting Three.js matrix, we expect:
+        # X=1 (unchanged), Y=3 (was Z), Z=2 (was Y)
+        # Matrix is in column-major format: [m00,m10,m20,m30, m01,m11,m21,m31, ...]
+        # Translation is in positions 12, 13, 14
+        self.assertIsNotNone(matrix)
+        self.assertEqual(len(matrix), 16)
+        self.assertEqual(matrix[12], 1)  # X translation unchanged
+        self.assertEqual(matrix[13], 3)  # Y translation = CadQuery Z
+        self.assertEqual(matrix[14], 2)  # Z translation = CadQuery Y
