@@ -15,12 +15,12 @@ except ImportError:
 
 async def handle_download_request(request, export_format, shown_objects):
     """Handle download requests for different export formats.
-    
+
     Args:
         request: Sanic request object
         export_format: String format ('stl', 'step')
         shown_objects: List of objects to export
-        
+
     Returns:
         Sanic response object with file download or error
     """
@@ -82,9 +82,14 @@ async def handle_download_request(request, export_format, shown_objects):
 
 class MockRequest:
     """Mock request class for testing."""
-    
+
     def __init__(self, args=None):
+        """Initialize mock request with optional args."""
         self.args = args or {}
+
+    def get_arg(self, key, default=None):
+        """Get argument from mock request."""
+        return self.args.get(key, default)
 
 
 class TestDownloadHandler(unittest.TestCase):
@@ -95,7 +100,7 @@ class TestDownloadHandler(unittest.TestCase):
         # This test verifies the format validation logic
         supported_formats = ['stl', 'step']
         unsupported_format = 'obj'
-        
+
         self.assertIn('stl', supported_formats)
         self.assertIn('step', supported_formats)
         self.assertNotIn(unsupported_format, supported_formats)
@@ -106,7 +111,7 @@ class TestDownloadHandler(unittest.TestCase):
             'stl': 'application/sla',
             'step': 'application/step'
         }
-        
+
         self.assertEqual(mime_types['stl'], 'application/sla')
         self.assertEqual(mime_types['step'], 'application/step')
 
@@ -114,7 +119,13 @@ class TestDownloadHandler(unittest.TestCase):
         """Test that mock request objects can be created."""
         mock_request = MockRequest({'name': 'test'})
         self.assertEqual(mock_request.args['name'], 'test')
-        
+
         # Test default empty args
         mock_request_empty = MockRequest()
         self.assertEqual(mock_request_empty.args, {})
+
+    def test_mock_request_get_arg(self):
+        """Test mock request get_arg method."""
+        mock_request = MockRequest({'name': 'test'})
+        self.assertEqual(mock_request.get_arg('name'), 'test')
+        self.assertEqual(mock_request.get_arg('missing', 'default'), 'default')
