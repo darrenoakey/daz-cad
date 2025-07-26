@@ -151,8 +151,8 @@ def parse_arguments():
     parser.add_argument(
         '--model',
         type=str,
-        default='ollama:8x7b',
-        help='LLM model to use (default: ollama:8x7b)'
+        default='ollama:mixtral:8x7b',
+        help='LLM model to use (default: ollama:mixtral:8x7b)'
     )
     parser.add_argument(
         '--host',
@@ -191,7 +191,7 @@ class ServerTests(unittest.TestCase):
             # Test with no arguments
             sys.argv = ['server.py']
             parsed_args = parse_arguments()
-            self.assertEqual(parsed_args.model, 'ollama:8x7b')
+            self.assertEqual(parsed_args.model, 'ollama:mixtral:8x7b')
             self.assertEqual(parsed_args.host, '127.0.0.1')
             self.assertEqual(parsed_args.port, 8000)
             self.assertFalse(parsed_args.debug)
@@ -210,11 +210,12 @@ if __name__ == "__main__":
     print(f"Using LLM model: {args.model}")
     set_llm_model(args.model)
 
-    # Test LLM initialization
-    if is_llm_available():
-        print("✓ LLM initialized successfully")
-    else:
-        print("⚠ LLM not available - chat features disabled")
+    # Test LLM initialization - fail hard if not available
+    llm_available = is_llm_available()
+    if not llm_available:
+        raise RuntimeError("LLM not available - cannot start server without valid LLM model")
+
+    print("✓ LLM initialized successfully")
 
     # Run server with provided arguments
     app.run(host=args.host, port=args.port, debug=args.debug, auto_reload=args.debug)

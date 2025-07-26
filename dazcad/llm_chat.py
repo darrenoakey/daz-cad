@@ -13,7 +13,7 @@ except ImportError:
 
 # Global LLM instance and model name
 LLM_INSTANCE = None
-LLM_MODEL_NAME = "ollama:8x7b"  # Default model
+LLM_MODEL_NAME = "ollama:mixtral:8x7b"  # Default model
 
 
 class CodeResponse(BaseModel):
@@ -161,10 +161,9 @@ class LlmChatTests(unittest.TestCase):
         self.assertEqual(len(response.changes_made), 1)
 
     def test_default_model_name(self):
-        """Test that default model name is ollama:8x7b"""
-        self.assertEqual(get_current_model(), "ollama:8x7b")
+        """Test that default model name is ollama:mixtral:8x7b"""
+        self.assertEqual(get_current_model(), "ollama:mixtral:8x7b")
 
-    @unittest.skipIf(not DAZLLM_AVAILABLE, "dazllm not available")
     def test_llm_initialization_with_default_model(self):
         """Test LLM initialization with the default model"""
         global LLM_INSTANCE  # pylint: disable=global-statement
@@ -172,38 +171,26 @@ class LlmChatTests(unittest.TestCase):
 
         llm = get_llm()
         self.assertTrue(llm is None or hasattr(llm, 'chat_structured'))
-        self.assertEqual(get_current_model(), "ollama:8x7b")
+        self.assertEqual(get_current_model(), "ollama:mixtral:8x7b")
 
-    @unittest.skipIf(not DAZLLM_AVAILABLE, "dazllm not available")
     def test_llm_actually_works(self):
         """Test that the default model actually responds to simple queries"""
         global LLM_INSTANCE  # pylint: disable=global-statement
         LLM_INSTANCE = None
 
         llm = get_llm()
-        if llm is None:
-            self.skipTest("LLM model not available - skipping integration test")
-            return
+        self.assertIsNotNone(llm, "LLM must be available for this test")
 
         test_query = "What is 2 + 2? Answer with just the number."
+        response = llm.chat(test_query)
 
-        try:
-            response = llm.chat(test_query)
-            self.assertIsNotNone(response, "LLM should return a response")
-            self.assertNotEqual(response.strip(), "", "LLM response should not be empty")
-            self.assertNotEqual(response.strip(), test_query,
-                              "LLM response should be different from input")
-            self.assertLess(len(response), 100, "Response should be concise")
-            print(f"✓ LLM test passed. Query: '{test_query}' Response: '{response.strip()}'")
-
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            # Skip test if service unavailable
-            error_str = str(e).lower()
-            if any(keyword in error_str for keyword in ["404", "ollama", "api error", "not found",
-                                                       "connection", "service"]):
-                self.skipTest(f"LLM service not available: {e}")
-            else:
-                self.fail(f"LLM call failed with unexpected error: {e}")
+        self.assertIsNotNone(response, "LLM should return a response")
+        self.assertNotEqual(response.strip(), "", "LLM response should not be empty")
+        self.assertNotEqual(response.strip(), test_query,
+                          "LLM response should be different from input")
+        # Allow for reasonable response length - real LLMs might be verbose
+        self.assertLess(len(response), 500, "Response should be reasonable length")
+        print(f"✓ LLM test passed. Query: '{test_query}' Response: '{response.strip()}'")
 
     def test_set_llm_model(self):
         """Test setting a custom LLM model"""
