@@ -141,12 +141,15 @@ function loadSTL(stlData, name, color, transform) {
     if (transform && transform.length === 16) {
         console.log(`Applying transform to ${name}:`, transform);
         
+        // Convert from OpenCascade row-major format to Three.js column-major format
+        // OpenCascade: [m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, tx, ty, tz, m44]
+        // Three.js:    [m11, m21, m31, tx,  m12, m22, m32, ty,  m13, m23, m33, tz,  m14, m24, m34, m44]
         const matrix = new THREE.Matrix4();
         matrix.set(
-            transform[0], transform[1], transform[2], transform[3],
-            transform[4], transform[5], transform[6], transform[7],
-            transform[8], transform[9], transform[10], transform[11],
-            transform[12], transform[13], transform[14], transform[15]
+            transform[0],  transform[4],  transform[8],  transform[12], // Column 1: m11, m21, m31, tx
+            transform[1],  transform[5],  transform[9],  transform[13], // Column 2: m12, m22, m32, ty  
+            transform[2],  transform[6],  transform[10], transform[14], // Column 3: m13, m23, m33, tz
+            transform[3],  transform[7],  transform[11], transform[15]  // Column 4: m14, m24, m34, m44
         );
         
         console.log(`Three.js Matrix4 for ${name}:`, matrix.elements);

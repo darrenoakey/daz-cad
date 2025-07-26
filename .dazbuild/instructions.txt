@@ -86,6 +86,15 @@ When you call `dazbuild_end_change`, the following checks must pass:
 - **Maintain Async Patterns**: Keep `async def` functions and `await` calls when working with async frameworks
 - **Add Routes Correctly**: For Sanic, use `@app.route()` decorators properly
 
+## Architectural Principles
+
+### Backend Purity Rule
+- **CRITICAL**: Backend should never be tailored to specific frontend technologies (Three.js, WebGL, etc.)
+- **Backend Role**: Output data in the native format of the source framework (CadQuery, OpenCascade, etc.)
+- **Frontend Role**: Adapt backend data to whatever rendering library is being used
+- **Reason**: Maintains flexibility for future frontend changes and proper separation of concerns
+- **Example**: CadQuery transformation matrices should stay in OpenCascade format; Three.js frontend adapts them
+
 ### Progressive Error Resolution
 When `dazbuild_end_change` fails, fix issues in this order:
 1. **File Size**: Extract large files into focused modules first (NEVER trim code)
