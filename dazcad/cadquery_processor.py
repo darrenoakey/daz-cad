@@ -49,47 +49,24 @@ def get_location_matrix(location):
     # Get the transformation matrix from the location
     trsf = location.wrapped.Transformation()
 
-    # CadQuery uses: X=right, Y=forward, Z=up
-    # Three.js uses: X=right, Y=up, Z=forward
-    # Mapping: CadQuery X→Three.js X, CadQuery Z→Three.js Y, CadQuery Y→Three.js Z
+    # For now, let's focus on getting translation right
+    # CadQuery: X=right, Y=forward, Z=up
+    # Three.js: X=right, Y=up, Z=forward
+    # Simple mapping: CadQuery X->X, CadQuery Z->Y, CadQuery Y->Z
 
-    # Three.js matrix is column-major: [Xx,Xy,Xz,0, Yx,Yy,Yz,0, Zx,Zy,Zz,0, Tx,Ty,Tz,1]
-    # Where X,Y,Z are basis vectors and T is translation
+    # Identity rotation matrix for now, just fix translation
+    matrix = [
+        1, 0, 0, 0,  # X axis
+        0, 1, 0, 0,  # Y axis
+        0, 0, 1, 0,  # Z axis
+        0, 0, 0, 1   # Translation + homogeneous coordinate
+    ]
 
-    matrix = []
-
-    # First column: Three.js X axis = CadQuery X axis
-    matrix.extend([
-        trsf.Value(1, 1),  # Xx = CadQuery Xx
-        trsf.Value(2, 1),  # Xy = CadQuery Yx
-        trsf.Value(3, 1),  # Xz = CadQuery Zx
-        0
-    ])
-
-    # Second column: Three.js Y axis = CadQuery Z axis
-    matrix.extend([
-        trsf.Value(1, 3),  # Yx = CadQuery Xz
-        trsf.Value(2, 3),  # Yy = CadQuery Yz
-        trsf.Value(3, 3),  # Yz = CadQuery Zz
-        0
-    ])
-
-    # Third column: Three.js Z axis = CadQuery Y axis
-    matrix.extend([
-        trsf.Value(1, 2),  # Zx = CadQuery Xy
-        trsf.Value(2, 2),  # Zy = CadQuery Yy
-        trsf.Value(3, 2),  # Zz = CadQuery Zy
-        0
-    ])
-
-    # Fourth column: Translation with coordinate swap
+    # Set translation with coordinate swap
     trans = trsf.TranslationPart()
-    matrix.extend([
-        trans.X(),  # Tx = CadQuery X (unchanged)
-        trans.Z(),  # Ty = CadQuery Z (up becomes up)
-        trans.Y(),  # Tz = CadQuery Y (forward becomes forward)
-        1
-    ])
+    matrix[12] = trans.X()  # Three.js X = CadQuery X (unchanged)
+    matrix[13] = trans.Z()  # Three.js Y = CadQuery Z (up becomes up)
+    matrix[14] = trans.Y()  # Three.js Z = CadQuery Y (forward becomes forward)
 
     return matrix
 
@@ -233,10 +210,9 @@ class CadQueryProcessorTests(unittest.TestCase):
 
         # In the resulting Three.js matrix, we expect:
         # X=1 (unchanged), Y=3 (was Z), Z=2 (was Y)
-        # Matrix is in column-major format: [m00,m10,m20,m30, m01,m11,m21,m31, ...]
-        # Translation is in positions 12, 13, 14
+        # Matrix is in column-major format, translation is in positions 12, 13, 14
         self.assertIsNotNone(matrix)
         self.assertEqual(len(matrix), 16)
-        self.assertEqual(matrix[12], 1)  # X translation unchanged
-        self.assertEqual(matrix[13], 3)  # Y translation = CadQuery Z
-        self.assertEqual(matrix[14], 2)  # Z translation = CadQuery Y
+        self.assertEqual(matrix[12], 1)  # Three.js X = CadQuery X (unchanged)
+        self.assertEqual(matrix[13], 3)  # Three.js Y = CadQuery Z (up)
+        self.assertEqual(matrix[14], 2)  # Three.js Z = CadQuery Y (forward)

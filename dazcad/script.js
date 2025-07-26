@@ -2,6 +2,23 @@ let scene, camera, renderer, controls;
 let currentObjects = [];
 let codeEditor;
 
+function createTextTexture(text, color = '#ffffff') {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = 64;
+    canvas.height = 64;
+    context.fillStyle = 'transparent';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.font = 'bold 48px Arial';
+    context.fillStyle = color;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+}
+
 function initViewer() {
     const container = document.getElementById('viewer3d');
     const w = container.clientWidth;
@@ -38,17 +55,7 @@ function initViewer() {
     scene.add(dirLight);
 
     scene.add(new THREE.GridHelper(100, 20, 0x444444, 0x222222));
-
-    // Add axes with labels
     scene.add(new THREE.AxesHelper(20));
-    
-    const d = 22;
-    scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.8), new THREE.MeshBasicMaterial({color: 0xff4444}))).position.set(d, 0, 0);
-    scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({color: 0x884444}))).position.set(-d, 0, 0);
-    scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.8), new THREE.MeshBasicMaterial({color: 0x44ff44}))).position.set(0, d, 0);
-    scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({color: 0x448844}))).position.set(0, -d, 0);
-    scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.8), new THREE.MeshBasicMaterial({color: 0x4444ff}))).position.set(0, 0, d);
-    scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({color: 0x444488}))).position.set(0, 0, -d);
 
     window.addEventListener('resize', onWindowResize, false);
     animate();
@@ -78,16 +85,12 @@ function initCodeEditor() {
             }
         },
         value: `import cadquery as cq
-assembly = cq.Assembly()
-box1 = cq.Workplane("XY").box(5, 5, 5)
-assembly.add(box1, name="Origin", color=cq.Color("red"))
-box2 = cq.Workplane("XY").box(5, 5, 5)
-assembly.add(box2, name="PlusX", loc=cq.Location(cq.Vector(10, 0, 0)), color=cq.Color("orange"))
-box3 = cq.Workplane("XY").box(5, 5, 5)
-assembly.add(box3, name="PlusY", loc=cq.Location(cq.Vector(0, 10, 0)), color=cq.Color("yellow"))
-box4 = cq.Workplane("XY").box(5, 5, 5)
-assembly.add(box4, name="PlusZ", loc=cq.Location(cq.Vector(0, 0, 10)), color=cq.Color("green"))
-show_object(assembly, "CoordinateTest")`
+asm = cq.Assembly()
+b1 = cq.Workplane("XY").box(5, 5, 5)
+asm.add(b1, name="Red", color=cq.Color("red"))
+b2 = cq.Workplane("XY").box(5, 5, 5)
+asm.add(b2, name="Green", loc=cq.Location((10, 0, 0)), color=cq.Color("green"))
+show_object(asm, "Test")`
     });
 }
 
@@ -113,20 +116,17 @@ function clearScene() {
 
 function loadSTL(stlData, name, color, transform) {
     const loader = new THREE.STLLoader();
-    
     const binaryString = atob(stlData);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
     }
-    
     const geometry = loader.parse(bytes.buffer);
     const material = new THREE.MeshPhongMaterial({
         color: new THREE.Color(color),
         specular: 0x111111,
         shininess: 200
     });
-    
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -140,7 +140,6 @@ function loadSTL(stlData, name, color, transform) {
             transform[8], transform[9], transform[10], transform[11],
             transform[12], transform[13], transform[14], transform[15]
         );
-        
         mesh.applyMatrix4(matrix);
         console.log(`Applied transform to ${name}:`, transform);
     } else {
@@ -149,7 +148,6 @@ function loadSTL(stlData, name, color, transform) {
         geometry.boundingBox.getCenter(center);
         geometry.translate(-center.x, -center.y, -center.z);
     }
-    
     scene.add(mesh);
     currentObjects.push(mesh);
     fitCameraToObjects();
@@ -157,16 +155,13 @@ function loadSTL(stlData, name, color, transform) {
 
 function fitCameraToObjects() {
     if (currentObjects.length === 0) return;
-    
     const box = new THREE.Box3();
     currentObjects.forEach(obj => box.expandByObject(obj));
-    
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
     const fov = camera.fov * (Math.PI / 180);
     const cameraZ = Math.abs(maxDim / (2 * Math.tan(fov / 2))) * 1.5;
-    
     camera.position.set(center.x + cameraZ, center.y + cameraZ, center.z + cameraZ);
     camera.lookAt(center);
     controls.target = center;
@@ -177,19 +172,15 @@ async function runCode() {
     const code = codeEditor.getValue();
     const outputDiv = document.getElementById('output');
     const runButton = document.getElementById('runButton');
-    
     runButton.disabled = true;
     runButton.textContent = 'Running...';
-    
     try {
         const response = await fetch('/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: code })
         });
-        
         const result = await response.json();
-        
         if (result.success) {
             clearScene();
             result.objects.forEach(obj => {
