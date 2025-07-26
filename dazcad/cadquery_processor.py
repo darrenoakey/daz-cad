@@ -50,11 +50,11 @@ def get_location_matrix(location):
     trsf = location.wrapped.Transformation()
 
     # Extract the raw transformation matrix without any coordinate system conversion
-    # Since we fixed the coordinate system in Three.js with Z-up, we can use the 
+    # Since we fixed the coordinate system in Three.js with Z-up, we can use the
     # CadQuery transformation matrix directly
     matrix = [
         trsf.Value(1, 1), trsf.Value(1, 2), trsf.Value(1, 3), 0,  # Row 1
-        trsf.Value(2, 1), trsf.Value(2, 2), trsf.Value(2, 3), 0,  # Row 2  
+        trsf.Value(2, 1), trsf.Value(2, 2), trsf.Value(2, 3), 0,  # Row 2
         trsf.Value(3, 1), trsf.Value(3, 2), trsf.Value(3, 3), 0,  # Row 3
         trsf.Value(1, 4), trsf.Value(2, 4), trsf.Value(3, 4), 1   # Translation + homogeneous
     ]
