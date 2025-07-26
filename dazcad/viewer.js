@@ -116,6 +116,8 @@ function clearScene() {
 }
 
 function loadSTL(stlData, name, color, transform) {
+    console.log(`Loading STL for ${name}:`, { color, transform });
+    
     const loader = new THREE.STLLoader();
     const binaryString = atob(stlData);
     const bytes = new Uint8Array(binaryString.length);
@@ -133,8 +135,12 @@ function loadSTL(stlData, name, color, transform) {
     mesh.receiveShadow = true;
     mesh.name = name;
     
+    console.log(`Mesh ${name} initial position:`, mesh.position);
+    
     // Apply transformation matrix if provided (for assembly objects with locations)
     if (transform && transform.length === 16) {
+        console.log(`Applying transform to ${name}:`, transform);
+        
         const matrix = new THREE.Matrix4();
         matrix.set(
             transform[0], transform[1], transform[2], transform[3],
@@ -142,18 +148,35 @@ function loadSTL(stlData, name, color, transform) {
             transform[8], transform[9], transform[10], transform[11],
             transform[12], transform[13], transform[14], transform[15]
         );
+        
+        console.log(`Three.js Matrix4 for ${name}:`, matrix.elements);
+        
+        // Store original position for comparison
+        const originalPos = mesh.position.clone();
+        
         mesh.applyMatrix4(matrix);
-        console.log(`Applied transform to ${name}:`, transform);
+        
+        console.log(`Mesh ${name} position after transform:`, mesh.position);
+        console.log(`Position change for ${name}:`, {
+            original: originalPos,
+            new: mesh.position,
+            delta: mesh.position.clone().sub(originalPos)
+        });
     } else {
+        console.log(`No transform for ${name}, centering geometry`);
         // Center geometry at origin if no transform (for single objects)
         geometry.computeBoundingBox();
         const center = new THREE.Vector3();
         geometry.boundingBox.getCenter(center);
         geometry.translate(-center.x, -center.y, -center.z);
+        console.log(`Centered ${name} by offset:`, center);
     }
     
     scene.add(mesh);
     currentObjects.push(mesh);
+    
+    console.log(`Final mesh ${name} world position:`, mesh.getWorldPosition(new THREE.Vector3()));
+    
     fitCameraToObjects();
 }
 
@@ -171,4 +194,9 @@ function fitCameraToObjects() {
     camera.lookAt(center);
     controls.target = center;
     controls.update();
+    
+    console.log('Camera fitted to objects:', {
+        boundingBox: { center, size },
+        cameraPosition: camera.position
+    });
 }
