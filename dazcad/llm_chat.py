@@ -13,7 +13,7 @@ except ImportError:
 
 # Global LLM instance and model name
 LLM_INSTANCE = None
-LLM_MODEL_NAME = "mixtral:8x7b"  # Default model
+LLM_MODEL_NAME = "ollama:mixtral8:7b"  # Default model
 
 
 class CodeResponse(BaseModel):
@@ -172,8 +172,8 @@ class LlmChatTests(unittest.TestCase):
         self.assertEqual(len(response.changes_made), 1)
 
     def test_default_model_name(self):
-        """Test that default model name is mixtral:8x7b"""
-        self.assertEqual(get_current_model(), "mixtral:8x7b")
+        """Test that default model name is ollama:mixtral8:7b"""
+        self.assertEqual(get_current_model(), "ollama:mixtral8:7b")
 
     @unittest.skipIf(not DAZLLM_AVAILABLE, "dazllm not available")
     def test_llm_initialization_with_default_model(self):
@@ -191,7 +191,7 @@ class LlmChatTests(unittest.TestCase):
         self.assertTrue(llm is None or hasattr(llm, 'chat_structured'))
 
         # Test that the model name is set correctly
-        self.assertEqual(get_current_model(), "mixtral:8x7b")
+        self.assertEqual(get_current_model(), "ollama:mixtral8:7b")
 
     def test_set_llm_model(self):
         """Test setting a custom LLM model"""
