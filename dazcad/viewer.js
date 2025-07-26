@@ -1,3 +1,35 @@
+let scene, camera, renderer, controls;
+let currentObjects = [];
+
+function createTextTexture(text, color = '#ffffff') {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = 64;
+    canvas.height = 64;
+    context.fillStyle = 'transparent';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.font = 'bold 48px Arial';
+    context.fillStyle = color;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+}
+
+function createAxisLabel(text, position, color) {
+    const texture = createTextTexture(text, color);
+    const spriteMaterial = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.position.copy(position);
+    sprite.scale.set(4, 4, 1);
+    return sprite;
+}
+
 function initViewer() {
     // Set Three.js to use Z-up coordinate system to match CadQuery
     THREE.Object3D.DefaultUp = new THREE.Vector3(0, 0, 1);
@@ -83,4 +115,68 @@ function initViewer() {
 
     window.addEventListener('resize', onWindowResize, false);
     animate();
+}
+
+function onWindowResize() {
+    const container = document.getElementById('viewer3d');
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+}
+
+function clearScene() {
+    currentObjects.forEach(obj => scene.remove(obj));
+    currentObjects = [];
+}
+
+function loadSTL(stlData, name, color, transform) {
+    const loader = new THREE.STLLoader();
+    const binaryString = atob(stlData);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    const geometry = loader.parse(bytes.buffer);
+    const material = new THREE.MeshPhongMaterial({
+        color: new THREE.Color(color),
+        specular: 0x111111,
+        shininess: 200
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.name = name;
+    
+    // No coordinate transformations - load STL as-is from CadQuery
+    geometry.computeBoundingBox();
+    const center = new THREE.Vector3();
+    geometry.boundingBox.getCenter(center);
+    geometry.translate(-center.x, -center.y, -center.z);
+    
+    scene.add(mesh);
+    currentObjects.push(mesh);
+    fitCameraToObjects();
+}
+
+function fitCameraToObjects() {
+    if (currentObjects.length === 0) return;
+    const box = new THREE.Box3();
+    currentObjects.forEach(obj => box.expandByObject(obj));
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const fov = camera.fov * (Math.PI / 180);
+    const cameraZ = Math.abs(maxDim / (2 * Math.tan(fov / 2))) * 1.5;
+    camera.position.set(center.x + cameraZ, center.y + cameraZ, center.z + cameraZ);
+    camera.lookAt(center);
+    controls.target = center;
+    controls.update();
 }
