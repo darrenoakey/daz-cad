@@ -155,11 +155,24 @@ function loadSTL(stlData, name, color, transform) {
     mesh.receiveShadow = true;
     mesh.name = name;
     
-    // No coordinate transformations - load STL as-is from CadQuery
-    geometry.computeBoundingBox();
-    const center = new THREE.Vector3();
-    geometry.boundingBox.getCenter(center);
-    geometry.translate(-center.x, -center.y, -center.z);
+    // Apply transformation matrix if provided (for assembly objects with locations)
+    if (transform && transform.length === 16) {
+        const matrix = new THREE.Matrix4();
+        matrix.set(
+            transform[0], transform[1], transform[2], transform[3],
+            transform[4], transform[5], transform[6], transform[7],
+            transform[8], transform[9], transform[10], transform[11],
+            transform[12], transform[13], transform[14], transform[15]
+        );
+        mesh.applyMatrix4(matrix);
+        console.log(`Applied transform to ${name}:`, transform);
+    } else {
+        // Center geometry at origin if no transform (for single objects)
+        geometry.computeBoundingBox();
+        const center = new THREE.Vector3();
+        geometry.boundingBox.getCenter(center);
+        geometry.translate(-center.x, -center.y, -center.z);
+    }
     
     scene.add(mesh);
     currentObjects.push(mesh);

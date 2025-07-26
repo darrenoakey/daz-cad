@@ -41,6 +41,27 @@ def export_shape_to_stl(shape):
             os.unlink(tmp_path)
 
 
+def get_location_matrix(location):
+    """Convert CadQuery Location to transformation matrix - no coordinate conversion."""
+    if not location:
+        return None
+
+    # Get the transformation matrix from the location
+    trsf = location.wrapped.Transformation()
+
+    # Extract the raw transformation matrix without any coordinate system conversion
+    # Since we fixed the coordinate system in Three.js with Z-up, we can use the 
+    # CadQuery transformation matrix directly
+    matrix = [
+        trsf.Value(1, 1), trsf.Value(1, 2), trsf.Value(1, 3), 0,  # Row 1
+        trsf.Value(2, 1), trsf.Value(2, 2), trsf.Value(2, 3), 0,  # Row 2  
+        trsf.Value(3, 1), trsf.Value(3, 2), trsf.Value(3, 3), 0,  # Row 3
+        trsf.Value(1, 4), trsf.Value(2, 4), trsf.Value(3, 4), 1   # Translation + homogeneous
+    ]
+
+    return matrix
+
+
 def process_assembly(shown):
     """Process an Assembly object and return list of result objects."""
     results = []
@@ -62,11 +83,17 @@ def process_assembly(shown):
                 color_tuple = child.color.toTuple() if child.color else None
                 part_color = color_to_hex(color_tuple)
 
+                # Get transformation matrix if location exists
+                transform = None
+                if hasattr(child, 'loc') and child.loc:
+                    transform = get_location_matrix(child.loc)
+                    print(f"  Transform matrix: {transform}")
+
                 results.append({
                     'name': f"{shown['name']}_{child.name}",
                     'color': part_color,
                     'stl': stl_data,
-                    'transform': None  # No transformations applied
+                    'transform': transform  # Include transformation matrix
                 })
                 print(f"  Successfully exported {child.name} with color {part_color}")
 
