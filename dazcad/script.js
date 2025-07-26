@@ -1,63 +1,61 @@
-// Global variables
 let scene, camera, renderer, controls;
 let currentObjects = [];
 let codeEditor;
 
-// Initialize Three.js viewer
 function initViewer() {
     const container = document.getElementById('viewer3d');
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
 
-    // Scene setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0a0a);
     scene.fog = new THREE.Fog(0x0a0a0a, 200, 1000);
 
-    // Camera setup
-    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
     camera.position.set(50, 50, 50);
 
-    // Renderer setup
     renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
+    renderer.setSize(w, h);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(renderer.domElement);
 
-    // Controls setup
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 2);
-    scene.add(ambientLight);
+    scene.add(new THREE.AmbientLight(0x404040, 2));
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-    directionalLight.position.set(50, 100, 50);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.camera.near = 0.1;
-    directionalLight.shadow.camera.far = 500;
-    directionalLight.shadow.camera.left = -100;
-    directionalLight.shadow.camera.right = 100;
-    directionalLight.shadow.camera.top = 100;
-    directionalLight.shadow.camera.bottom = -100;
-    scene.add(directionalLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(50, 100, 50);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.near = 0.1;
+    dirLight.shadow.camera.far = 500;
+    dirLight.shadow.camera.left = -100;
+    dirLight.shadow.camera.right = 100;
+    dirLight.shadow.camera.top = 100;
+    dirLight.shadow.camera.bottom = -100;
+    scene.add(dirLight);
 
-    // Grid helper
-    const gridHelper = new THREE.GridHelper(100, 20, 0x444444, 0x222222);
-    scene.add(gridHelper);
+    scene.add(new THREE.GridHelper(100, 20, 0x444444, 0x222222));
+
+    // Add axes with labels
+    scene.add(new THREE.AxesHelper(20));
+    
+    const d = 22;
+    scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.8), new THREE.MeshBasicMaterial({color: 0xff4444}))).position.set(d, 0, 0);
+    scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({color: 0x884444}))).position.set(-d, 0, 0);
+    scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.8), new THREE.MeshBasicMaterial({color: 0x44ff44}))).position.set(0, d, 0);
+    scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({color: 0x448844}))).position.set(0, -d, 0);
+    scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.8), new THREE.MeshBasicMaterial({color: 0x4444ff}))).position.set(0, 0, d);
+    scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({color: 0x444488}))).position.set(0, 0, -d);
 
     window.addEventListener('resize', onWindowResize, false);
     animate();
 }
 
-// Initialize CodeMirror editor
 function initCodeEditor() {
-    const editorElement = document.getElementById('codeEditor');
-    
-    codeEditor = CodeMirror(editorElement, {
+    codeEditor = CodeMirror(document.getElementById('codeEditor'), {
         mode: 'python',
         theme: 'monokai',
         lineNumbers: true,
@@ -75,34 +73,31 @@ function initCodeEditor() {
                 if (cm.somethingSelected()) {
                     cm.indentSelection("add");
                 } else {
-                    cm.replaceSelection(cm.getOption("indentWithTabs") ? "\\t" :
-                        Array(cm.getOption("indentUnit") + 1).join(" "), "end", "+input");
+                    cm.replaceSelection(Array(cm.getOption("indentUnit") + 1).join(" "), "end", "+input");
                 }
             }
         },
         value: `import cadquery as cq
-
-# Create colored boxes
 assembly = cq.Assembly()
-
-box1 = cq.Workplane("XY").box(10, 10, 10)
-assembly.add(box1, name="RedBox", color=cq.Color("red"))
-
-box2 = cq.Workplane("XY").box(10, 10, 10)
-assembly.add(box2, name="BlueBox", loc=cq.Location(cq.Vector(20, 0, 0)), color=cq.Color("blue"))
-
-show_object(assembly, "ColoredAssembly")`
+box1 = cq.Workplane("XY").box(5, 5, 5)
+assembly.add(box1, name="Origin", color=cq.Color("red"))
+box2 = cq.Workplane("XY").box(5, 5, 5)
+assembly.add(box2, name="PlusX", loc=cq.Location(cq.Vector(10, 0, 0)), color=cq.Color("orange"))
+box3 = cq.Workplane("XY").box(5, 5, 5)
+assembly.add(box3, name="PlusY", loc=cq.Location(cq.Vector(0, 10, 0)), color=cq.Color("yellow"))
+box4 = cq.Workplane("XY").box(5, 5, 5)
+assembly.add(box4, name="PlusZ", loc=cq.Location(cq.Vector(0, 0, 10)), color=cq.Color("green"))
+show_object(assembly, "CoordinateTest")`
     });
 }
 
 function onWindowResize() {
     const container = document.getElementById('viewer3d');
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    camera.aspect = width / height;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(width, height);
+    renderer.setSize(w, h);
 }
 
 function animate() {
@@ -112,39 +107,31 @@ function animate() {
 }
 
 function clearScene() {
-    currentObjects.forEach(obj => {
-        scene.remove(obj);
-    });
+    currentObjects.forEach(obj => scene.remove(obj));
     currentObjects = [];
 }
 
 function loadSTL(stlData, name, color, transform) {
     const loader = new THREE.STLLoader();
     
-    // Convert base64 to binary
     const binaryString = atob(stlData);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
     }
     
-    // Parse STL
     const geometry = loader.parse(bytes.buffer);
-    
-    // Create material
     const material = new THREE.MeshPhongMaterial({
         color: new THREE.Color(color),
         specular: 0x111111,
         shininess: 200
     });
     
-    // Create mesh
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.name = name;
     
-    // Apply transformation if provided
     if (transform && transform.length === 16) {
         const matrix = new THREE.Matrix4();
         matrix.set(
@@ -157,7 +144,6 @@ function loadSTL(stlData, name, color, transform) {
         mesh.applyMatrix4(matrix);
         console.log(`Applied transform to ${name}:`, transform);
     } else {
-        // Center the geometry at origin
         geometry.computeBoundingBox();
         const center = new THREE.Vector3();
         geometry.boundingBox.getCenter(center);
@@ -173,9 +159,7 @@ function fitCameraToObjects() {
     if (currentObjects.length === 0) return;
     
     const box = new THREE.Box3();
-    currentObjects.forEach(obj => {
-        box.expandByObject(obj);
-    });
+    currentObjects.forEach(obj => box.expandByObject(obj));
     
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
@@ -200,9 +184,7 @@ async function runCode() {
     try {
         const response = await fetch('/run', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: code })
         });
         
@@ -210,11 +192,9 @@ async function runCode() {
         
         if (result.success) {
             clearScene();
-            
             result.objects.forEach(obj => {
                 loadSTL(obj.stl, obj.name, obj.color, obj.transform);
             });
-            
             outputDiv.innerHTML = `<span class="success-output">Success!</span>\\n${result.output || ''}`;
         } else {
             outputDiv.innerHTML = `<span class="error-output">Error: ${result.error}</span>`;
@@ -227,11 +207,9 @@ async function runCode() {
     }
 }
 
-// Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     initViewer();
     initCodeEditor();
-    initChat(); // From chat.js
-    
+    initChat();
     document.getElementById('runButton').addEventListener('click', runCode);
 });

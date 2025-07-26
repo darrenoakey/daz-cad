@@ -49,43 +49,45 @@ def get_location_matrix(location):
     # Get the transformation matrix from the location
     trsf = location.wrapped.Transformation()
 
-    # Extract the 3x3 rotation matrix and translation from OCC
-    # CadQuery uses: X=right, Y=forward/back, Z=up
-    # Three.js uses: X=right, Y=up, Z=forward/back
-    # So we need to swap Y and Z coordinates
+    # CadQuery uses: X=right, Y=forward, Z=up
+    # Three.js uses: X=right, Y=up, Z=forward
+    # Mapping: CadQuery X→Three.js X, CadQuery Z→Three.js Y, CadQuery Y→Three.js Z
+
+    # Three.js matrix is column-major: [Xx,Xy,Xz,0, Yx,Yy,Yz,0, Zx,Zy,Zz,0, Tx,Ty,Tz,1]
+    # Where X,Y,Z are basis vectors and T is translation
 
     matrix = []
 
-    # First row (X axis) - keep X, swap Y↔Z
+    # First column: Three.js X axis = CadQuery X axis
     matrix.extend([
-        trsf.Value(1, 1),  # XX stays
-        trsf.Value(1, 3),  # XZ → XY
-        trsf.Value(1, 2),  # XY → XZ
+        trsf.Value(1, 1),  # Xx = CadQuery Xx
+        trsf.Value(2, 1),  # Xy = CadQuery Yx
+        trsf.Value(3, 1),  # Xz = CadQuery Zx
         0
     ])
 
-    # Second row (Y axis) - this becomes Z in Three.js, so use CadQuery's Z row
+    # Second column: Three.js Y axis = CadQuery Z axis
     matrix.extend([
-        trsf.Value(3, 1),  # ZX → YX
-        trsf.Value(3, 3),  # ZZ → YY
-        trsf.Value(3, 2),  # ZY → YZ
+        trsf.Value(1, 3),  # Yx = CadQuery Xz
+        trsf.Value(2, 3),  # Yy = CadQuery Yz
+        trsf.Value(3, 3),  # Yz = CadQuery Zz
         0
     ])
 
-    # Third row (Z axis) - this becomes Y in Three.js, so use CadQuery's Y row
+    # Third column: Three.js Z axis = CadQuery Y axis
     matrix.extend([
-        trsf.Value(2, 1),  # YX → ZX
-        trsf.Value(2, 3),  # YZ → ZY
-        trsf.Value(2, 2),  # YY → ZZ
+        trsf.Value(1, 2),  # Zx = CadQuery Xy
+        trsf.Value(2, 2),  # Zy = CadQuery Yy
+        trsf.Value(3, 2),  # Zz = CadQuery Zy
         0
     ])
 
-    # Translation - swap Y and Z coordinates
+    # Fourth column: Translation with coordinate swap
     trans = trsf.TranslationPart()
     matrix.extend([
-        trans.X(),  # X stays the same
-        trans.Z(),  # Z becomes Y (up)
-        trans.Y(),  # Y becomes Z (forward/back)
+        trans.X(),  # Tx = CadQuery X (unchanged)
+        trans.Z(),  # Ty = CadQuery Z (up becomes up)
+        trans.Y(),  # Tz = CadQuery Y (forward becomes forward)
         1
     ])
 
