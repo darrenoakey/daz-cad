@@ -141,32 +141,21 @@ function loadSTL(stlData, name, color, transform) {
     if (transform && transform.length === 16) {
         console.log(`Applying transform to ${name}:`, transform);
         
-        // Convert from OpenCascade row-major format to Three.js column-major format
-        // OpenCascade: [m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, tx, ty, tz, m44]
-        // Three.js:    [m11, m21, m31, tx,  m12, m22, m32, ty,  m13, m23, m33, tz,  m14, m24, m34, m44]
+        // Backend sends row-major format: [m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44]
+        // Three.js Matrix4.set() expects column-major: (m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43, m14, m24, m34, m44)
+        // Translation values are at positions 3, 7, 11 in the backend array (m14, m24, m34)
         const matrix = new THREE.Matrix4();
         matrix.set(
-            transform[0],  transform[4],  transform[8],  transform[12], // Column 1: m11, m21, m31, tx
-            transform[1],  transform[5],  transform[9],  transform[13], // Column 2: m12, m22, m32, ty  
-            transform[2],  transform[6],  transform[10], transform[14], // Column 3: m13, m23, m33, tz
-            transform[3],  transform[7],  transform[11], transform[15]  // Column 4: m14, m24, m34, m44
+            transform[0],  transform[4],  transform[8],  transform[12], // Column 1: m11, m21, m31, m41
+            transform[1],  transform[5],  transform[9],  transform[13], // Column 2: m12, m22, m32, m42  
+            transform[2],  transform[6],  transform[10], transform[14], // Column 3: m13, m23, m33, m43
+            transform[3],  transform[7],  transform[11], transform[15]  // Column 4: m14, m24, m34, m44 (translations in first 3)
         );
         
         console.log(`Three.js Matrix4 for ${name}:`, matrix.elements);
         
-        // Extract position, rotation, and scale from the transformation matrix
-        const position = new THREE.Vector3();
-        const rotation = new THREE.Euler();
-        const scale = new THREE.Vector3();
-        
-        position.setFromMatrixPosition(matrix);
-        rotation.setFromRotationMatrix(matrix);
-        scale.setFromMatrixScale(matrix);
-        
-        // Apply the transformations to the mesh
-        mesh.position.copy(position);
-        mesh.rotation.copy(rotation);
-        mesh.scale.copy(scale);
+        // Apply the matrix directly to the mesh
+        mesh.applyMatrix4(matrix);
         
         console.log(`Mesh ${name} position after transform:`, mesh.position);
         console.log(`Mesh ${name} rotation after transform:`, mesh.rotation);
