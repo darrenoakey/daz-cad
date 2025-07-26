@@ -13,7 +13,7 @@ except ImportError:
 
 # Global LLM instance and model name
 LLM_INSTANCE = None
-LLM_MODEL_NAME = "ollama:mixtral8:7b"  # Default model
+LLM_MODEL_NAME = "ollama:8x7b"  # Default model
 
 
 class CodeResponse(BaseModel):
@@ -44,17 +44,7 @@ def get_llm():
 
 
 def improve_code_with_llm(user_message, current_code, run_code_func):
-    """
-    Iteratively improve code using LLM
-
-    Args:
-        user_message: User's request
-        current_code: Current CadQuery code
-        run_code_func: Function to test code execution
-
-    Returns:
-        dict: Result with success status, response, new_code, objects, etc.
-    """
+    """Iteratively improve code using LLM"""
     if not DAZLLM_AVAILABLE:
         return {
             "success": False,
@@ -156,7 +146,6 @@ class LlmChatTests(unittest.TestCase):
 
     def test_llm_availability(self):
         """Test LLM availability check"""
-        # Should not raise an exception
         available = is_llm_available()
         self.assertIsInstance(available, bool)
 
@@ -172,35 +161,54 @@ class LlmChatTests(unittest.TestCase):
         self.assertEqual(len(response.changes_made), 1)
 
     def test_default_model_name(self):
-        """Test that default model name is ollama:mixtral8:7b"""
-        self.assertEqual(get_current_model(), "ollama:mixtral8:7b")
+        """Test that default model name is ollama:8x7b"""
+        self.assertEqual(get_current_model(), "ollama:8x7b")
 
     @unittest.skipIf(not DAZLLM_AVAILABLE, "dazllm not available")
     def test_llm_initialization_with_default_model(self):
         """Test LLM initialization with the default model"""
-        # Reset to ensure clean test
         global LLM_INSTANCE  # pylint: disable=global-statement
         LLM_INSTANCE = None
 
-        # This should attempt to initialize with the default model
         llm = get_llm()
-
-        # If dazllm is available but model fails, llm will be None
-        # If successful, llm will be an instance
-        # We test that the function doesn't crash and returns something expected
         self.assertTrue(llm is None or hasattr(llm, 'chat_structured'))
+        self.assertEqual(get_current_model(), "ollama:8x7b")
 
-        # Test that the model name is set correctly
-        self.assertEqual(get_current_model(), "ollama:mixtral8:7b")
+    @unittest.skipIf(not DAZLLM_AVAILABLE, "dazllm not available")
+    def test_llm_actually_works(self):
+        """Test that the default model actually responds to simple queries"""
+        global LLM_INSTANCE  # pylint: disable=global-statement
+        LLM_INSTANCE = None
+
+        llm = get_llm()
+        if llm is None:
+            self.skipTest("LLM model not available - skipping integration test")
+            return
+
+        test_query = "What is 2 + 2? Answer with just the number."
+
+        try:
+            response = llm.chat(test_query)
+            self.assertIsNotNone(response, "LLM should return a response")
+            self.assertNotEqual(response.strip(), "", "LLM response should not be empty")
+            self.assertNotEqual(response.strip(), test_query,
+                              "LLM response should be different from input")
+            self.assertLess(len(response), 100, "Response should be concise")
+            print(f"✓ LLM test passed. Query: '{test_query}' Response: '{response.strip()}'")
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            # Skip test if service unavailable
+            error_str = str(e).lower()
+            if any(keyword in error_str for keyword in ["404", "ollama", "api error", "not found",
+                                                       "connection", "service"]):
+                self.skipTest(f"LLM service not available: {e}")
+            else:
+                self.fail(f"LLM call failed with unexpected error: {e}")
 
     def test_set_llm_model(self):
         """Test setting a custom LLM model"""
         original_model = get_current_model()
-
-        # Set a custom model
         set_llm_model("test:model")
         self.assertEqual(get_current_model(), "test:model")
-
-        # Reset to original
         set_llm_model(original_model)
         self.assertEqual(get_current_model(), original_model)

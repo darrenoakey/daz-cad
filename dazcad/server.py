@@ -151,8 +151,8 @@ def parse_arguments():
     parser.add_argument(
         '--model',
         type=str,
-        default='ollama:mixtral8:7b',
-        help='LLM model to use (default: ollama:mixtral8:7b)'
+        default='ollama:8x7b',
+        help='LLM model to use (default: ollama:8x7b)'
     )
     parser.add_argument(
         '--host',
@@ -191,7 +191,7 @@ class ServerTests(unittest.TestCase):
             # Test with no arguments
             sys.argv = ['server.py']
             parsed_args = parse_arguments()
-            self.assertEqual(parsed_args.model, 'ollama:mixtral8:7b')
+            self.assertEqual(parsed_args.model, 'ollama:8x7b')
             self.assertEqual(parsed_args.host, '127.0.0.1')
             self.assertEqual(parsed_args.port, 8000)
             self.assertFalse(parsed_args.debug)
