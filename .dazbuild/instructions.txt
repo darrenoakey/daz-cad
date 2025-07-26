@@ -9,6 +9,23 @@ When you call `dazbuild_end_change`, the following checks must pass:
 4. **No unittest.main()**: Files cannot invoke unittest.main() directly
 5. **File Size Limit**: All code files must be smaller than 8192 bytes
 
+## Code Quality Philosophy
+
+### NEVER Optimize by Trimming Code
+- **CRITICAL**: Never reduce file size by removing comments, shortening variable names, compacting formatting, or removing functionality
+- **CRITICAL**: Never trim verbose code examples or documentation to meet size limits
+- **CRITICAL**: Clean, verbose, readable code is THE TOP PRIORITY - never compromise this
+
+### File Size Management - The RIGHT Way
+- **When files exceed 8192 bytes**: ALWAYS refactor into multiple logical smaller files
+- **Split by logical boundaries**: Create separate files for related functionality
+- **Common refactoring patterns**:
+  - Extract utility functions into `*_utils.py`
+  - Split large classes into focused smaller classes
+  - Create separate modules for different concerns (e.g., `*_processor.py`, `*_chat.py`, `*_viewer.py`)
+  - Move test classes to separate test files if needed
+- **Example**: If `script.js` is too large, split into `viewer.js`, `editor.js`, `ui.js`, etc.
+
 ## Best Practices for Using Dazbuild
 
 ### Work with Small References
@@ -23,12 +40,12 @@ When you call `dazbuild_end_change`, the following checks must pass:
 3. Use `dazbuild_write` or `dazbuild_add` for targeted changes
 4. `dazbuild_end_change` - Validate and commit
 
-### File Size Management
-- Keep code files under 8192 bytes
-- If a file grows too large, refactor into multiple smaller files
-- Split large classes into smaller, focused classes
-- Extract utility functions into separate modules
-- **Pattern**: Create focused modules like `*_processor.py`, `*_utils.py`, `*_chat.py`
+### Refactoring for Size Limits
+- **Step 1**: Identify logical boundaries in the oversized file
+- **Step 2**: Create new focused files for each logical group
+- **Step 3**: Move code maintaining all functionality and verbose style
+- **Step 4**: Update imports appropriately
+- **Step 5**: Ensure all tests still pass
 
 ### Import Handling
 - **Direct Execution vs Module Imports**: When files need to run both as scripts and as modules, use this pattern:
@@ -55,11 +72,13 @@ When you call `dazbuild_end_change`, the following checks must pass:
 - **When Refactoring**: Update test imports when moving functions between modules
 - **Pattern**: Test moved functions through their new module: `new_module.function_name()`
 
-### Code Quality
-- Write clean, readable code that passes pylint
-- Use meaningful variable and function names
-- Add docstrings for public methods and classes
+### Code Quality Standards
+- Write clean, verbose, readable code that passes pylint
+- Use meaningful, descriptive variable and function names
+- Add comprehensive docstrings for public methods and classes
 - Keep functions focused on a single responsibility
+- **Preserve Comments**: Keep all explanatory comments and documentation
+- **Verbose Examples**: Maintain clear, well-commented example code
 - **Remove Unused Imports**: Pylint will catch these - clean them up promptly
 
 ### Framework Preservation
@@ -69,7 +88,7 @@ When you call `dazbuild_end_change`, the following checks must pass:
 
 ### Progressive Error Resolution
 When `dazbuild_end_change` fails, fix issues in this order:
-1. **File Size**: Extract large files into focused modules first
+1. **File Size**: Extract large files into focused modules first (NEVER trim code)
 2. **Pylint Issues**: Fix trailing whitespace, unused imports, line length
 3. **Import Errors**: Add fallback imports for direct execution
 4. **Test Failures**: Update test imports after refactoring
@@ -80,3 +99,15 @@ When `dazbuild_end_change` fails, fix issues in this order:
 - **Iterative Processing**: Implement retry loops with error accumulation
 - **Graceful Degradation**: Provide fallbacks when external services unavailable
 - **Error Context**: Include previous errors in retry attempts for better results
+
+## File Size Crisis Response Protocol
+If a file exceeds the 8192 byte limit:
+
+1. **STOP**: Do not trim, compact, or remove any code
+2. **ANALYZE**: Identify logical boundaries in the file
+3. **PLAN**: Design how to split into smaller, focused files
+4. **REFACTOR**: Create new files and move code groups
+5. **TEST**: Ensure all functionality remains intact
+6. **MAINTAIN**: Keep all verbose code, comments, and examples
+
+Remember: Readable, maintainable code is worth more than any size optimization.
