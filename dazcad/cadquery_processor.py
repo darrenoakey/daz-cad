@@ -41,36 +41,6 @@ def export_shape_to_stl(shape):
             os.unlink(tmp_path)
 
 
-def get_location_matrix(location):
-    """Convert CadQuery Location to a transformation matrix for Three.js."""
-    if not location:
-        return None
-
-    # Get the transformation matrix from the location
-    trsf = location.wrapped.Transformation()
-
-    # For now, let's focus on getting translation right
-    # CadQuery: X=right, Y=forward, Z=up
-    # Three.js: X=right, Y=up, Z=forward
-    # Simple mapping: CadQuery X->X, CadQuery Z->Y, CadQuery Y->Z
-
-    # Identity rotation matrix for now, just fix translation
-    matrix = [
-        1, 0, 0, 0,  # X axis
-        0, 1, 0, 0,  # Y axis
-        0, 0, 1, 0,  # Z axis
-        0, 0, 0, 1   # Translation + homogeneous coordinate
-    ]
-
-    # Set translation with coordinate swap
-    trans = trsf.TranslationPart()
-    matrix[12] = trans.X()  # Three.js X = CadQuery X (unchanged)
-    matrix[13] = trans.Z()  # Three.js Y = CadQuery Z (up becomes up)
-    matrix[14] = trans.Y()  # Three.js Z = CadQuery Y (forward becomes forward)
-
-    return matrix
-
-
 def process_assembly(shown):
     """Process an Assembly object and return list of result objects."""
     results = []
@@ -92,17 +62,11 @@ def process_assembly(shown):
                 color_tuple = child.color.toTuple() if child.color else None
                 part_color = color_to_hex(color_tuple)
 
-                # Get transformation matrix if location exists
-                transform = None
-                if hasattr(child, 'loc') and child.loc:
-                    transform = get_location_matrix(child.loc)
-                    print(f"  Transform matrix: {transform}")
-
                 results.append({
                     'name': f"{shown['name']}_{child.name}",
                     'color': part_color,
                     'stl': stl_data,
-                    'transform': transform  # Include transformation matrix
+                    'transform': None  # No transformations applied
                 })
                 print(f"  Successfully exported {child.name} with color {part_color}")
 
@@ -200,19 +164,3 @@ class CadQueryProcessorTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result['name'], 'TestBox')
         self.assertEqual(result['color'], '#ff0000')
-
-    def test_coordinate_transformation(self):
-        """Test that coordinates are properly transformed from CadQuery to Three.js"""
-        # Create a simple location with translation only
-        # In CadQuery: move 1 unit right (X), 2 units forward (Y), 3 units up (Z)
-        location = cq.Location((1, 2, 3), (0, 0, 0))  # translation, rotation
-        matrix = get_location_matrix(location)
-
-        # In the resulting Three.js matrix, we expect:
-        # X=1 (unchanged), Y=3 (was Z), Z=2 (was Y)
-        # Matrix is in column-major format, translation is in positions 12, 13, 14
-        self.assertIsNotNone(matrix)
-        self.assertEqual(len(matrix), 16)
-        self.assertEqual(matrix[12], 1)  # Three.js X = CadQuery X (unchanged)
-        self.assertEqual(matrix[13], 3)  # Three.js Y = CadQuery Z (up)
-        self.assertEqual(matrix[14], 2)  # Three.js Z = CadQuery Y (forward)
