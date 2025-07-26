@@ -151,17 +151,23 @@ function loadSTL(stlData, name, color, transform) {
         
         console.log(`Three.js Matrix4 for ${name}:`, matrix.elements);
         
-        // Store original position for comparison
-        const originalPos = mesh.position.clone();
+        // Extract position, rotation, and scale from the transformation matrix
+        const position = new THREE.Vector3();
+        const rotation = new THREE.Euler();
+        const scale = new THREE.Vector3();
         
-        mesh.applyMatrix4(matrix);
+        position.setFromMatrixPosition(matrix);
+        rotation.setFromRotationMatrix(matrix);
+        scale.setFromMatrixScale(matrix);
+        
+        // Apply the transformations to the mesh
+        mesh.position.copy(position);
+        mesh.rotation.copy(rotation);
+        mesh.scale.copy(scale);
         
         console.log(`Mesh ${name} position after transform:`, mesh.position);
-        console.log(`Position change for ${name}:`, {
-            original: originalPos,
-            new: mesh.position,
-            delta: mesh.position.clone().sub(originalPos)
-        });
+        console.log(`Mesh ${name} rotation after transform:`, mesh.rotation);
+        console.log(`Mesh ${name} scale after transform:`, mesh.scale);
     } else {
         console.log(`No transform for ${name}, centering geometry`);
         // Center geometry at origin if no transform (for single objects)
