@@ -1,65 +1,48 @@
-"""CadQuery processing utilities for DazCAD."""
+"""CadQuery processing functions for DazCAD."""
 
-import base64
-import os
-import tempfile
 import traceback
 import unittest
 
-import cadquery as cq
+try:
+    import cadquery as cq
+    CADQUERY_AVAILABLE = True
+except ImportError:
+    CADQUERY_AVAILABLE = False
+
+# Import core utilities with fallback for direct execution
+try:
+    from .cadquery_core import color_to_hex, export_shape_to_stl, get_location_matrix
+except ImportError:
+    from cadquery_core import color_to_hex, export_shape_to_stl, get_location_matrix
 
 
-def color_to_hex(color_tuple):
-    """Convert Color tuple to hex string."""
-    if color_tuple:
-        # Color tuple is (r, g, b, a) with values 0-1
-        # Use round() for more accurate conversion
-        r = round(color_tuple[0] * 255)
-        g = round(color_tuple[1] * 255)
-        b = round(color_tuple[2] * 255)
-        return f"#{r:02x}{g:02x}{b:02x}"
-    return "#808080"
+def process_regular_object(shown):
+    """Process a regular CadQuery object (not an assembly).
 
+    Args:
+        shown: Dictionary with 'object', 'name', and 'color' keys
 
-def export_shape_to_stl(shape):
-    """Export a shape to STL and return base64 encoded data."""
-    with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp:
-        tmp_path = tmp.name
-
+    Returns:
+        Dictionary with 'name', 'color', 'stl', and 'transform' keys
+    """
     try:
-        # Export to STL
-        cq.exporters.export(shape, tmp_path, exportType='STL')
+        # Export the shape to STL
+        stl_data = export_shape_to_stl(shown['object'])
 
-        # Read STL file and encode to base64
-        with open(tmp_path, 'rb') as f:
-            stl_data = base64.b64encode(f.read()).decode('utf-8')
-        return stl_data
+        # Use provided color or default gray
+        color = shown.get('color', '#808080')
 
-    finally:
-        # Clean up temporary file
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        return {
+            'name': shown['name'],
+            'color': color,
+            'stl': stl_data,
+            'transform': None  # Regular objects don't have transforms
+        }
 
-
-def get_location_matrix(location):
-    """Convert CadQuery Location to transformation matrix - no coordinate conversion."""
-    if not location:
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"Error processing regular object {shown['name']}: {e}")
+        traceback.print_exc()
         return None
-
-    # Get the transformation matrix from the location
-    trsf = location.wrapped.Transformation()
-
-    # Extract the raw transformation matrix without any coordinate system conversion
-    # Since we fixed the coordinate system in Three.js with Z-up, we can use the
-    # CadQuery transformation matrix directly
-    matrix = [
-        trsf.Value(1, 1), trsf.Value(1, 2), trsf.Value(1, 3), 0,  # Row 1
-        trsf.Value(2, 1), trsf.Value(2, 2), trsf.Value(2, 3), 0,  # Row 2
-        trsf.Value(3, 1), trsf.Value(3, 2), trsf.Value(3, 3), 0,  # Row 3
-        trsf.Value(1, 4), trsf.Value(2, 4), trsf.Value(3, 4), 1   # Translation + homogeneous
-    ]
-
-    return matrix
 
 
 def process_assembly(shown):
@@ -71,6 +54,17 @@ def process_assembly(shown):
 
     for i, child in enumerate(obj.children):
         print(f"\\nProcessing child {i}: {child.name}")
+
+        # Debug: Let's see what's actually in the child object
+        print(f"  Child attributes: {dir(child)}")
+        if hasattr(child, 'loc'):
+            print(f"  Child.loc exists: {child.loc}")
+            print(f"  Child.loc type: {type(child.loc)}")
+            if child.loc:
+                print(f"  Location wrapped: {child.loc.wrapped}")
+                trsf = child.loc.wrapped.Transformation()
+                print("  Raw transformation values:")
+                print(f"    Translation: ({trsf.Value(1,4)}, {trsf.Value(2,4)}, {trsf.Value(3,4)})")
 
         # Assembly children have an 'obj' attribute containing the shape
         if hasattr(child, 'obj'):
@@ -88,6 +82,8 @@ def process_assembly(shown):
                 if hasattr(child, 'loc') and child.loc:
                     transform = get_location_matrix(child.loc)
                     print(f"  Transform matrix: {transform}")
+                else:
+                    print(f"  No location found for {child.name}")
 
                 results.append({
                     'name': f"{shown['name']}_{child.name}",
@@ -104,90 +100,107 @@ def process_assembly(shown):
     return results
 
 
-def process_regular_object(shown):
-    """Process a regular CadQuery object and return result object."""
-    obj = shown['object']
+def process_objects(shown_objects):
+    """Process a list of shown objects and return a flat list of results.
 
-    # Skip if not a CadQuery object
-    if not hasattr(obj, 'val') and not hasattr(obj, 'exportStl'):
-        return None
+    Args:
+        shown_objects: List of dictionaries with 'object', 'name', and 'color' keys
 
-    # Create temporary STL file
-    with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as tmp:
-        tmp_path = tmp.name
-
-    try:
-        # Export to STL using CadQuery's built-in exporter
-        if hasattr(obj, 'exportStl'):
-            obj.exportStl(tmp_path)
-        else:
-            # For other CadQuery objects, try to export
-            cq.exporters.export(obj, tmp_path, exportType='STL')
-
-        # Read STL file and encode to base64
-        with open(tmp_path, 'rb') as f:
-            stl_data = base64.b64encode(f.read()).decode('utf-8')
-
-        return {
-            'name': shown['name'],
-            'color': shown['color'] or '#808080',
-            'stl': stl_data,
-            'transform': None  # No transform for regular objects
-        }
-
-    finally:
-        # Clean up temporary file
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-
-def process_objects(shown_objs):
-    """Process all shown objects and return results."""
+    Returns:
+        List of processed object dictionaries ready for visualization
+    """
     result_objects = []
 
-    for shown in shown_objs:
-        obj = shown['object']
-        print(f"\\nProcessing shown object: {shown['name']}")
-        print(f"Object type: {type(obj)}")
+    for shown in shown_objects:
+        try:
+            obj = shown['object']
 
-        # Check if it's an Assembly
-        is_assembly = isinstance(obj, cq.Assembly)
-        print(f"Is assembly: {is_assembly}")
+            # Check if it's an Assembly
+            if hasattr(obj, 'children') and hasattr(obj, 'add'):
+                # It's an Assembly - process all children
+                assembly_results = process_assembly(shown)
+                result_objects.extend(assembly_results)
+            else:
+                # It's a regular CadQuery object
+                result = process_regular_object(shown)
+                if result:
+                    result_objects.append(result)
 
-        if is_assembly:
-            # Process assembly parts
-            results = process_assembly(shown)
-            result_objects.extend(results)
-        else:
-            # Process regular object
-            result = process_regular_object(shown)
-            if result:
-                result_objects.append(result)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"Error processing object {shown.get('name', 'Unknown')}: {e}")
+            traceback.print_exc()
 
     return result_objects
 
 
-class CadQueryProcessorTests(unittest.TestCase):
-    """Test CadQuery processing functionality"""
+class TestCadQueryProcessor(unittest.TestCase):
+    """Unit tests for CadQuery processor functions."""
 
-    def test_color_to_hex(self):
-        """Test color conversion"""
-        self.assertEqual(color_to_hex((1.0, 0.0, 0.0)), "#ff0000")
-        self.assertEqual(color_to_hex((0.0, 1.0, 0.0)), "#00ff00")
-        self.assertEqual(color_to_hex((0.0, 0.0, 1.0)), "#0000ff")
+    @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
+    def test_process_objects(self):
+        """Test the main process_objects function."""
+        # Create a simple object
+        box = cq.Workplane("XY").box(5, 5, 5)
+        shown_objects = [{
+            'object': box,
+            'name': 'TestBox',
+            'color': '#ff0000'
+        }]
 
-    def test_export_shape_to_stl(self):
-        """Test STL export"""
-        box = cq.Workplane("XY").box(1, 1, 1)
-        stl_data = export_shape_to_stl(box)
-        self.assertIsNotNone(stl_data)
-        self.assertIsInstance(stl_data, str)
+        # Process the objects
+        results = process_objects(shown_objects)
 
+        # Should get one result
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['name'], 'TestBox')
+        self.assertEqual(results[0]['color'], '#ff0000')
+        self.assertIn('stl', results[0])
+
+    @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
+    def test_process_assembly(self):
+        """Test processing assemblies."""
+        # Create a simple assembly
+        assembly = cq.Assembly()
+        box1 = cq.Workplane("XY").box(10, 10, 10)
+        box2 = cq.Workplane("XY").box(5, 5, 5)
+
+        # Add them to assembly with colors
+        assembly.add(box1, name="RedBox", color=cq.Color("red"))
+        assembly.add(box2, name="GreenBox", color=cq.Color("green"))
+
+        # Create shown object
+        shown = {
+            'object': assembly,
+            'name': 'TestAssembly',
+            'color': None
+        }
+
+        # Process the assembly
+        results = process_assembly(shown)
+
+        # Should get two results
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]['name'], 'TestAssembly_RedBox')
+        self.assertEqual(results[1]['name'], 'TestAssembly_GreenBox')
+
+    @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
     def test_process_regular_object(self):
-        """Test processing a regular CadQuery object"""
-        box = cq.Workplane("XY").box(1, 1, 1)
-        shown = {'object': box, 'name': 'TestBox', 'color': '#ff0000'}
+        """Test processing regular objects."""
+        # Create a box
+        box = cq.Workplane("XY").box(10, 10, 10)
+
+        # Create shown object
+        shown = {
+            'object': box,
+            'name': 'TestBox',
+            'color': '#FF0000'
+        }
+
+        # Process it
         result = process_regular_object(shown)
+
+        # Verify result
         self.assertIsNotNone(result)
         self.assertEqual(result['name'], 'TestBox')
-        self.assertEqual(result['color'], '#ff0000')
+        self.assertEqual(result['color'], '#FF0000')
+        self.assertIn('stl', result)
