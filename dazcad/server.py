@@ -49,26 +49,42 @@ async def style(_request):
 
 @app.route("/script.js")
 async def script(_request):
-    """Serve the JavaScript file."""
-    return await response.file('script.js')
+    """Serve the JavaScript file with cache-busting headers."""
+    resp = await response.file('script.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @app.route("/chat.js")
 async def chat_script(_request):
-    """Serve the Chat JavaScript file."""
-    return await response.file('chat.js')
+    """Serve the Chat JavaScript file with cache-busting headers."""
+    resp = await response.file('chat.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @app.route("/viewer.js")
 async def viewer_script(_request):
-    """Serve the Viewer JavaScript file."""
-    return await response.file('viewer.js')
+    """Serve the Viewer JavaScript file with cache-busting headers."""
+    resp = await response.file('viewer.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @app.route("/editor.js")
 async def editor_script(_request):
-    """Serve the Editor JavaScript file."""
-    return await response.file('editor.js')
+    """Serve the Editor JavaScript file with cache-busting headers."""
+    resp = await response.file('editor.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 def run_cadquery_code(code_str):

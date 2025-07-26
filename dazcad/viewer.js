@@ -73,42 +73,10 @@ function initViewer() {
     grid.rotateX(Math.PI / 2); // Rotate to XY plane to match CadQuery
     scene.add(grid);
     
-    // Create custom axes with correct CadQuery coordinate system
-    const axesGroup = new THREE.Group();
-    
-    // X-axis (Red in CadQuery coordinate system)
-    const xGeometry = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(20, 0, 0)
-    ]);
-    const xMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
-    const xLine = new THREE.Line(xGeometry, xMaterial);
-    axesGroup.add(xLine);
-    
-    // Y-axis (Green in CadQuery coordinate system)
-    const yGeometry = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, 20, 0)
-    ]);
-    const yMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
-    const yLine = new THREE.Line(yGeometry, yMaterial);
-    axesGroup.add(yLine);
-    
-    // Z-axis (Blue in CadQuery coordinate system)
-    const zGeometry = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, 0, 20)
-    ]);
-    const zMaterial = new THREE.LineBasicMaterial({ color: 0x0000ff });
-    const zLine = new THREE.Line(zGeometry, zMaterial);
-    axesGroup.add(zLine);
-    
-    scene.add(axesGroup);
-    
-    // Add X, Y, and Z labels at the end of the axes
-    const xLabel = createAxisLabel('X', new THREE.Vector3(22, 0, 0), '#ff0000');
-    const yLabel = createAxisLabel('Y', new THREE.Vector3(0, 22, 0), '#00ff00');
-    const zLabel = createAxisLabel('Z', new THREE.Vector3(0, 0, 22), '#0000ff');
+    // Add X, Y, and Z labels at the edges of the grid (50 units from center)
+    const xLabel = createAxisLabel('X', new THREE.Vector3(50, 0, 0), '#ffffff');
+    const yLabel = createAxisLabel('Y', new THREE.Vector3(0, 50, 0), '#ffffff');
+    const zLabel = createAxisLabel('Z', new THREE.Vector3(0, 0, 50), '#ffffff');
     scene.add(xLabel);
     scene.add(yLabel);
     scene.add(zLabel);

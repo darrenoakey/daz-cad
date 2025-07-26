@@ -6,6 +6,11 @@
     <title>DazCAD - CadQuery Runner</title>
     <link rel="stylesheet" href="style.css">
     
+    <!-- Prevent caching of JavaScript files -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    
     <!-- CodeMirror CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/codemirror.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/theme/monokai.min.css">
@@ -49,10 +54,18 @@
         </div>
     </div>
     
-    <!-- Application scripts in correct order -->
-    <script src="viewer.js"></script>
-    <script src="editor.js"></script>
-    <script src="chat.js"></script>
-    <script src="script.js"></script>
+    <!-- Application scripts with cache-busting timestamps -->
+    <script>
+        // Cache-busting timestamp
+        const timestamp = Date.now();
+        
+        // Load scripts with timestamp to prevent caching
+        const scripts = ['viewer.js', 'editor.js', 'chat.js', 'script.js'];
+        scripts.forEach(src => {
+            const script = document.createElement('script');
+            script.src = src + '?t=' + timestamp;
+            document.head.appendChild(script);
+        });
+    </script>
 </body>
 </html>
