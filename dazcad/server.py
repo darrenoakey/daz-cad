@@ -59,6 +59,18 @@ async def chat_script(_request):
     return await response.file('chat.js')
 
 
+@app.route("/viewer.js")
+async def viewer_script(_request):
+    """Serve the Viewer JavaScript file."""
+    return await response.file('viewer.js')
+
+
+@app.route("/editor.js")
+async def editor_script(_request):
+    """Serve the Editor JavaScript file."""
+    return await response.file('editor.js')
+
+
 def run_cadquery_code(code_str):
     """Execute CadQuery code and capture results"""
     global shown_objects  # pylint: disable=global-statement
