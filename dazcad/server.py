@@ -14,10 +14,12 @@ from sanic.response import json as json_response
 try:
     from .llm_chat import improve_code_with_llm, is_llm_available, set_llm_model
     from .cadquery_processor import process_objects
+    from .download_handler import handle_download_request
 except ImportError:
     # Fallback for direct execution
     from llm_chat import improve_code_with_llm, is_llm_available, set_llm_model
     from cadquery_processor import process_objects
+    from download_handler import handle_download_request
 
 app = Sanic("dazcad")
 
@@ -152,6 +154,12 @@ async def run_code(request):
             'success': False,
             'error': str(e)
         })
+
+
+@app.route("/download/<export_format>", methods=["GET"])
+async def download_format(request, export_format):
+    """Download the current assembly in the specified format."""
+    return await handle_download_request(request, export_format, shown_objects)
 
 
 @app.route("/chat", methods=["POST"])

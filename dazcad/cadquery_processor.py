@@ -11,9 +11,11 @@ except ImportError:
 
 # Import core utilities with fallback for direct execution
 try:
-    from .cadquery_core import color_to_hex, export_shape_to_stl, get_location_matrix
+    from .cadquery_core import color_to_hex, get_location_matrix
+    from .export_utils import export_shape_to_stl
 except ImportError:
-    from cadquery_core import color_to_hex, export_shape_to_stl, get_location_matrix
+    from cadquery_core import color_to_hex, get_location_matrix
+    from export_utils import export_shape_to_stl
 
 
 def process_regular_object(shown):

@@ -26,10 +26,19 @@
     <div class="container">
         <div class="toolbar">
             <button id="runButton" class="run-button">Run</button>
+            <div class="download-section">
+                <span class="download-label">Download:</span>
+                <button id="downloadStlButton" class="download-button">STL</button>
+                <button id="downloadStepButton" class="download-button">STEP</button>
+            </div>
         </div>
         <div class="main-content">
             <div class="left-panel">
                 <div class="editor-panel">
+                    <div class="name-field-container">
+                        <label for="modelName" class="name-label">Name:</label>
+                        <input type="text" id="modelName" class="name-input" value="example" placeholder="Enter model name">
+                    </div>
                     <div class="panel-header">Python Code Editor</div>
                     <div id="codeEditor"></div>
                 </div>

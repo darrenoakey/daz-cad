@@ -22,7 +22,7 @@ When you call `dazbuild_end_change`, the following checks must pass:
 - **Common refactoring patterns**:
   - Extract utility functions into `*_utils.py`
   - Split large classes into focused smaller classes
-  - Create separate modules for different concerns (e.g., `*_processor.py`, `*_chat.py`, `*_viewer.py`)
+  - Create separate modules for different concerns (e.g., `*_processor.py`, `*_chat.py`, `*_viewer.js`)
   - Move test classes to separate test files if needed
 - **Example**: If `script.js` is too large, split into `viewer.js`, `editor.js`, `ui.js`, etc.
 
@@ -88,12 +88,27 @@ When you call `dazbuild_end_change`, the following checks must pass:
 
 ## Architectural Principles
 
-### Backend Purity Rule
-- **CRITICAL**: Backend should never be tailored to specific frontend technologies (Three.js, WebGL, etc.)
+### Backend Purity Rule - CRITICAL
+- **NEVER modify backend code to fix frontend display issues**
 - **Backend Role**: Output data in the native format of the source framework (CadQuery, OpenCascade, etc.)
 - **Frontend Role**: Adapt backend data to whatever rendering library is being used
 - **Reason**: Maintains flexibility for future frontend changes and proper separation of concerns
-- **Example**: CadQuery transformation matrices should stay in OpenCascade format; Three.js frontend adapts them
+
+### Frontend Display Issues - Always Fix on Frontend
+- **Matrix format conversions**: Backend sends OpenCascade row-major, frontend converts to Three.js column-major
+- **Coordinate system differences**: Backend uses CadQuery coordinates, frontend adapts to WebGL/Three.js
+- **Rendering-specific transformations**: Color formats, geometry centering, camera positioning - all frontend
+- **Display scaling, units, visual effects**: Always handled in frontend rendering code
+- **Example**: CadQuery transformation matrices stay in OpenCascade format; Three.js frontend transposes them
+
+### Data Flow Architecture
+```
+Backend (Pure) → Raw Data → Frontend (Adapts) → Display
+CadQuery/OCC  →  Matrices  →  Three.js     →  WebGL
+     |              |            |            |
+   Native       Standard      Adapted     Rendered
+  Format        Format       Format       Output
+```
 
 ### Progressive Error Resolution
 When `dazbuild_end_change` fails, fix issues in this order:

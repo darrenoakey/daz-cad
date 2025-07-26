@@ -1,8 +1,5 @@
 """Core CadQuery utility functions for DazCAD."""
 
-import base64
-import os
-import tempfile
 import unittest
 
 try:
@@ -35,39 +32,6 @@ def color_to_hex(color_tuple):
     b = max(0, min(255, b))
 
     return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def export_shape_to_stl(shape):
-    """Export a CadQuery shape to STL format as base64 string.
-
-    Args:
-        shape: A CadQuery Workplane or Shape object
-
-    Returns:
-        Base64 encoded STL data
-    """
-    if not CADQUERY_AVAILABLE:
-        raise ImportError("CadQuery not available")
-
-    # Create a temporary file for STL export
-    with tempfile.NamedTemporaryFile(suffix='.stl', delete=False) as temp_file:
-        temp_filename = temp_file.name
-
-    try:
-        # Export to STL file
-        cq.exporters.export(shape, temp_filename, cq.exporters.ExportTypes.STL)
-
-        # Read the STL file back as binary data
-        with open(temp_filename, 'rb') as stl_file:
-            stl_bytes = stl_file.read()
-
-        # Encode as base64
-        return base64.b64encode(stl_bytes).decode('utf-8')
-
-    finally:
-        # Clean up the temporary file
-        if os.path.exists(temp_filename):
-            os.unlink(temp_filename)
 
 
 def get_location_matrix(location):
@@ -125,23 +89,6 @@ class TestCadQueryCore(unittest.TestCase):
         self.assertEqual(color_to_hex((0.5, 0.5, 0.5, 1.0)), "#808080")
         # Test None (defaults to gray)
         self.assertEqual(color_to_hex(None), "#808080")
-
-    @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
-    def test_export_shape_to_stl(self):
-        """Test STL export functionality."""
-        # Create a simple box
-        box = cq.Workplane("XY").box(10, 10, 10)
-
-        # Export it
-        stl_data = export_shape_to_stl(box)
-
-        # Should be valid base64
-        self.assertIsInstance(stl_data, str)
-        self.assertGreater(len(stl_data), 0)
-
-        # Should decode without error
-        decoded = base64.b64decode(stl_data)
-        self.assertGreater(len(decoded), 0)
 
     @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
     def test_get_location_matrix(self):
