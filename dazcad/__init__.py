@@ -11,3 +11,5 @@ class PackageTests(unittest.TestCase):
         # Test that this module has expected attributes
         self.assertIsNotNone(self.__class__)
         self.assertEqual(self.__class__.__name__, 'PackageTests')
+        # Ensure package can be imported without issues
+        self.assertTrue(hasattr(self, 'test_package_attributes'))
