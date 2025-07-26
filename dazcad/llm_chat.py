@@ -11,8 +11,9 @@ try:
 except ImportError:
     DAZLLM_AVAILABLE = False
 
-# Global LLM instance - initialized once per program run
+# Global LLM instance and model name
 LLM_INSTANCE = None
+LLM_MODEL_NAME = "mixtral:8x7b"  # Default model
 
 
 class CodeResponse(BaseModel):
@@ -22,15 +23,22 @@ class CodeResponse(BaseModel):
     changes_made: List[str]
 
 
+def set_llm_model(model_name):
+    """Set the LLM model name and reset the instance"""
+    global LLM_MODEL_NAME, LLM_INSTANCE  # pylint: disable=global-statement
+    LLM_MODEL_NAME = model_name
+    LLM_INSTANCE = None  # Reset instance to use new model
+
+
 def get_llm():
     """Get or create the LLM instance"""
     global LLM_INSTANCE  # pylint: disable=global-statement
     if LLM_INSTANCE is None and DAZLLM_AVAILABLE:
         try:
-            LLM_INSTANCE = Llm.model_named("ollama:llama3.2")  # LOCAL_LARGE
-            print("LLM initialized successfully")
+            LLM_INSTANCE = Llm.model_named(LLM_MODEL_NAME)
+            print(f"LLM initialized successfully with model: {LLM_MODEL_NAME}")
         except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"Failed to initialize LLM: {e}")
+            print(f"Failed to initialize LLM with model {LLM_MODEL_NAME}: {e}")
             LLM_INSTANCE = None
     return LLM_INSTANCE
 
@@ -138,6 +146,11 @@ def is_llm_available():
     return DAZLLM_AVAILABLE and get_llm() is not None
 
 
+def get_current_model():
+    """Get the current LLM model name"""
+    return LLM_MODEL_NAME
+
+
 class LlmChatTests(unittest.TestCase):
     """Test LLM chat functionality"""
 
@@ -157,3 +170,37 @@ class LlmChatTests(unittest.TestCase):
         self.assertEqual(response.explanation, "Test explanation")
         self.assertEqual(response.improved_code, "print('hello')")
         self.assertEqual(len(response.changes_made), 1)
+
+    def test_default_model_name(self):
+        """Test that default model name is mixtral:8x7b"""
+        self.assertEqual(get_current_model(), "mixtral:8x7b")
+
+    @unittest.skipIf(not DAZLLM_AVAILABLE, "dazllm not available")
+    def test_llm_initialization_with_default_model(self):
+        """Test LLM initialization with the default model"""
+        # Reset to ensure clean test
+        global LLM_INSTANCE  # pylint: disable=global-statement
+        LLM_INSTANCE = None
+
+        # This should attempt to initialize with the default model
+        llm = get_llm()
+
+        # If dazllm is available but model fails, llm will be None
+        # If successful, llm will be an instance
+        # We test that the function doesn't crash and returns something expected
+        self.assertTrue(llm is None or hasattr(llm, 'chat_structured'))
+
+        # Test that the model name is set correctly
+        self.assertEqual(get_current_model(), "mixtral:8x7b")
+
+    def test_set_llm_model(self):
+        """Test setting a custom LLM model"""
+        original_model = get_current_model()
+
+        # Set a custom model
+        set_llm_model("test:model")
+        self.assertEqual(get_current_model(), "test:model")
+
+        # Reset to original
+        set_llm_model(original_model)
+        self.assertEqual(get_current_model(), original_model)

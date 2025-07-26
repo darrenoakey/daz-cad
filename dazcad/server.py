@@ -1,5 +1,6 @@
 """Sanic server for DazCAD - a simple CadQuery runner with LLM integration."""
 
+import argparse
 import sys
 import traceback
 import unittest
@@ -11,11 +12,11 @@ from sanic.response import json as json_response
 
 # Import LLM chat functionality with fallback for direct execution
 try:
-    from .llm_chat import improve_code_with_llm, is_llm_available
+    from .llm_chat import improve_code_with_llm, is_llm_available, set_llm_model
     from .cadquery_processor import process_objects
 except ImportError:
     # Fallback for direct execution
-    from llm_chat import improve_code_with_llm, is_llm_available
+    from llm_chat import improve_code_with_llm, is_llm_available, set_llm_model
     from cadquery_processor import process_objects
 
 app = Sanic("dazcad")
@@ -144,6 +145,35 @@ async def chat_with_ai(request):
         })
 
 
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='DazCAD Server with LLM integration')
+    parser.add_argument(
+        '--model',
+        type=str,
+        default='mixtral:8x7b',
+        help='LLM model to use (default: mixtral:8x7b)'
+    )
+    parser.add_argument(
+        '--host',
+        type=str,
+        default='127.0.0.1',
+        help='Host to bind to (default: 127.0.0.1)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=8000,
+        help='Port to bind to (default: 8000)'
+    )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug mode (default: False)'
+    )
+    return parser.parse_args()
+
+
 class ServerTests(unittest.TestCase):
     """Tests for server functionality - see test_server.py for full test suite."""
 
@@ -153,9 +183,32 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(hasattr(sys.modules[__name__], 'app'))
         self.assertTrue(hasattr(sys.modules[__name__], 'show_object'))
 
+    def test_parse_arguments_default(self):
+        """Test argument parsing with defaults"""
+        # Save original sys.argv
+        original_argv = sys.argv
+        try:
+            # Test with no arguments
+            sys.argv = ['server.py']
+            parsed_args = parse_arguments()
+            self.assertEqual(parsed_args.model, 'mixtral:8x7b')
+            self.assertEqual(parsed_args.host, '127.0.0.1')
+            self.assertEqual(parsed_args.port, 8000)
+            self.assertFalse(parsed_args.debug)
+        finally:
+            # Restore original sys.argv
+            sys.argv = original_argv
+
 
 if __name__ == "__main__":
     print("Starting DazCAD server with LLM integration...")
+
+    # Parse command line arguments
+    args = parse_arguments()
+
+    # Set the LLM model from command line
+    print(f"Using LLM model: {args.model}")
+    set_llm_model(args.model)
 
     # Test LLM initialization
     if is_llm_available():
@@ -163,5 +216,5 @@ if __name__ == "__main__":
     else:
         print("⚠ LLM not available - chat features disabled")
 
-    # Run in debug mode with auto-reload
-    app.run(host="127.0.0.1", port=8000, debug=True, auto_reload=True)
+    # Run server with provided arguments
+    app.run(host=args.host, port=args.port, debug=args.debug, auto_reload=args.debug)

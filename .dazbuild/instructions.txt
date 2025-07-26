@@ -1,0 +1,82 @@
+# Dazbuild Instructions
+
+## End Change Validation Rules
+When you call `dazbuild_end_change`, the following checks must pass:
+
+1. **Pylint Score**: Must be 10/10 with no errors or warnings
+2. **Unit Tests**: All tests must pass via `python -m unittest discover`
+3. **Test Coverage**: Every .py file must contain at least one unittest.TestCase test
+4. **No unittest.main()**: Files cannot invoke unittest.main() directly
+5. **File Size Limit**: All code files must be smaller than 8192 bytes
+
+## Best Practices for Using Dazbuild
+
+### Work with Small References
+- Always edit at the **smallest hierarchy node** possible
+- Instead of rewriting entire files, target specific functions, methods, or classes
+- Use `dazbuild_outline` to see the structure and find the right reference
+- Example: Edit `myfile.py::MyClass::my_method` instead of `myfile.py`
+
+### Workflow Pattern
+1. `dazbuild_start_change` - Begin your change session
+2. Use `dazbuild_get` to examine current code
+3. Use `dazbuild_write` or `dazbuild_add` for targeted changes
+4. `dazbuild_end_change` - Validate and commit
+
+### File Size Management
+- Keep code files under 8192 bytes
+- If a file grows too large, refactor into multiple smaller files
+- Split large classes into smaller, focused classes
+- Extract utility functions into separate modules
+- **Pattern**: Create focused modules like `*_processor.py`, `*_utils.py`, `*_chat.py`
+
+### Import Handling
+- **Direct Execution vs Module Imports**: When files need to run both as scripts and as modules, use this pattern:
+  ```python
+  try:
+      from .module_name import function_name
+  except ImportError:
+      # Fallback for direct execution
+      from module_name import function_name
+  ```
+- **Optional Dependencies**: Handle external libraries gracefully:
+  ```python
+  try:
+      import optional_library
+      LIBRARY_AVAILABLE = True
+  except ImportError:
+      LIBRARY_AVAILABLE = False
+  ```
+
+### Testing Strategy
+- Add real unit tests to every Python file (no mocks unless necessary)
+- Test both happy path and edge cases
+- Keep test methods focused and well-named
+- **When Refactoring**: Update test imports when moving functions between modules
+- **Pattern**: Test moved functions through their new module: `new_module.function_name()`
+
+### Code Quality
+- Write clean, readable code that passes pylint
+- Use meaningful variable and function names
+- Add docstrings for public methods and classes
+- Keep functions focused on a single responsibility
+- **Remove Unused Imports**: Pylint will catch these - clean them up promptly
+
+### Framework Preservation
+- **Respect Existing Architecture**: Don't change async frameworks (Sanic) to sync frameworks (Flask) without explicit permission
+- **Maintain Async Patterns**: Keep `async def` functions and `await` calls when working with async frameworks
+- **Add Routes Correctly**: For Sanic, use `@app.route()` decorators properly
+
+### Progressive Error Resolution
+When `dazbuild_end_change` fails, fix issues in this order:
+1. **File Size**: Extract large files into focused modules first
+2. **Pylint Issues**: Fix trailing whitespace, unused imports, line length
+3. **Import Errors**: Add fallback imports for direct execution
+4. **Test Failures**: Update test imports after refactoring
+5. **Missing Functions**: Ensure all referenced functions exist in correct modules
+
+### External Integration Patterns
+- **LLM Integration**: Use structured responses with Pydantic models
+- **Iterative Processing**: Implement retry loops with error accumulation
+- **Graceful Degradation**: Provide fallbacks when external services unavailable
+- **Error Context**: Include previous errors in retry attempts for better results
