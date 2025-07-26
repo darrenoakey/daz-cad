@@ -1,6 +1,7 @@
-// Global variables for Three.js
+// Global variables
 let scene, camera, renderer, controls;
 let currentObjects = [];
+let codeEditor;
 
 // Initialize Three.js viewer
 function initViewer() {
@@ -48,11 +49,50 @@ function initViewer() {
     const gridHelper = new THREE.GridHelper(100, 20, 0x444444, 0x222222);
     scene.add(gridHelper);
 
-    // Handle window resize
     window.addEventListener('resize', onWindowResize, false);
-
-    // Start animation loop
     animate();
+}
+
+// Initialize CodeMirror editor
+function initCodeEditor() {
+    const editorElement = document.getElementById('codeEditor');
+    
+    codeEditor = CodeMirror(editorElement, {
+        mode: 'python',
+        theme: 'monokai',
+        lineNumbers: true,
+        matchBrackets: true,
+        autoCloseBrackets: true,
+        styleActiveLine: true,
+        indentUnit: 4,
+        indentWithTabs: false,
+        lineWrapping: true,
+        foldGutter: true,
+        gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+        extraKeys: {
+            "Ctrl-Enter": runCode,
+            "Tab": function(cm) {
+                if (cm.somethingSelected()) {
+                    cm.indentSelection("add");
+                } else {
+                    cm.replaceSelection(cm.getOption("indentWithTabs") ? "\\t" :
+                        Array(cm.getOption("indentUnit") + 1).join(" "), "end", "+input");
+                }
+            }
+        },
+        value: `import cadquery as cq
+
+# Create colored boxes
+assembly = cq.Assembly()
+
+box1 = cq.Workplane("XY").box(10, 10, 10)
+assembly.add(box1, name="RedBox", color=cq.Color("red"))
+
+box2 = cq.Workplane("XY").box(10, 10, 10)
+assembly.add(box2, name="BlueBox", loc=cq.Location(cq.Vector(20, 0, 0)), color=cq.Color("blue"))
+
+show_object(assembly, "ColoredAssembly")`
+    });
 }
 
 function onWindowResize() {
@@ -72,7 +112,6 @@ function animate() {
 }
 
 function clearScene() {
-    // Remove all current objects from scene
     currentObjects.forEach(obj => {
         scene.remove(obj);
     });
@@ -107,7 +146,6 @@ function loadSTL(stlData, name, color, transform) {
     
     // Apply transformation if provided
     if (transform && transform.length === 16) {
-        // Create a Matrix4 from the array (row-major order)
         const matrix = new THREE.Matrix4();
         matrix.set(
             transform[0], transform[1], transform[2], transform[3],
@@ -116,23 +154,18 @@ function loadSTL(stlData, name, color, transform) {
             transform[12], transform[13], transform[14], transform[15]
         );
         
-        // Apply the transformation to the mesh
         mesh.applyMatrix4(matrix);
-        
         console.log(`Applied transform to ${name}:`, transform);
     } else {
-        // No transform, center the geometry at origin
+        // Center the geometry at origin
         geometry.computeBoundingBox();
         const center = new THREE.Vector3();
         geometry.boundingBox.getCenter(center);
         geometry.translate(-center.x, -center.y, -center.z);
     }
     
-    // Add to scene
     scene.add(mesh);
     currentObjects.push(mesh);
-    
-    // Adjust camera to fit all objects
     fitCameraToObjects();
 }
 
@@ -157,11 +190,10 @@ function fitCameraToObjects() {
 }
 
 async function runCode() {
-    const code = document.getElementById('codeEditor').value;
+    const code = codeEditor.getValue();
     const outputDiv = document.getElementById('output');
     const runButton = document.getElementById('runButton');
     
-    // Disable button during execution
     runButton.disabled = true;
     runButton.textContent = 'Running...';
     
@@ -177,16 +209,13 @@ async function runCode() {
         const result = await response.json();
         
         if (result.success) {
-            // Clear previous objects
             clearScene();
             
-            // Load new objects
             result.objects.forEach(obj => {
                 loadSTL(obj.stl, obj.name, obj.color, obj.transform);
             });
             
-            // Show output
-            outputDiv.innerHTML = `<span class="success-output">Success!</span>\n${result.output || ''}`;
+            outputDiv.innerHTML = `<span class="success-output">Success!</span>\\n${result.output || ''}`;
         } else {
             outputDiv.innerHTML = `<span class="error-output">Error: ${result.error}</span>`;
         }
@@ -201,14 +230,8 @@ async function runCode() {
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     initViewer();
+    initCodeEditor();
+    initChat(); // From chat.js
     
-    // Set up event listeners
     document.getElementById('runButton').addEventListener('click', runCode);
-    
-    // Allow Ctrl+Enter to run code
-    document.getElementById('codeEditor').addEventListener('keydown', function(e) {
-        if (e.ctrlKey && e.key === 'Enter') {
-            runCode();
-        }
-    });
 });

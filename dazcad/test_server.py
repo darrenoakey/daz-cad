@@ -7,8 +7,10 @@ from unittest.mock import MagicMock
 # Try to import server module - handle case where dependencies aren't available
 try:
     from . import server
+    from . import cadquery_processor
 except ImportError:
     import server
+    import cadquery_processor
 
 try:
     import cadquery as cq
@@ -63,15 +65,15 @@ class TestServer(unittest.TestCase):
     def test_color_to_hex(self):
         """Test color tuple to hex conversion."""
         # Test red
-        self.assertEqual(server.color_to_hex((1.0, 0.0, 0.0, 1.0)), "#ff0000")
+        self.assertEqual(cadquery_processor.color_to_hex((1.0, 0.0, 0.0, 1.0)), "#ff0000")
         # Test blue
-        self.assertEqual(server.color_to_hex((0.0, 0.0, 1.0, 1.0)), "#0000ff")
+        self.assertEqual(cadquery_processor.color_to_hex((0.0, 0.0, 1.0, 1.0)), "#0000ff")
         # Test green
-        self.assertEqual(server.color_to_hex((0.0, 1.0, 0.0, 1.0)), "#00ff00")
+        self.assertEqual(cadquery_processor.color_to_hex((0.0, 1.0, 0.0, 1.0)), "#00ff00")
         # Test mixed color (0.5 * 255 = 127.5, rounds to 128 = 0x80)
-        self.assertEqual(server.color_to_hex((0.5, 0.5, 0.5, 1.0)), "#808080")
+        self.assertEqual(cadquery_processor.color_to_hex((0.5, 0.5, 0.5, 1.0)), "#808080")
         # Test None
-        self.assertEqual(server.color_to_hex(None), "#808080")
+        self.assertEqual(cadquery_processor.color_to_hex(None), "#808080")
 
     @unittest.skipIf(not IMPORTS_AVAILABLE, "CadQuery not available")
     def test_simple_assembly(self):
@@ -95,7 +97,7 @@ class TestServer(unittest.TestCase):
         }
 
         # Process the assembly
-        results = server.process_assembly(shown)
+        results = cadquery_processor.process_assembly(shown)
 
         # Verify results
         self.assertEqual(len(results), 2)
@@ -115,7 +117,7 @@ class TestServer(unittest.TestCase):
         box = cq.Workplane("XY").box(10, 10, 10)
 
         # Export it
-        stl_data = server.export_shape_to_stl(box)
+        stl_data = cadquery_processor.export_shape_to_stl(box)
 
         # Verify it's valid base64
         # pylint: disable=broad-exception-caught
@@ -140,7 +142,7 @@ class TestServer(unittest.TestCase):
         }
 
         # Process it
-        result = server.process_regular_object(shown)
+        result = cadquery_processor.process_regular_object(shown)
 
         # Verify result
         self.assertIsNotNone(result)

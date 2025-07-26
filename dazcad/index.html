@@ -5,9 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DazCAD - CadQuery Runner</title>
     <link rel="stylesheet" href="style.css">
+    
+    <!-- CodeMirror CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/theme/monokai.min.css">
+    
+    <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- CodeMirror JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/addon/edit/closebrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/6.65.7/addon/selection/active-line.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -15,28 +28,19 @@
             <button id="runButton" class="run-button">Run</button>
         </div>
         <div class="main-content">
-            <div class="editor-panel">
-                <textarea id="codeEditor" placeholder="Enter your CadQuery code here...">import cadquery as cq
-
-# Create an assembly with two colored boxes
-assembly = cq.Assembly()
-
-# Create first box (red)
-box1 = cq.Workplane("XY").box(10, 10, 10)
-assembly.add(box1, name="RedBox", color=cq.Color("red"))
-
-# Create second box (blue) positioned to the right
-box2 = cq.Workplane("XY").box(10, 10, 10)
-assembly.add(box2, name="BlueBox", loc=cq.Location(cq.Vector(20, 0, 0)), color=cq.Color("blue"))
-
-# Create third box (green) positioned up and forward
-box3 = cq.Workplane("XY").box(10, 10, 10)
-assembly.add(box3, name="GreenBox", loc=cq.Location(cq.Vector(10, 10, 15)), color=cq.Color("green"))
-
-# Show the assembly - it contains all colored parts with proper positions
-show_object(assembly, "ColoredAssembly")
-
-print("Created an assembly with three colored boxes in different positions!")</textarea>
+            <div class="left-panel">
+                <div class="editor-panel">
+                    <div class="panel-header">Python Code Editor</div>
+                    <div id="codeEditor"></div>
+                </div>
+                <div class="chat-panel">
+                    <div class="panel-header">AI Assistant</div>
+                    <div class="chat-messages" id="chatMessages"></div>
+                    <div class="chat-input-container">
+                        <input type="text" id="chatInput" placeholder="Ask AI to modify your code..." class="chat-input">
+                        <button id="sendChatButton" class="send-button">Send</button>
+                    </div>
+                </div>
             </div>
             <div class="viewer-panel">
                 <div id="viewer3d"></div>
@@ -44,6 +48,9 @@ print("Created an assembly with three colored boxes in different positions!")</t
             </div>
         </div>
     </div>
+    
+    <!-- Application scripts -->
+    <script src="chat.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
