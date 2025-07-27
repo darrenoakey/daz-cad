@@ -170,12 +170,16 @@ function loadSTL(stlData, name, color, transform) {
         
         // TODO: Add rotation/scaling extraction for advanced assemblies
     } else {
-        // Center single objects at origin for best default view
+        // 🖨️ 3D PRINTING: Position objects on build plate (z=0)
         geometry.computeBoundingBox();
         const center = new THREE.Vector3();
         geometry.boundingBox.getCenter(center);
-        geometry.translate(-center.x, -center.y, -center.z);
-        console.log(`🔧 Centered object at origin`);
+        
+        // Center in X and Y for good viewing, but place on build plate for 3D printing
+        // Move minimum Z to z=0 so object sits on build plate
+        const minZ = geometry.boundingBox.min.z;
+        geometry.translate(-center.x, -center.y, -minZ);
+        console.log(`🔧 Positioned object on build plate: centered XY, min Z -> 0 (was ${minZ.toFixed(2)})`);
     }
     
     scene.add(mesh);
