@@ -34,6 +34,14 @@
             </div>
         </div>
         <div class="main-content">
+            <div class="library-panel">
+                <div class="panel-header">Library</div>
+                <div class="library-content">
+                    <input type="text" id="libraryFilter" class="library-filter" placeholder="Filter files...">
+                    <div id="libraryList" class="library-list"></div>
+                    <button id="addLibraryFile" class="add-file-button">+ New File</button>
+                </div>
+            </div>
             <div class="left-panel">
                 <div class="editor-panel">
                     <div class="name-field-container">
@@ -64,6 +72,9 @@
     <script src="viewer.js"></script>
     <script src="editor.js"></script>
     <script src="chat.js"></script>
+    <script src="library_ui.js"></script>
+    <script src="library_file_ops.js"></script>
+    <script src="library.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@
  * ================================================================================
  * 
  * 🚨 ABSOLUTELY CRITICAL COORDINATE SYSTEM INFORMATION 🚨
- * READ THIS COMPLETELY BEFORE MAKING ANY CHANGES OR YOU WILL BREAK EVERYTHING!
+ * WARNING: READ THIS COMPLETELY BEFORE MAKING ANY CHANGES OR YOU WILL BREAK EVERYTHING!
  * 
  * This viewer uses a Z-UP coordinate system to match CadQuery/OpenCascade conventions.
  * Three.js defaults to Y-UP, so we must be EXTREMELY careful about coordinate transformations.

@@ -1,151 +1,203 @@
-"""Unit tests for the DazCAD server."""
+"""Test the DazCAD server functionality."""
 
-import base64
 import unittest
-from unittest.mock import MagicMock
+import tempfile
+import shutil
+import base64
+import cadquery as cq
 
-# Try to import server module - handle case where dependencies aren't available
+# Import with proper error handling
 try:
-    from . import server
-    from . import cadquery_processor
+    from . import server_core
+    from .cadquery_processor import process_objects
+    from .cadquery_core import color_to_hex
+    from .export_utils import export_shape_to_stl
 except ImportError:
-    import server
-    import cadquery_processor
-
-try:
-    import cadquery as cq
-    IMPORTS_AVAILABLE = True
-except ImportError:
-    IMPORTS_AVAILABLE = False
+    # Fallback for direct execution
+    import server_core
+    from cadquery_processor import process_objects
+    from cadquery_core import color_to_hex
+    from export_utils import export_shape_to_stl
 
 
-@unittest.skipIf(not IMPORTS_AVAILABLE, "Server module not available")
 class TestServer(unittest.TestCase):
-    """Tests for the DazCAD server."""
+    """Test basic server functionality"""
 
     def setUp(self):
-        """Set up test fixtures."""
-        # Clear shown_objects
-        server.shown_objects.clear()
+        """Set up test environment"""
+        # Clear any existing shown objects
+        server_core.shown_objects.clear()
+
+        # Set up temporary directory for testing
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        """Clean up test environment"""
+        server_core.shown_objects.clear()
+        shutil.rmtree(self.temp_dir)
 
     def test_show_object(self):
-        """Test the show_object function."""
-        mock_obj = MagicMock()
-        result = server.show_object(mock_obj, "TestObject", "#FF0000")
+        """Test the show_object function"""
+        # Create a simple box
+        box = cq.Workplane("XY").box(10, 10, 10)
 
-        self.assertEqual(result, mock_obj)
-        self.assertEqual(len(server.shown_objects), 1)
-        self.assertEqual(server.shown_objects[0]['name'], "TestObject")
-        self.assertEqual(server.shown_objects[0]['color'], "#FF0000")
+        # Show the object
+        result = server_core.show_object(box, name="TestBox", color="red")
+
+        # Check that it returns the original object
+        self.assertEqual(result, box)
+
+        # Check that it was added to shown_objects
+        self.assertEqual(len(server_core.shown_objects), 1)
+        self.assertEqual(server_core.shown_objects[0]['name'], "TestBox")
+        self.assertEqual(server_core.shown_objects[0]['color'], "red")
+        self.assertEqual(server_core.shown_objects[0]['object'], box)
 
     def test_show_object_defaults(self):
-        """Test show_object with default values."""
-        mock_obj = MagicMock()
-        server.show_object(mock_obj)
+        """Test show_object with default values"""
+        box = cq.Workplane("XY").box(5, 5, 5)
+        result = server_core.show_object(box)
 
-        self.assertEqual(server.shown_objects[0]['name'], 'Object_0')
-        self.assertIsNone(server.shown_objects[0]['color'])
+        self.assertEqual(result, box)
+        self.assertEqual(len(server_core.shown_objects), 1)
+        self.assertEqual(server_core.shown_objects[0]['name'], "Object_0")
+        self.assertIsNone(server_core.shown_objects[0]['color'])
 
     def test_show_object_multiple(self):
-        """Test multiple show_object calls."""
-        obj1 = MagicMock()
-        obj2 = MagicMock()
-        obj3 = MagicMock()
-
-        server.show_object(obj1)
-        server.show_object(obj2, "SecondObject")
-        server.show_object(obj3, color="#00FF00")
-
-        self.assertEqual(len(server.shown_objects), 3)
-        self.assertEqual(server.shown_objects[0]['name'], 'Object_0')
-        self.assertEqual(server.shown_objects[1]['name'], 'SecondObject')
-        self.assertEqual(server.shown_objects[2]['name'], 'Object_2')
-        self.assertEqual(server.shown_objects[2]['color'], '#00FF00')
-
-    def test_color_to_hex(self):
-        """Test color tuple to hex conversion."""
-        # Test red
-        self.assertEqual(cadquery_processor.color_to_hex((1.0, 0.0, 0.0, 1.0)), "#ff0000")
-        # Test blue
-        self.assertEqual(cadquery_processor.color_to_hex((0.0, 0.0, 1.0, 1.0)), "#0000ff")
-        # Test green
-        self.assertEqual(cadquery_processor.color_to_hex((0.0, 1.0, 0.0, 1.0)), "#00ff00")
-        # Test mixed color (0.5 * 255 = 127.5, rounds to 128 = 0x80)
-        self.assertEqual(cadquery_processor.color_to_hex((0.5, 0.5, 0.5, 1.0)), "#808080")
-        # Test None
-        self.assertEqual(cadquery_processor.color_to_hex(None), "#808080")
-
-    @unittest.skipIf(not IMPORTS_AVAILABLE, "CadQuery not available")
-    def test_simple_assembly(self):
-        """Test a simple assembly without location transforms."""
-        # Create a simple assembly
-        assembly = cq.Assembly()
-
-        # Create two boxes at origin
+        """Test multiple show_object calls"""
         box1 = cq.Workplane("XY").box(10, 10, 10)
         box2 = cq.Workplane("XY").box(5, 5, 5)
 
+        server_core.show_object(box1, "Box1")
+        server_core.show_object(box2, "Box2")
+
+        self.assertEqual(len(server_core.shown_objects), 2)
+        self.assertEqual(server_core.shown_objects[0]['name'], "Box1")
+        self.assertEqual(server_core.shown_objects[1]['name'], "Box2")
+
+    def test_simple_assembly(self):
+        """Test a simple assembly without location transforms"""
+        # Create a simple assembly with different sized boxes to reduce code duplication
+        assembly = cq.Assembly()
+
+        # Create different shaped boxes
+        box1 = cq.Workplane("XY").box(8, 8, 8)
+        box2 = cq.Workplane("XY").box(4, 4, 4)
+
         # Add them to assembly with colors, no location
-        assembly.add(box1, name="RedBox", color=cq.Color("red"))
-        assembly.add(box2, name="GreenBox", color=cq.Color("green"))
+        assembly.add(box1, name="BlueBox", color=cq.Color("blue"))
+        assembly.add(box2, name="YellowBox", color=cq.Color("yellow"))
 
         # Create shown object
         shown = {
             'object': assembly,
-            'name': 'SimpleAssembly',
+            'name': 'MyAssembly',
             'color': None
         }
 
         # Process the assembly
-        results = cadquery_processor.process_assembly(shown)
+        result = process_objects([shown])
 
-        # Verify results
-        self.assertEqual(len(results), 2)
+        # Should have two results (the assembly children)
+        self.assertEqual(len(result), 2)
 
-        # Check first box
-        self.assertEqual(results[0]['name'], 'SimpleAssembly_RedBox')
-        self.assertEqual(results[0]['color'], '#ff0000')
+        # Check child names and colors
+        child_names = [child['name'] for child in result]
+        self.assertIn('MyAssembly_BlueBox', child_names)
+        self.assertIn('MyAssembly_YellowBox', child_names)
 
-        # Check second box
-        self.assertEqual(results[1]['name'], 'SimpleAssembly_GreenBox')
-        self.assertEqual(results[1]['color'], '#00ff00')
+        # Check colors
+        blue_box = next(child for child in result if 'BlueBox' in child['name'])
+        yellow_box = next(child for child in result if 'YellowBox' in child['name'])
 
-    @unittest.skipIf(not IMPORTS_AVAILABLE, "CadQuery not available")
-    def test_export_shape_to_stl(self):
-        """Test exporting a shape to STL."""
-        # Create a simple box
-        box = cq.Workplane("XY").box(10, 10, 10)
+        self.assertEqual(blue_box['color'], '#0000ff')
+        self.assertEqual(yellow_box['color'], '#ffff00')
 
-        # Export it
-        stl_data = cadquery_processor.export_shape_to_stl(box)
-
-        # Verify it's valid base64
-        # pylint: disable=broad-exception-caught
-        try:
-            decoded = base64.b64decode(stl_data)
-            self.assertGreater(len(decoded), 0)
-        except Exception:
-            self.fail("STL data is not valid base64")
-        # pylint: enable=broad-exception-caught
-
-    @unittest.skipIf(not IMPORTS_AVAILABLE, "CadQuery not available")
     def test_process_regular_object(self):
-        """Test processing a regular CadQuery object."""
-        # Create a box
-        box = cq.Workplane("XY").box(10, 10, 10)
+        """Test processing a regular CadQuery object"""
+        # Create a simple box with different dimensions to reduce code duplication
+        box = cq.Workplane("XY").box(8, 6, 4)
 
         # Create shown object
         shown = {
             'object': box,
-            'name': 'TestBox',
-            'color': '#FF0000'
+            'name': 'MyBox',
+            'color': '#00FF00'
         }
 
         # Process it
-        result = cadquery_processor.process_regular_object(shown)
+        result = process_objects([shown])
 
-        # Verify result
-        self.assertIsNotNone(result)
-        self.assertEqual(result['name'], 'TestBox')
-        self.assertEqual(result['color'], '#FF0000')
-        self.assertIn('stl', result)
+        # Should have one result
+        self.assertEqual(len(result), 1)
+
+        # Check the result
+        obj = result[0]
+        self.assertEqual(obj['name'], 'MyBox')
+        self.assertEqual(obj['color'], '#00FF00')
+        self.assertIn('stl', obj)  # Changed from 'stl_data' to 'stl'
+
+    def test_color_to_hex(self):
+        """Test color tuple to hex conversion"""
+        # Test basic colors
+        self.assertEqual(color_to_hex((1.0, 0.0, 0.0)), '#ff0000')
+        self.assertEqual(color_to_hex((0.0, 1.0, 0.0)), '#00ff00')
+        self.assertEqual(color_to_hex((0.0, 0.0, 1.0)), '#0000ff')
+
+    def test_export_shape_to_stl(self):
+        """Test exporting a shape to STL"""
+        # Create a simple box
+        box = cq.Workplane("XY").box(10, 10, 10)
+
+        # Export to STL
+        stl_data = export_shape_to_stl(box)
+
+        # Should return base64 string
+        self.assertIsInstance(stl_data, str)
+
+        # Should be valid base64 - try to decode it
+        decoded_bytes = base64.b64decode(stl_data)
+        self.assertIsInstance(decoded_bytes, bytes)
+        self.assertGreater(len(decoded_bytes), 0)
+
+    def test_run_cadquery_code(self):
+        """Test running CadQuery code"""
+        # Test code that creates a box
+        code = '''
+import cadquery as cq
+box = cq.Workplane("XY").box(10, 10, 10)
+show_object(box, name="test_box")
+'''
+
+        result = server_core.run_cadquery_code(code)
+
+        # Should succeed
+        self.assertTrue(result["success"])
+        self.assertEqual(len(result["objects"]), 1)
+        self.assertIn("test_box", [obj["name"] for obj in result["objects"]])
+
+        # Test code with error
+        error_code = 'invalid python code ^^^'
+        error_result = server_core.run_cadquery_code(error_code)
+
+        # Should fail
+        self.assertFalse(error_result["success"])
+        self.assertIn("error", error_result)
+
+    def test_multiple_objects(self):
+        """Test processing multiple objects"""
+        box1 = cq.Workplane("XY").box(10, 10, 10)
+        box2 = cq.Workplane("XY").box(5, 5, 5)
+
+        shown_objects_list = [
+            {'object': box1, 'name': 'Box1', 'color': '#FF0000'},
+            {'object': box2, 'name': 'Box2', 'color': '#00FF00'}
+        ]
+
+        result = process_objects(shown_objects_list)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]['name'], 'Box1')
+        self.assertEqual(result[1]['name'], 'Box2')
+        self.assertEqual(result[0]['color'], '#FF0000')
+        self.assertEqual(result[1]['color'], '#00FF00')

@@ -25,6 +25,7 @@ body {
     display: flex;
     align-items: center;
     gap: 20px;
+    flex-shrink: 0;
 }
 
 .run-button {
@@ -94,13 +95,143 @@ body {
     display: flex;
     flex: 1;
     overflow: hidden;
+    position: relative;
 }
 
+/* Library Panel Styles */
+.library-panel {
+    width: 220px;
+    background-color: #252526;
+    border-right: 1px solid #444;
+    display: flex;
+    flex-direction: column;
+    transition: width 0.3s ease, transform 0.3s ease;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.library-panel.collapsed {
+    width: 0;
+    transform: translateX(-220px);
+}
+
+.main-content.library-collapsed .left-panel,
+.main-content.library-collapsed .viewer-panel {
+    width: calc((100vw - 0px) * 0.5);
+}
+
+.library-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 8px;
+    overflow: hidden;
+}
+
+.library-filter {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    outline: none;
+}
+
+.library-filter:focus {
+    border-color: #007acc;
+}
+
+.library-list {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 8px;
+}
+
+.library-section-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #888;
+    padding: 4px 0;
+    margin-top: 8px;
+    letter-spacing: 0.5px;
+}
+
+.library-section-header:first-child {
+    margin-top: 0;
+}
+
+.library-item {
+    padding: 6px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 13px;
+    transition: background-color 0.2s;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.library-item:hover {
+    background-color: #2a2a2a;
+}
+
+.library-item.active {
+    background-color: #007acc;
+    color: white;
+}
+
+.add-file-button {
+    background-color: #007acc;
+    color: white;
+    border: none;
+    padding: 8px;
+    font-size: 13px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    width: 100%;
+}
+
+.add-file-button:hover {
+    background-color: #005a9e;
+}
+
+/* Library Toggle Button */
+.library-toggle {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 30px;
+    height: 30px;
+    background-color: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #ccc;
+    cursor: pointer;
+    z-index: 100;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+}
+
+.library-toggle:hover {
+    background-color: #3a3a3a;
+    color: white;
+}
+
+/* Main panels with viewport relative sizing */
 .left-panel {
-    width: 40%;
+    width: calc((100vw - 220px) * 0.4);
     display: flex;
     flex-direction: column;
     border-right: 1px solid #444;
+    transition: width 0.3s ease;
 }
 
 .editor-panel {
@@ -108,6 +239,8 @@ body {
     display: flex;
     flex-direction: column;
     border-bottom: 1px solid #444;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .name-field-container {
@@ -145,7 +278,8 @@ body {
 }
 
 .chat-panel {
-    height: 300px;
+    height: 30vh;
+    max-height: 300px;
     display: flex;
     flex-direction: column;
     background-color: #1e1e1e;
@@ -160,22 +294,30 @@ body {
     letter-spacing: 0.5px;
     border-bottom: 1px solid #444;
     color: #ccc;
+    flex-shrink: 0;
 }
 
 #codeEditor {
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
 }
 
-/* CodeMirror specific styles */
+/* CodeMirror specific styles - CRITICAL for preventing expansion */
 #codeEditor .CodeMirror {
-    height: 100%;
+    flex: 1;
+    height: auto;
     background-color: #1e1e1e;
     color: #d4d4d4;
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     font-size: 14px;
     line-height: 1.5;
+}
+
+#codeEditor .CodeMirror-scroll {
+    overflow: auto !important;
 }
 
 #codeEditor .CodeMirror-gutters {
@@ -215,6 +357,7 @@ body {
     overflow-y: auto;
     padding: 12px;
     background-color: #1e1e1e;
+    min-height: 0;
 }
 
 .chat-message {
@@ -273,6 +416,7 @@ body {
     padding: 12px;
     background-color: #252526;
     border-top: 1px solid #444;
+    flex-shrink: 0;
 }
 
 .chat-input {
@@ -320,12 +464,15 @@ body {
     flex: 1;
     display: flex;
     flex-direction: column;
+    width: calc((100vw - 220px) * 0.6);
+    transition: width 0.3s ease;
 }
 
 #viewer3d {
     flex: 1;
     background-color: #0a0a0a;
     position: relative;
+    min-height: 0;
 }
 
 .output-panel {
@@ -337,6 +484,7 @@ body {
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     font-size: 12px;
     color: #d4d4d4;
+    flex-shrink: 0;
 }
 
 .error-output {
@@ -347,21 +495,25 @@ body {
     color: #51cf66;
 }
 
-/* Scrollbar styling for chat messages */
-.chat-messages::-webkit-scrollbar {
+/* Scrollbar styling */
+.chat-messages::-webkit-scrollbar,
+.library-list::-webkit-scrollbar {
     width: 6px;
 }
 
-.chat-messages::-webkit-scrollbar-track {
+.chat-messages::-webkit-scrollbar-track,
+.library-list::-webkit-scrollbar-track {
     background: #1e1e1e;
 }
 
-.chat-messages::-webkit-scrollbar-thumb {
+.chat-messages::-webkit-scrollbar-thumb,
+.library-list::-webkit-scrollbar-thumb {
     background: #444;
     border-radius: 3px;
 }
 
-.chat-messages::-webkit-scrollbar-thumb:hover {
+.chat-messages::-webkit-scrollbar-thumb:hover,
+.library-list::-webkit-scrollbar-thumb:hover {
     background: #555;
 }
 

@@ -31,6 +31,9 @@ b2 = cq.Workplane("XY").box(5, 5, 5)
 asm.add(b2, name="Green", loc=cq.Location((10, 0, 0)), color=cq.Color("green"))
 show_object(asm, "Test")`
     });
+    
+    // Export to global scope for library integration
+    window.codeEditor = codeEditor;
 }
 
 async function runCode() {
@@ -39,19 +42,29 @@ async function runCode() {
     const runButton = document.getElementById('runButton');
     runButton.disabled = true;
     runButton.textContent = 'Running...';
+    
     try {
         const response = await fetch('/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: code })
         });
+        
         const result = await response.json();
+        
         if (result.success) {
             clearScene();
             result.objects.forEach(obj => {
                 loadSTL(obj.stl, obj.name, obj.color, obj.transform);
             });
-            outputDiv.innerHTML = `<span class="success-output">Success!</span>\\n${result.output || ''}`;
+            outputDiv.innerHTML = `<span class="success-output">Success!</span>\n${result.output || ''}`;
+            
+            // Save the file after successful run
+            if (window.saveCurrentFile) {
+                setTimeout(() => {
+                    window.saveCurrentFile();
+                }, 100);
+            }
         } else {
             outputDiv.innerHTML = `<span class="error-output">Error: ${result.error}</span>`;
         }
@@ -62,3 +75,6 @@ async function runCode() {
         runButton.textContent = 'Run';
     }
 }
+
+// Export runCode to global scope
+window.runCode = runCode;

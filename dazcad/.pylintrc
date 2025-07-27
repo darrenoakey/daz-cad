@@ -1,0 +1,9 @@
+[MASTER]
+# Ignore the library directory for strict linting since these are example scripts
+ignore-patterns=library/*.py
+
+[MESSAGES CONTROL]
+# Disable specific messages for library files
+disable=
+    undefined-variable,  # show_object is injected by CadQuery environment
+    invalid-name,       # Example scripts use friendly variable names

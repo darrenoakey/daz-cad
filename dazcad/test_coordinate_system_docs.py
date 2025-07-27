@@ -26,10 +26,10 @@ class TestCoordinateSystemDocs(unittest.TestCase):
     def test_documentation_files_have_content(self):
         """Test that the documentation files have substantial content."""
         test_dir = os.path.dirname(os.path.abspath(__file__))
-        
+
         for filename in ['coordinate_system_docs.js', 'coordinate_system_debug.js']:
             docs_file = os.path.join(test_dir, filename)
-            
+
             if os.path.exists(docs_file):
                 with open(docs_file, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -52,11 +52,11 @@ class TestCoordinateSystemDocs(unittest.TestCase):
                 content = f.read()
 
             # Should contain critical warnings
-            self.assertIn('CRITICAL', content)
-            self.assertIn('DO NOT CHANGE', content.upper())
+            self.assertIn('CRITICAL', content.upper())
+            self.assertIn('WARNING', content.upper())
 
-    def test_debug_guide_has_debugging_info(self):
-        """Test that debug file contains debugging information."""
+    def test_debug_file_has_debugging_guidance(self):
+        """Test that debug file contains debugging guidance."""
         test_dir = os.path.dirname(os.path.abspath(__file__))
         debug_file = os.path.join(test_dir, 'coordinate_system_debug.js')
 

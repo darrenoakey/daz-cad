@@ -3,6 +3,8 @@ document.addEventListener('DOMContentLoaded', function() {
     initViewer();
     initCodeEditor();
     initChat();
+    initLibrary();
+    
     document.getElementById('runButton').addEventListener('click', runCode);
     
     // Add download button event listeners for all supported formats
@@ -15,10 +17,10 @@ document.addEventListener('DOMContentLoaded', function() {
         threeMfButton.addEventListener('click', () => downloadModel('3mf'));
     }
     
-    // Auto-run the code when the page first loads
+    // Setup auto-save after editor is initialized
     setTimeout(() => {
-        runCode();
-    }, 1000); // Wait 1 second for everything to be initialized
+        setupAutoSave();
+    }, 500);
 });
 
 // Download model in specified format

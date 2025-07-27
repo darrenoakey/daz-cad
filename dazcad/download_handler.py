@@ -100,6 +100,10 @@ class MockRequest:
         """Get argument from mock request."""
         return self.args.get(key, default)
 
+    def has_arg(self, key):
+        """Check if argument exists in mock request."""
+        return key in self.args
+
 
 class TestDownloadHandler(unittest.TestCase):
     """Unit tests for download handler functionality."""
@@ -142,6 +146,12 @@ class TestDownloadHandler(unittest.TestCase):
         mock_request = MockRequest({'name': 'test'})
         self.assertEqual(mock_request.get_arg('name'), 'test')
         self.assertEqual(mock_request.get_arg('missing', 'default'), 'default')
+
+    def test_mock_request_has_arg(self):
+        """Test mock request has_arg method."""
+        mock_request = MockRequest({'name': 'test'})
+        self.assertTrue(mock_request.has_arg('name'))
+        self.assertFalse(mock_request.has_arg('missing'))
 
     def test_dynamic_format_validation(self):
         """Test that format validation works with dynamic format detection."""
