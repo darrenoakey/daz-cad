@@ -9,13 +9,13 @@ try:
 except ImportError:
     CADQUERY_AVAILABLE = False
 
-# Import core utilities with fallback for direct execution
+# Import processing utilities with fallback for direct execution
 try:
-    from .cadquery_core import color_to_hex, get_location_matrix
     from .export_utils import export_shape_to_stl
+    from .assembly_processor import process_assembly
 except ImportError:
-    from cadquery_core import color_to_hex, get_location_matrix
     from export_utils import export_shape_to_stl
+    from assembly_processor import process_assembly
 
 
 def process_regular_object(shown):
@@ -45,80 +45,6 @@ def process_regular_object(shown):
         print(f"Error processing regular object {shown['name']}: {e}")
         traceback.print_exc()
         return None
-
-
-def process_assembly(shown):
-    """Process an Assembly object and return list of result objects."""
-    results = []
-    obj = shown['object']
-
-    print(f"Processing assembly with {len(obj.children)} children")
-
-    for i, child in enumerate(obj.children):
-        print(f"\\nProcessing child {i}: {child.name}")
-
-        # Debug: Let's see what's actually in the child object
-        print(f"  Child attributes: {dir(child)}")
-        if hasattr(child, 'loc'):
-            print(f"  Child.loc exists: {child.loc}")
-            print(f"  Child.loc type: {type(child.loc)}")
-            if child.loc:
-                print(f"  Location wrapped: {child.loc.wrapped}")
-                trsf = child.loc.wrapped.Transformation()
-                print("  Raw transformation values:")
-                translation_values = (trsf.Value(1,4), trsf.Value(2,4), trsf.Value(3,4))
-                print(f"    Translation: {translation_values}")
-
-        # Assembly children have an 'obj' attribute containing the shape
-        if hasattr(child, 'obj'):
-            shape = child.obj
-
-            try:
-                # Export the shape at origin (untransformed)
-                stl_data = export_shape_to_stl(shape)
-
-                # Initialize part_color with default
-                part_color = color_to_hex(None)  # Default gray
-
-                # Handle color properly - check if it's a Color object or string
-                if child.color:
-                    try:
-                        # If it's a CadQuery Color object, get the tuple
-                        if hasattr(child.color, 'toTuple'):
-                            color_tuple = child.color.toTuple()
-                            part_color = color_to_hex(color_tuple)
-                        elif isinstance(child.color, str):
-                            # If it's already a string, use it directly
-                            part_color = child.color
-                        elif isinstance(child.color, (tuple, list)):
-                            # If it's already a tuple, use it directly
-                            part_color = color_to_hex(child.color)
-                        else:
-                            print(f"  Unexpected color type: {type(child.color)}")
-                    except AttributeError as e:
-                        print(f"  Error accessing color: {e}")
-
-                # Get transformation matrix if location exists
-                transform = None
-                if hasattr(child, 'loc') and child.loc:
-                    transform = get_location_matrix(child.loc)
-                    print(f"  Transform matrix: {transform}")
-                else:
-                    print(f"  No location found for {child.name}")
-
-                results.append({
-                    'name': f"{shown['name']}_{child.name}",
-                    'color': part_color,
-                    'stl': stl_data,
-                    'transform': transform  # Include transformation matrix
-                })
-                print(f"  Successfully exported {child.name} with color {part_color}")
-
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                print(f"  Error exporting {child.name}: {e}")
-                traceback.print_exc()
-
-    return results
 
 
 def process_objects(shown_objects):
