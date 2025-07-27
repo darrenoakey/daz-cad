@@ -40,6 +40,7 @@ def run_cadquery_code(code_str):
     # Import everything needed for exec environment
     # pylint: disable=import-outside-toplevel
     from cadquery import Color, Assembly, Location, Workplane, Vector
+    import traceback
     # pylint: enable=import-outside-toplevel
 
     # Prepare execution environment
@@ -65,8 +66,9 @@ def run_cadquery_code(code_str):
         output = sys.stdout.getvalue()
     except Exception as e:  # pylint: disable=broad-exception-caught
         output = None
-        error = str(e)
-        return {"success": False, "error": error, "objects": []}
+        # Get full traceback with line numbers
+        error_traceback = traceback.format_exc()
+        return {"success": False, "error": str(e), "traceback": error_traceback, "objects": []}
     finally:
         sys.stdout = old_stdout
 

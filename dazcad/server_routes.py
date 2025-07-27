@@ -103,9 +103,12 @@ async def run_code(request):
     except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Error in run_code: {e}")
         traceback.print_exc()
+        # Include traceback in server errors too
+        error_traceback = traceback.format_exc()
         return json_response({
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'traceback': error_traceback
         })
 
 

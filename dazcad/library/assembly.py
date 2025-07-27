@@ -52,7 +52,7 @@ class TestAssembly(unittest.TestCase):
     def test_assembly_creation(self):
         """Test that assembly can be created."""
         test_assembly = cq.Assembly()
-        test_part = cq.Workplane("XY").box(10, 10, 10)
+        test_part = cq.Workplane("XY").workplane(offset=5).box(10, 10, 10)
         test_assembly.add(test_part, name="test")
         self.assertIsNotNone(test_assembly)
         self.assertEqual(len(test_assembly.children), 1)

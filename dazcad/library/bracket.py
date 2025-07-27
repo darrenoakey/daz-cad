@@ -68,12 +68,12 @@ class TestBracket(unittest.TestCase):
 
     def test_hole_creation(self):
         """Test that holes can be created."""
-        test_part = cq.Workplane("XY").box(20, 20, 5)
+        test_part = cq.Workplane("XY").workplane(offset=2.5).box(20, 20, 5)
         test_part = test_part.faces(">Z").workplane().hole(5)
         self.assertIsNotNone(test_part)
 
     def test_fillet_creation(self):
         """Test that fillets can be created."""
-        test_part = cq.Workplane("XY").box(10, 10, 10)
+        test_part = cq.Workplane("XY").workplane(offset=5).box(10, 10, 10)
         test_filleted = test_part.edges().fillet(1)
         self.assertIsNotNone(test_filleted)

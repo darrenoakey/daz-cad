@@ -41,15 +41,52 @@ async function loadFile(name, type) {
             // Update active state in list
             window.libraryUI.renderLibraryList();
             
-            // Run the code
+            // Run the code and handle errors properly
             if (window.runCode) {
-                window.runCode();
+                await autoRunCode();
             }
         } else {
             console.error('Failed to load file:', data.error);
         }
     } catch (error) {
         console.error('Error loading file:', error);
+    }
+}
+
+async function autoRunCode() {
+    // Auto-run version that properly shows errors like manual run
+    const code = window.codeEditor.getValue();
+    const outputDiv = document.getElementById('output');
+    
+    try {
+        const response = await fetch('/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: code })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            if (window.clearScene) {
+                window.clearScene();
+            }
+            result.objects.forEach(obj => {
+                if (window.loadSTL) {
+                    window.loadSTL(obj.stl, obj.name, obj.color, obj.transform);
+                }
+            });
+            outputDiv.innerHTML = `<span class="success-output">Auto-run completed!</span>\n${result.output || ''}`;
+        } else {
+            // Show full error with traceback if available, same as manual run
+            let errorMessage = `<span class="error-output">Auto-run Error: ${result.error}</span>`;
+            if (result.traceback) {
+                errorMessage += `\n\n<span class="traceback-output">Stack trace:\n${result.traceback}</span>`;
+            }
+            outputDiv.innerHTML = errorMessage;
+        }
+    } catch (error) {
+        outputDiv.innerHTML = `<span class="error-output">Auto-run Network error: ${error.message}</span>`;
     }
 }
 
@@ -99,6 +136,13 @@ async function saveCurrentFile() {
             // Update the 3D view if run was successful
             if (data.run_result && data.run_result.success && window.updateViewer) {
                 window.updateViewer(data.run_result.objects);
+            } else if (data.run_result && !data.run_result.success) {
+                // Show save errors with traceback if available
+                let errorMessage = `<span class="error-output">Save Error: ${data.run_result.error}</span>`;
+                if (data.run_result.traceback) {
+                    errorMessage += `\n\n<span class="traceback-output">Stack trace:\n${data.run_result.traceback}</span>`;
+                }
+                output.innerHTML = errorMessage;
             }
         } else {
             console.error('Failed to save file:', data.error);

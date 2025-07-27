@@ -18,7 +18,7 @@ class GitOperations:
 
     def __init__(self, library_path: Path):
         """Initialize git operations with library path.
-        
+
         Args:
             library_path: Path to the library directory
         """
@@ -58,15 +58,15 @@ class GitOperations:
             except subprocess.CalledProcessError as e:
                 print(f"Warning: Could not initialize git repository: {e}")
 
-    def git_add_and_commit(self, filename: str, action: str, 
+    def git_add_and_commit(self, filename: str, action: str,
                           content: str) -> Tuple[bool, str]:
         """Add file to git and commit with generated message.
-        
+
         Args:
             filename: Name of the file to add/commit
             action: Description of the action (for commit message)
             content: File content (for commit message generation)
-            
+
         Returns:
             Tuple of (success, message)
         """
@@ -97,11 +97,11 @@ class GitOperations:
 
     def git_move_file(self, old_name: str, new_name: str) -> Tuple[bool, str]:
         """Move/rename file using git.
-        
+
         Args:
             old_name: Current filename
             new_name: New filename
-            
+
         Returns:
             Tuple of (success, message)
         """
@@ -119,10 +119,10 @@ class GitOperations:
 
     def get_file_history(self, filename: str) -> List[Dict[str, str]]:
         """Get git history for a specific file.
-        
+
         Args:
             filename: Name of the file to get history for
-            
+
         Returns:
             List of commit info dictionaries
         """
@@ -168,7 +168,7 @@ class TestGitOperations(unittest.TestCase):
         import tempfile  # pylint: disable=import-outside-toplevel
         temp_dir = Path(tempfile.mkdtemp())
         git_ops = GitOperations(temp_dir)
-        
+
         self.assertTrue(hasattr(git_ops, 'ensure_git_initialized'))
         self.assertTrue(hasattr(git_ops, 'git_add_and_commit'))
         self.assertTrue(hasattr(git_ops, 'git_move_file'))
