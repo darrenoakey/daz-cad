@@ -1,2 +1,3 @@
 sanic==23.12.1
 cadquery>=2.3.0
+dazllm

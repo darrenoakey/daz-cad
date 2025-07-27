@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# DazCAD Run Script
+# Simple script to check prerequisites and start DazCAD
+
+set -e  # Exit on any error
+
+echo "🔧 DazCAD Setup & Launch"
+echo "========================================"
+
+# Check if ollama is running
+echo "🦙 Checking if Ollama is running..."
+if ! command -v ollama &> /dev/null; then
+    echo "❌ Ollama not found. Please install Ollama from https://ollama.ai"
+    exit 1
+fi
+
+if ! ollama list &> /dev/null; then
+    echo "❌ Ollama is not running. Please start it with: ollama serve"
+    exit 1
+fi
+echo "✅ Ollama is running"
+
+# Install Python dependencies
+echo "📦 Installing Python dependencies..."
+if [ ! -f "dazcad/requirements.txt" ]; then
+    echo "❌ Requirements file not found: dazcad/requirements.txt"
+    exit 1
+fi
+
+pip install -r dazcad/requirements.txt
+echo "✅ Dependencies installed"
+
+# Start the server
+echo "🚀 Starting DazCAD server..."
+if [ ! -f "dazcad/server.py" ]; then
+    echo "❌ Server file not found: dazcad/server.py"
+    exit 1
+fi
+
+cd dazcad
+
+# Start server in background and get its PID
+python server.py &
+SERVER_PID=$!
+
+# Wait a moment for server to start
+sleep 2
+
+# Open browser (try different commands based on OS)
+echo "🌐 Opening browser..."
+if command -v open &> /dev/null; then
+    # macOS
+    open "http://localhost:8000"
+elif command -v xdg-open &> /dev/null; then
+    # Linux
+    xdg-open "http://localhost:8000"
+elif command -v start &> /dev/null; then
+    # Windows
+    start "http://localhost:8000"
+else
+    echo "⚠️  Could not open browser automatically"
+    echo "Please open http://localhost:8000 manually"
+fi
+
+echo ""
+echo "🎉 DazCAD is now running!"
+echo "📍 URL: http://localhost:8000"
+echo "🛑 Press Ctrl+C to stop the server"
+
+# Function to cleanup when script exits
+cleanup() {
+    echo ""
+    echo "🛑 Shutting down DazCAD..."
+    kill $SERVER_PID 2>/dev/null || true
+    echo "✅ Server stopped"
+}
+
+# Set trap to cleanup on script exit
+trap cleanup EXIT INT TERM
+
+# Wait for server process
+wait $SERVER_PID
