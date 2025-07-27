@@ -66,7 +66,8 @@ def process_assembly(shown):
                 print(f"  Location wrapped: {child.loc.wrapped}")
                 trsf = child.loc.wrapped.Transformation()
                 print("  Raw transformation values:")
-                print(f"    Translation: ({trsf.Value(1,4)}, {trsf.Value(2,4)}, {trsf.Value(3,4)})")
+                translation_values = (trsf.Value(1,4), trsf.Value(2,4), trsf.Value(3,4))
+                print(f"    Translation: {translation_values}")
 
         # Assembly children have an 'obj' attribute containing the shape
         if hasattr(child, 'obj'):
@@ -76,8 +77,26 @@ def process_assembly(shown):
                 # Export the shape at origin (untransformed)
                 stl_data = export_shape_to_stl(shape)
 
-                color_tuple = child.color.toTuple() if child.color else None
-                part_color = color_to_hex(color_tuple)
+                # Initialize part_color with default
+                part_color = color_to_hex(None)  # Default gray
+
+                # Handle color properly - check if it's a Color object or string
+                if child.color:
+                    try:
+                        # If it's a CadQuery Color object, get the tuple
+                        if hasattr(child.color, 'toTuple'):
+                            color_tuple = child.color.toTuple()
+                            part_color = color_to_hex(color_tuple)
+                        elif isinstance(child.color, str):
+                            # If it's already a string, use it directly
+                            part_color = child.color
+                        elif isinstance(child.color, (tuple, list)):
+                            # If it's already a tuple, use it directly
+                            part_color = color_to_hex(child.color)
+                        else:
+                            print(f"  Unexpected color type: {type(child.color)}")
+                    except AttributeError as e:
+                        print(f"  Error accessing color: {e}")
 
                 # Get transformation matrix if location exists
                 transform = None

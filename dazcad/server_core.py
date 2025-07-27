@@ -169,7 +169,7 @@ def run_cadquery_code(code_str):
         combined_output = None
         # Get full traceback with line numbers
         error_traceback = traceback.format_exc()
-        return {"success": False, "error": str(e), 
+        return {"success": False, "error": str(e),
                 "traceback": error_traceback, "objects": []}
     finally:
         sys.stdout = old_stdout

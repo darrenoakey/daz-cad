@@ -117,12 +117,12 @@ async def download_format(request, export_format):
     try:
         # Check if there are any objects to export
         if not shown_objects:
-            return json_response({
-                'error': 'No objects to export. Please run some CadQuery code first to generate objects.'
-            }, status=400)
-        
+            error_msg = ('No objects to export. Please run some CadQuery code '
+                        'first to generate objects.')
+            return json_response({'error': error_msg}, status=400)
+
         return await handle_download_request(request, export_format, shown_objects)
-        
+
     except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Error in download_format: {e}")
         traceback.print_exc()
