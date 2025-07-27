@@ -1,5 +1,136 @@
 # Dazbuild Instructions
 
+## DazCAD Repository Navigation Guide
+
+### Project Overview
+DazCAD is a web-based CadQuery development environment for 3D modeling and printing. The project has grown into multiple logical layers:
+
+**Backend (Python)**: CadQuery processing, server infrastructure, library management
+**Frontend (JavaScript)**: Web interface, 3D visualization, user interactions  
+**Library (Python)**: Parametric CAD model examples and components
+**Tests & Config**: Unit tests, linting rules, dependencies
+
+### Directory Structure & Key Files
+
+#### **Entry Points & Core Infrastructure**
+- **`dazcad/server.py`** - Main application entry point, runs the web server
+- **`dazcad/server_core.py`** - Core server functionality and Sanic app setup
+- **`dazcad/server_routes.py`** - HTTP route handlers and API endpoints
+- **`dazcad/index.html`** - Main web application interface
+
+#### **Backend Processing Layer**
+- **`dazcad/cadquery_processor.py`** - Core CadQuery code execution and object processing
+- **`dazcad/cadquery_core.py`** - Low-level CadQuery operations and geometry handling
+- **`dazcad/assembly_processor.py`** - Handles CadQuery assemblies with multiple parts
+- **`dazcad/color_processor.py`** - Manages colors and materials for 3D objects
+- **`dazcad/export_utils.py`** - STL/STEP/3MF file export functionality
+- **`dazcad/download_handler.py`** - File download processing and response handling
+
+#### **Library Management System**
+- **`dazcad/library_manager.py`** - Main library interface and coordination
+- **`dazcad/library_manager_core.py`** - Core library operations (load, save, list)
+- **`dazcad/library_manager_git.py`** - Git integration for library versioning
+- **`dazcad/library/`** - Directory containing example CAD models:
+  - `assembly.py` - Interlocking parametric parts
+  - `bearing.py` - Mechanical bearing components
+  - `bracket.py` - Mounting brackets and supports
+  - `gear.py` - Parametric gear generation
+  - `vase.py` - Decorative 3D printable objects
+
+#### **Frontend JavaScript Layer**
+- **`dazcad/script.js`** - Main frontend application logic
+- **`dazcad/editor.js`** - Code editor functionality and Monaco integration
+- **`dazcad/viewer.js`** - Three.js 3D visualization and rendering
+- **`dazcad/viewer_utils.js`** - 3D viewer utilities and coordinate transformations
+- **`dazcad/library.js`** - Library browser and example loading
+- **`dazcad/library_ui.js`** - Library interface components and interactions
+- **`dazcad/library_file_ops.js`** - File operations for library management
+- **`dazcad/chat.js`** - LLM chat integration for code assistance
+- **`dazcad/style.css`** - Application styling and layout
+
+#### **LLM Integration**
+- **`dazcad/llm_chat.py`** - Backend chat API and LLM communication
+- **`dazcad/llm_core.py`** - Core LLM processing and response handling
+
+#### **Testing & Configuration**
+- **`dazcad/test_*.py`** - Unit tests for corresponding modules
+- **`dazcad/.pylintrc`** - Code quality rules and linting configuration
+- **`dazcad/requirements.txt`** - Python dependencies
+- **`dazcad/README.md`** - User documentation and setup instructions
+
+### Navigation Patterns for Common Tasks
+
+#### **Adding New CAD Library Examples**
+1. Create new `.py` file in `dazcad/library/`
+2. Follow pattern from existing examples (assembly.py, gear.py, etc.)
+3. Include unittest.TestCase with real tests
+4. Ensure 3D printing readiness (parts on z=0 plane)
+
+#### **Modifying 3D Visualization**
+- **Frontend display issues**: Edit `viewer.js`, `viewer_utils.js`, or `style.css`
+- **Backend data format**: Only touch if the core CadQuery output needs changes
+- **Coordinate transformations**: Handle in `viewer_utils.js` frontend conversion functions
+
+#### **Server & API Changes**
+- **New routes**: Add to `server_routes.py`
+- **Core server logic**: Modify `server_core.py`
+- **Request processing**: Update relevant `*_processor.py` files
+
+#### **Library Management Features**
+- **Library UI**: Edit `library_ui.js` and `library.js`
+- **Backend operations**: Modify `library_manager*.py` files
+- **File operations**: Update `library_file_ops.js`
+
+#### **Code Editor Enhancements**
+- **Editor behavior**: Modify `editor.js`
+- **Chat integration**: Update `chat.js` and `llm_*.py` files
+- **Main app coordination**: Edit `script.js`
+
+### Finding the Right File for Your Change
+
+#### **"Where do I add...?"**
+- **New CadQuery example** → `dazcad/library/[name].py`
+- **New API endpoint** → `dazcad/server_routes.py`
+- **Frontend UI change** → `dazcad/[component].js` + `style.css`
+- **3D rendering fix** → `dazcad/viewer.js` or `viewer_utils.js`
+- **Export format** → `dazcad/export_utils.py`
+- **Code processing** → `dazcad/cadquery_processor.py`
+
+#### **"Where is the bug in...?"**
+- **3D display problems** → Check `viewer.js`, then `viewer_utils.js`
+- **Code execution errors** → Look in `cadquery_processor.py` or `cadquery_core.py`
+- **File downloads** → Check `download_handler.py` and export chain
+- **Library loading** → Examine `library_manager*.py` and `library.js`
+- **Server errors** → Start with `server_routes.py`, then `server_core.py`
+
+### Workflow Best Practices
+
+#### **Before Making Changes**
+1. **`dazbuild_outline [file]`** - Understand the structure
+2. **`dazbuild_get [file]`** - Examine current implementation
+3. Identify the **smallest scope** for your change (function, method, class)
+
+#### **During Development**
+- **Edit minimal scope**: `file.py::ClassName::method_name` not entire files
+- **Run tests often**: Use `dazbuild_end_change` to validate as you go
+- **Follow naming patterns**: Match existing file naming conventions
+- **Maintain separation**: Keep backend/frontend concerns separate
+
+#### **Architecture Awareness**
+- **Backend purity**: Never modify Python to fix display issues
+- **Frontend adaptation**: Convert backend data to display requirements
+- **Library standards**: New examples should be 3D print ready
+- **Testing requirements**: Every Python file needs unittest.TestCase
+
+### Quick Reference Commands
+
+**Start working**: `dazbuild_start_change dazcad`
+**See structure**: `dazbuild_outline dazcad [file]` 
+**Read code**: `dazbuild_get dazcad [file]`
+**Edit scope**: `dazbuild_write dazcad [file::class::method] [content]`
+**Add component**: `dazbuild_add dazcad [type] [parent] [name] [content]`
+**Finish & test**: `dazbuild_end_change dazcad "[commit message]"`
+
 ## End Change Validation Rules
 When you call `dazbuild_end_change`, the following checks must pass:
 
