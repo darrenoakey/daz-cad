@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Download model in specified format
-function downloadModel(format) {
+async function downloadModel(format) {
     const nameInput = document.getElementById('modelName');
     const modelName = nameInput.value.trim() || 'example';
     
@@ -42,6 +42,7 @@ function downloadModel(format) {
     const button = document.getElementById(buttonId);
     if (!button) {
         console.error(`Download button for format ${format} not found`);
+        showDownloadError('Download button not found');
         return;
     }
     
@@ -49,22 +50,58 @@ function downloadModel(format) {
     button.textContent = 'Downloading...';
     button.disabled = true;
     
-    // Create download URL
-    const downloadUrl = `/download/${format}?name=${encodeURIComponent(sanitizedName)}`;
-    
-    // Create hidden download link and trigger download
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = `${sanitizedName}.${format}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    // Reset button after a short delay
-    setTimeout(() => {
-        button.textContent = originalText;
-        button.disabled = false;
-    }, 2000);
+    try {
+        // Create download URL
+        const downloadUrl = `/download/${format}?name=${encodeURIComponent(sanitizedName)}`;
+        
+        // First, check if the download would succeed
+        const response = await fetch(downloadUrl, { method: 'HEAD' });
+        
+        if (!response.ok) {
+            // Get the error message
+            const errorResponse = await fetch(downloadUrl);
+            const errorData = await errorResponse.json();
+            showDownloadError(errorData.error || 'Download failed');
+            return;
+        }
+        
+        // If successful, trigger the actual download
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = `${sanitizedName}.${format}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Show success message briefly
+        button.textContent = '✓ Downloaded';
+        setTimeout(() => {
+            button.textContent = originalText;
+        }, 1500);
+        
+    } catch (error) {
+        console.error('Download error:', error);
+        showDownloadError('Network error during download');
+    } finally {
+        // Reset button
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.disabled = false;
+        }, 2000);
+    }
+}
+
+// Show download error message to user
+function showDownloadError(message) {
+    const outputDiv = document.getElementById('output');
+    if (outputDiv) {
+        outputDiv.innerHTML = `<span class="error-output">Download Error: ${message}</span>`;
+        
+        // If no objects, suggest running code first
+        if (message.includes('No objects to export')) {
+            outputDiv.innerHTML += `<br><span class="info-output">💡 Tip: Run some CadQuery code first to generate 3D objects to download.</span>`;
+        }
+    }
 }
 
 // Check if 3MF format is supported by making a test request
