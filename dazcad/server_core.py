@@ -32,6 +32,88 @@ def show_object(obj, name=None, color=None):
     return obj
 
 
+def run_tests_from_globals(exec_globals):
+    """Run tests found in the execution globals and return formatted results."""
+    test_classes = []
+
+    # Find all TestCase classes in the executed code
+    for obj in exec_globals.values():
+        if (isinstance(obj, type) and
+            issubclass(obj, unittest.TestCase) and
+            obj != unittest.TestCase):
+            test_classes.append(obj)
+
+    if not test_classes:
+        return "No tests found.\n"
+
+    test_results = []
+    total_tests = 0
+    passed_tests = 0
+
+    for test_class in test_classes:
+        # Create a test suite for this class
+        suite = unittest.TestLoader().loadTestsFromTestCase(test_class)
+
+        # Run tests with custom result class to capture individual results
+        class DetailedTestResult(unittest.TestResult):
+            """Custom test result class to capture detailed test outcomes."""
+
+            def __init__(self):
+                super().__init__()
+                self.test_results = []
+                self.current_test = None
+
+            def startTest(self, test):
+                super().startTest(test)
+                self.current_test = test
+
+            def addSuccess(self, test):
+                super().addSuccess(test)
+                self.test_results.append((test, "PASS", None))
+
+            def addError(self, test, err):
+                super().addError(test, err)
+                self.test_results.append((test, "ERROR", err))
+
+            def addFailure(self, test, err):
+                super().addFailure(test, err)
+                self.test_results.append((test, "FAIL", err))
+
+        # Run the tests
+        result = DetailedTestResult()
+        suite.run(result)
+
+        # Format results for this test class
+        class_name = test_class.__name__
+        test_results.append(f"\n📋 {class_name}:")
+
+        for test, status, error in result.test_results:
+            total_tests += 1
+            test_name = test._testMethodName  # pylint: disable=protected-access
+
+            if status == "PASS":
+                test_results.append(f"  ✅ {test_name}")
+                passed_tests += 1
+            elif status == "FAIL":
+                test_results.append(f"  ❌ {test_name}")
+                if error:
+                    # Get just the assertion message, not full traceback
+                    error_msg = str(error[1]).split('\n', maxsplit=1)[0]
+                    test_results.append(f"     └─ {error_msg}")
+            elif status == "ERROR":
+                test_results.append(f"  💥 {test_name}")
+                if error:
+                    error_msg = str(error[1]).split('\n', maxsplit=1)[0]
+                    test_results.append(f"     └─ {error_msg}")
+
+    # Add summary
+    summary = f"\n🧪 Test Summary: {passed_tests}/{total_tests} passed"
+    if passed_tests == total_tests:
+        summary += " 🎉"
+
+    return summary + "\n" + "\n".join(test_results) + "\n"
+
+
 def run_cadquery_code(code_str):
     """Execute CadQuery code and capture results"""
     global shown_objects  # pylint: disable=global-statement
@@ -52,30 +134,50 @@ def run_cadquery_code(code_str):
         'Workplane': Workplane,
         'Vector': Vector,
         'show_object': show_object,
+        'unittest': unittest,
         '__name__': '__main__'
     }
 
     # Capture stdout
     old_stdout = sys.stdout
-    sys.stdout = StringIO()
+    stdout_capture = StringIO()
+    sys.stdout = stdout_capture
 
     try:
         # pylint: disable=exec-used
         exec(code_str, exec_globals)
         # pylint: enable=exec-used
-        output = sys.stdout.getvalue()
+
+        # Get the main execution output
+        main_output = stdout_capture.getvalue()
+
+        # Reset stdout capture for test output
+        stdout_capture = StringIO()
+        sys.stdout = stdout_capture
+
+        # Run tests and get detailed results
+        test_output = run_tests_from_globals(exec_globals)
+
+        # Combine outputs
+        combined_output = ""
+        if main_output.strip():
+            combined_output += main_output
+        if test_output.strip() and test_output != "No tests found.\n":
+            combined_output += "\n" + test_output
+
     except Exception as e:  # pylint: disable=broad-exception-caught
-        output = None
+        combined_output = None
         # Get full traceback with line numbers
         error_traceback = traceback.format_exc()
-        return {"success": False, "error": str(e), "traceback": error_traceback, "objects": []}
+        return {"success": False, "error": str(e), 
+                "traceback": error_traceback, "objects": []}
     finally:
         sys.stdout = old_stdout
 
     # Process shown objects
     result_objects = process_objects(shown_objects)
 
-    return {"success": True, "objects": result_objects, "output": output}
+    return {"success": True, "objects": result_objects, "output": combined_output}
 
 
 class TestServerCore(unittest.TestCase):
