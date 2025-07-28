@@ -12,20 +12,20 @@ except ImportError:
 
 def process_child_color(child_color):
     """Process a child's color attribute and return hex color string.
-    
+
     Args:
         child_color: The color attribute from an assembly child
-        
+
     Returns:
         Hex color string like '#ff0000'
     """
     # Initialize with default gray
     part_color = color_to_hex(None)
-    
+
     if child_color:
         try:
             print(f"  Child color: {child_color} (type: {type(child_color)})")
-            
+
             # Check for string first (most explicit)
             if isinstance(child_color, str):
                 part_color = child_color
@@ -49,14 +49,14 @@ def process_child_color(child_color):
                 msg = f"  Unexpected color type: {type(child_color)}, using as string"
                 print(msg)
                 part_color = str(child_color)
-                
+
         except (AttributeError, TypeError, ValueError) as color_error:
             print(f"  Error processing color: {color_error}")
             print(f"  Color value: {child_color}")
             print(f"  Color type: {type(child_color)}")
             traceback.print_exc()
             part_color = color_to_hex(None)  # Fall back to default
-    
+
     return part_color
 
 

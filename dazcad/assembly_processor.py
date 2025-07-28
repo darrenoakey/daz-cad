@@ -22,16 +22,16 @@ except ImportError:
 
 def process_assembly_child(child, assembly_name):
     """Process a single assembly child and return result object.
-    
+
     Args:
         child: Assembly child object
         assembly_name: Name of the parent assembly
-        
+
     Returns:
         Dictionary with processed child data or None if error
     """
     print(f"  Child attributes: {dir(child)}")
-    
+
     # Debug location information
     if hasattr(child, 'loc'):
         print(f"  Child.loc exists: {child.loc}")
@@ -47,7 +47,7 @@ def process_assembly_child(child, assembly_name):
     if not hasattr(child, 'obj'):
         print(f"  Child {child.name} has no 'obj' attribute")
         return None
-        
+
     shape = child.obj
 
     try:
@@ -89,7 +89,7 @@ def process_assembly(shown):
 
     for i, child in enumerate(obj.children):
         print(f"\\nProcessing child {i}: {child.name}")
-        
+
         result = process_assembly_child(child, shown['name'])
         if result:
             results.append(result)
@@ -130,10 +130,11 @@ class TestAssemblyProcessor(unittest.TestCase):
     def test_process_assembly_child_no_obj(self):
         """Test processing child without obj attribute."""
         # Mock child without obj attribute
-        class MockChild:
+        class MockChild:  # pylint: disable=too-few-public-methods
+            """Mock child for testing."""
             def __init__(self):
                 self.name = "TestChild"
-                
+
         child = MockChild()
         result = process_assembly_child(child, "TestAssembly")
         self.assertIsNone(result)
