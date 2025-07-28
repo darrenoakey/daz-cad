@@ -18,8 +18,9 @@ except ImportError:
 # Store for objects shown via show_object
 shown_objects = []
 
-# Initialize library manager
-library_manager = LibraryManager()
+# Initialize library manager with correct path to library files
+# The library files are in dazcad/library directory
+library_manager = LibraryManager(built_in_library_path="dazcad/library")
 
 
 def show_object(obj, name=None, color=None):

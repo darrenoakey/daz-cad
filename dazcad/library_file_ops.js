@@ -8,8 +8,6 @@ async function loadLibraryFiles() {
         if (data.success) {
             window.libraryUI.setLibraryFiles(data.files);
             window.libraryUI.renderLibraryList();
-            
-            // Load the default example file
             await loadFile('example', 'builtin');
         }
     } catch (error) {
@@ -18,43 +16,71 @@ async function loadLibraryFiles() {
 }
 
 async function loadFile(name, type) {
+    const outputDiv = document.getElementById('output');
+    
+    // Show loading indicator with spinner - make it more prominent
+    if (outputDiv) {
+        outputDiv.innerHTML = '<div class="loading-output" style="font-size: 1.2em; color: #007acc;">⏳ Loading file... Please wait</div>';
+    }
+    
+    // Also add visual feedback to the library list
+    const libraryItems = document.querySelectorAll('.library-item');
+    libraryItems.forEach(item => {
+        if (item.textContent.includes(name)) {
+            item.style.opacity = '0.5';
+            item.style.cursor = 'wait';
+        }
+    });
+    
     try {
         const response = await fetch(`/library/get/${type}/${encodeURIComponent(name)}`);
         const data = await response.json();
         
         if (data.success) {
-            // Update current file
-            const newFile = { name, type };
-            window.libraryUI.setCurrentFile(newFile);
+            window.libraryUI.setCurrentFile({ name, type });
             
-            // Update editor
             if (window.codeEditor) {
                 window.codeEditor.setValue(data.content);
+                window.autoSave.setLastSavedContent(data.content);
+                // Also save the current file name
+                window.autoSave.setLastSavedName(name);
             }
             
-            // Update name field
             const nameInput = document.getElementById('modelName');
-            if (nameInput) {
-                nameInput.value = name;
-            }
+            if (nameInput) nameInput.value = name;
             
-            // Update active state in list
             window.libraryUI.renderLibraryList();
             
-            // Run the code and handle errors properly
-            if (window.runCode) {
-                await autoRunCode();
+            // Keep the loading message a bit longer for better UX
+            if (outputDiv) {
+                outputDiv.innerHTML = '<div class="info-output">📄 File loaded. Running code...</div>';
             }
+            
+            // Small delay before running to ensure user sees the loading message
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            if (window.runCode) await autoRunCode();
         } else {
             console.error('Failed to load file:', data.error);
+            if (outputDiv) {
+                outputDiv.innerHTML = `<span class="error-output">Failed to load file: ${data.error || 'Unknown error'}</span>`;
+            }
         }
     } catch (error) {
         console.error('Error loading file:', error);
+        if (outputDiv) {
+            outputDiv.innerHTML = `<span class="error-output">Failed to load file: ${error.message}</span>`;
+        }
+    } finally {
+        // Restore library items visual state
+        libraryItems.forEach(item => {
+            item.style.opacity = '1';
+            item.style.cursor = 'pointer';
+        });
     }
 }
 
 async function autoRunCode() {
-    // Auto-run version that properly shows errors like manual run
     const code = window.codeEditor.getValue();
     const outputDiv = document.getElementById('output');
     
@@ -68,17 +94,20 @@ async function autoRunCode() {
         const result = await response.json();
         
         if (result.success) {
-            if (window.clearScene) {
-                window.clearScene();
-            }
+            if (window.clearScene) window.clearScene();
+            
             result.objects.forEach(obj => {
                 if (window.loadSTL) {
                     window.loadSTL(obj.stl, obj.name, obj.color, obj.transform);
                 }
             });
-            outputDiv.innerHTML = `<span class="success-output">Auto-run completed!</span>\n${result.output || ''}`;
+            
+            let outputContent = '<span class="success-output">✓ Code executed successfully!</span>';
+            if (result.output && result.output.trim()) {
+                outputContent += '\n' + result.output;
+            }
+            outputDiv.innerHTML = outputContent;
         } else {
-            // Show full error with traceback if available, same as manual run
             let errorMessage = `<span class="error-output">Auto-run Error: ${result.error}</span>`;
             if (result.traceback) {
                 errorMessage += `\n\n<span class="traceback-output">Stack trace:\n${result.traceback}</span>`;
@@ -90,144 +119,12 @@ async function autoRunCode() {
     }
 }
 
-async function saveCurrentFile() {
-    if (!window.codeEditor) return;
-    
-    const content = window.codeEditor.getValue();
-    const nameInput = document.getElementById('modelName');
-    const currentFile = window.libraryUI.currentFile;
-    const name = nameInput ? nameInput.value.trim() : currentFile.name;
-    
-    if (!name) {
-        console.error('No file name specified');
-        return;
-    }
-    
-    try {
-        const response = await fetch('/library/save', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                name: name,
-                content: content,
-                old_name: currentFile.name !== name ? currentFile.name : null,
-                type: currentFile.type
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            // Update current file name if changed
-            if (currentFile.name !== name) {
-                window.libraryUI.setCurrentFile({ name, type: currentFile.type });
-                // Reload library list
-                await loadLibraryFiles();
-            }
-            
-            // Show success feedback
-            const output = document.getElementById('output');
-            if (output) {
-                output.innerHTML = `<div class="success-output">✓ ${data.message}</div>`;
-            }
-            
-            // Update the 3D view if run was successful
-            if (data.run_result && data.run_result.success && window.updateViewer) {
-                window.updateViewer(data.run_result.objects);
-            } else if (data.run_result && !data.run_result.success) {
-                // Show save errors with traceback if available
-                let errorMessage = `<span class="error-output">Save Error: ${data.run_result.error}</span>`;
-                if (data.run_result.traceback) {
-                    errorMessage += `\n\n<span class="traceback-output">Stack trace:\n${data.run_result.traceback}</span>`;
-                }
-                output.innerHTML = errorMessage;
-            }
-        } else {
-            console.error('Failed to save file:', data.error);
-            const output = document.getElementById('output');
-            if (output) {
-                output.innerHTML = `<div class="error-output">Error: ${data.error}</div>`;
-            }
-        }
-    } catch (error) {
-        console.error('Error saving file:', error);
-    }
-}
-
-async function handleNameChange(event) {
-    const newName = event.target.value.trim();
-    const currentFile = window.libraryUI.currentFile;
-    
-    if (!newName || newName === currentFile.name) {
-        // Reset to current name if empty
-        if (!newName) {
-            event.target.value = currentFile.name;
-        }
-        return;
-    }
-    
-    // Save with new name (this will handle rename)
-    await saveCurrentFile();
-}
-
-async function createNewFile() {
-    const name = prompt('Enter name for new file:');
-    if (!name) return;
-    
-    // Sanitize name
-    const sanitizedName = name.replace(/[^a-zA-Z0-9_-]/g, '_');
-    
-    try {
-        const response = await fetch('/library/create', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ name: sanitizedName })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            // Reload library and open the new file
-            await loadLibraryFiles();
-            await loadFile(sanitizedName, 'user');
-        } else {
-            alert(`Failed to create file: ${data.error || data.message}`);
-        }
-    } catch (error) {
-        console.error('Error creating file:', error);
-        alert('Failed to create file');
-    }
-}
-
-// Auto-save functionality
-let saveTimeout = null;
-
-function setupAutoSave() {
-    if (window.codeEditor) {
-        window.codeEditor.on('change', () => {
-            // Clear existing timeout
-            if (saveTimeout) {
-                clearTimeout(saveTimeout);
-            }
-            
-            // Set new timeout for auto-save
-            saveTimeout = setTimeout(() => {
-                saveCurrentFile();
-            }, 2000); // Save 2 seconds after last change
-        });
-    }
-}
-
 // Export to global namespace
 window.libraryFileOps = {
     loadLibraryFiles,
     loadFile,
-    saveCurrentFile,
-    handleNameChange,
-    createNewFile,
-    setupAutoSave
+    saveCurrentFile: () => window.librarySaveOps?.saveCurrentFile(),
+    handleNameChange: (event) => window.librarySaveOps?.handleNameChange(event),
+    createNewFile: () => window.librarySaveOps?.createNewFile(),
+    setupAutoSave: window.autoSave.setupAutoSave
 };

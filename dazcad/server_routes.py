@@ -3,7 +3,6 @@
 import traceback
 import unittest
 from sanic.response import json as json_response
-from sanic import response
 
 # Import dependencies with fallback for direct execution
 try:
@@ -15,79 +14,6 @@ except ImportError:
     from llm_chat import improve_code_with_llm
     from download_handler import handle_download_request
     from server_core import run_cadquery_code, library_manager, shown_objects
-
-
-async def index(_request):
-    """Serve the main page."""
-    return await response.file('index.html')
-
-
-async def style(_request):
-    """Serve the CSS file."""
-    return await response.file('style.css')
-
-
-async def script(_request):
-    """Serve the JavaScript file with cache-busting headers."""
-    resp = await response.file('script.js')
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-
-async def chat_script(_request):
-    """Serve the Chat JavaScript file with cache-busting headers."""
-    resp = await response.file('chat.js')
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-
-async def viewer_script(_request):
-    """Serve the Viewer JavaScript file with cache-busting headers."""
-    resp = await response.file('viewer.js')
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-
-async def editor_script(_request):
-    """Serve the Editor JavaScript file with cache-busting headers."""
-    resp = await response.file('editor.js')
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-
-async def library_script(_request):
-    """Serve the Library JavaScript file with cache-busting headers."""
-    resp = await response.file('library.js')
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-
-async def library_ui_script(_request):
-    """Serve the Library UI JavaScript file with cache-busting headers."""
-    resp = await response.file('library_ui.js')
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-
-async def library_file_ops_script(_request):
-    """Serve the Library File Ops JavaScript file with cache-busting headers."""
-    resp = await response.file('library_file_ops.js')
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
 
 
 async def run_code(request):
@@ -220,9 +146,9 @@ class TestRoutes(unittest.TestCase):
 
     def test_route_functions_exist(self):
         """Test that route functions exist."""
-        self.assertTrue(callable(index))
         self.assertTrue(callable(run_code))
         self.assertTrue(callable(list_library_files))
+        self.assertTrue(callable(get_library_file))
 
     def test_library_manager_access(self):
         """Test that library manager is accessible."""

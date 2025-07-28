@@ -9,9 +9,12 @@ from sanic import Sanic
 # Import LLM chat functionality with fallback for direct execution
 try:
     from .llm_chat import is_llm_available, set_llm_model
-    from .server_routes import (
+    from .server_static_routes import (
         index, style, script, chat_script, viewer_script, editor_script,
         library_script, library_ui_script, library_file_ops_script,
+        library_save_ops_script, autosave_script
+    )
+    from .server_routes import (
         run_code, download_format, chat_with_ai, list_library_files,
         get_library_file, save_library_file, create_library_file
     )
@@ -19,9 +22,12 @@ try:
 except ImportError:
     # Fallback for direct execution
     from llm_chat import is_llm_available, set_llm_model
-    from server_routes import (
+    from server_static_routes import (
         index, style, script, chat_script, viewer_script, editor_script,
         library_script, library_ui_script, library_file_ops_script,
+        library_save_ops_script, autosave_script
+    )
+    from server_routes import (
         run_code, download_format, chat_with_ai, list_library_files,
         get_library_file, save_library_file, create_library_file
     )
@@ -38,7 +44,9 @@ app.route("/viewer.js")(viewer_script)
 app.route("/editor.js")(editor_script)
 app.route("/library.js")(library_script)
 app.route("/library_ui.js")(library_ui_script)
+app.route("/autosave.js")(autosave_script)
 app.route("/library_file_ops.js")(library_file_ops_script)
+app.route("/library_save_ops.js")(library_save_ops_script)
 
 # Register API routes
 app.route("/run", methods=["POST"])(run_code)

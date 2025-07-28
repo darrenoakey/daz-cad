@@ -62,6 +62,10 @@ async function downloadModel(format) {
             const errorResponse = await fetch(downloadUrl);
             const errorData = await errorResponse.json();
             showDownloadError(errorData.error || 'Download failed');
+            
+            // Reset button immediately on error
+            button.textContent = originalText;
+            button.disabled = false;
             return;
         }
         
@@ -77,17 +81,16 @@ async function downloadModel(format) {
         button.textContent = '✓ Downloaded';
         setTimeout(() => {
             button.textContent = originalText;
+            button.disabled = false;
         }, 1500);
         
     } catch (error) {
         console.error('Download error:', error);
         showDownloadError('Network error during download');
-    } finally {
-        // Reset button
-        setTimeout(() => {
-            button.textContent = originalText;
-            button.disabled = false;
-        }, 2000);
+        
+        // Reset button immediately on error
+        button.textContent = originalText;
+        button.disabled = false;
     }
 }
 
@@ -97,9 +100,9 @@ function showDownloadError(message) {
     if (outputDiv) {
         outputDiv.innerHTML = `<span class="error-output">Download Error: ${message}</span>`;
         
-        // If no objects, suggest running code first
+        // If no objects, suggest running code first with more specific instructions
         if (message.includes('No objects to export')) {
-            outputDiv.innerHTML += `<br><span class="info-output">💡 Tip: Run some CadQuery code first to generate 3D objects to download.</span>`;
+            outputDiv.innerHTML += `<br><span class="info-output">💡 Tip: Click the "Run" button to execute your CadQuery code and generate 3D objects before downloading.</span>`;
         }
     }
 }
