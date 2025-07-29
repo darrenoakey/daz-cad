@@ -50,7 +50,7 @@ app.route("/library_save_ops.js")(library_save_ops_script)
 
 # Register API routes
 app.route("/run", methods=["POST"])(run_code)
-app.route("/download/<export_format>", methods=["GET"])(download_format)
+app.route("/download/<export_format>", methods=["GET", "POST"])(download_format)
 app.route("/chat", methods=["POST"])(chat_with_ai)
 
 # Register library routes

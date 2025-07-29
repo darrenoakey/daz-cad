@@ -9,7 +9,7 @@ import cadquery as cq
 base_radius = 20
 top_radius = 30
 height = 80
-wall_thickness = 2
+wall_thickness = 8
 num_spirals = 3
 spiral_depth = 1.5
 

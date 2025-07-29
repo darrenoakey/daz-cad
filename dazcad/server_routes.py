@@ -41,6 +41,19 @@ async def run_code(request):
 async def download_format(request, export_format):
     """Download the current assembly in the specified format."""
     try:
+        # Handle POST requests that include code
+        if request.method == 'POST':
+            request_data = request.json
+            code = request_data.get('code', '')
+            
+            # If code is provided, run it first
+            if code:
+                result = run_cadquery_code(code)
+                if not result.get('success'):
+                    return json_response({
+                        'error': f'Failed to generate objects: {result.get("error", "Unknown error")}'
+                    }, status=400)
+        
         # Check if there are any objects to export
         if not shown_objects:
             error_msg = ('No objects to export. Please run some CadQuery code '

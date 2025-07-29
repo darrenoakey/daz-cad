@@ -51,16 +51,22 @@ async function downloadModel(format) {
     button.disabled = true;
     
     try {
+        // Get the current code from the editor
+        const currentCode = getCode();
+        
         // Create download URL
         const downloadUrl = `/download/${format}?name=${encodeURIComponent(sanitizedName)}`;
         
-        // First, check if the download would succeed
-        const response = await fetch(downloadUrl, { method: 'HEAD' });
+        // First, send a POST request with the code to ensure objects are generated
+        const postResponse = await fetch(downloadUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: currentCode })
+        });
         
-        if (!response.ok) {
+        if (!postResponse.ok) {
             // Get the error message
-            const errorResponse = await fetch(downloadUrl);
-            const errorData = await errorResponse.json();
+            const errorData = await postResponse.json();
             showDownloadError(errorData.error || 'Download failed');
             
             // Reset button immediately on error
@@ -69,13 +75,17 @@ async function downloadModel(format) {
             return;
         }
         
-        // If successful, trigger the actual download
+        // If successful, get the file data
+        const blob = await postResponse.blob();
+        
+        // Create download link
         const link = document.createElement('a');
-        link.href = downloadUrl;
+        link.href = URL.createObjectURL(blob);
         link.download = `${sanitizedName}.${format}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
         
         // Show success message briefly
         button.textContent = '✓ Downloaded';
