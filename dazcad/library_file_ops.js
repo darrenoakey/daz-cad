@@ -1,17 +1,45 @@
 // Library file operations - loading, saving, creating files
 
 async function loadLibraryFiles() {
+    const outputDiv = document.getElementById('output');
+    
     try {
         const response = await fetch('/library/list');
+        
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
+        
         const data = await response.json();
         
         if (data.success) {
             window.libraryUI.setLibraryFiles(data.files);
             window.libraryUI.renderLibraryList();
-            await loadFile('example', 'builtin');
+            
+            // Only try to load example if we have builtin files
+            if (data.files && data.files.builtin && data.files.builtin.length > 0) {
+                await loadFile('example', 'builtin');
+            } else {
+                console.warn('No builtin library files found');
+                if (outputDiv) {
+                    outputDiv.innerHTML = '<span class="warning-output">⚠️ No library files found. Please check the server installation.</span>';
+                }
+            }
+        } else {
+            console.error('Failed to load library files:', data.error);
+            if (outputDiv) {
+                outputDiv.innerHTML = `<span class="error-output">Failed to load library: ${data.error || 'Unknown error'}</span>`;
+            }
+            // Still render the UI to show the empty state
+            window.libraryUI.renderLibraryList();
         }
     } catch (error) {
         console.error('Failed to load library files:', error);
+        if (outputDiv) {
+            outputDiv.innerHTML = `<span class="error-output">Failed to connect to server: ${error.message}</span>`;
+        }
+        // Still render the UI to show the empty state
+        window.libraryUI.renderLibraryList();
     }
 }
 
@@ -34,6 +62,11 @@ async function loadFile(name, type) {
     
     try {
         const response = await fetch(`/library/get/${type}/${encodeURIComponent(name)}`);
+        
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
+        
         const data = await response.json();
         
         if (data.success) {
@@ -90,6 +123,10 @@ async function autoRunCode() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: code })
         });
+        
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
         
         const result = await response.json();
         

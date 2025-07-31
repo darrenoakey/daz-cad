@@ -11,6 +11,20 @@ function renderLibraryList() {
     
     listContainer.innerHTML = '';
     
+    // Check if libraryFiles is properly initialized
+    if (!libraryFiles || typeof libraryFiles !== 'object') {
+        console.error('Library files not properly initialized');
+        libraryFiles = { builtin: [], user: [] };
+    }
+    
+    // Ensure arrays exist
+    if (!Array.isArray(libraryFiles.builtin)) {
+        libraryFiles.builtin = [];
+    }
+    if (!Array.isArray(libraryFiles.user)) {
+        libraryFiles.user = [];
+    }
+    
     // Render builtin files
     if (libraryFiles.builtin.length > 0) {
         const builtinHeader = document.createElement('div');
@@ -39,6 +53,17 @@ function renderLibraryList() {
                 listContainer.appendChild(item);
             }
         });
+    }
+    
+    // If no files found, show a message
+    if (libraryFiles.builtin.length === 0 && libraryFiles.user.length === 0) {
+        const emptyMessage = document.createElement('div');
+        emptyMessage.className = 'library-empty-message';
+        emptyMessage.style.padding = '20px';
+        emptyMessage.style.textAlign = 'center';
+        emptyMessage.style.color = '#888';
+        emptyMessage.textContent = 'No library files found. Please check server connection.';
+        listContainer.appendChild(emptyMessage);
     }
 }
 
@@ -123,6 +148,17 @@ window.libraryUI = {
     
     // Setters for state
     setCurrentFile: (file) => { currentFile = file; },
-    setLibraryFiles: (files) => { libraryFiles = files; },
+    setLibraryFiles: (files) => { 
+        if (files && typeof files === 'object') {
+            libraryFiles = files;
+            // Ensure arrays exist
+            if (!Array.isArray(libraryFiles.builtin)) {
+                libraryFiles.builtin = [];
+            }
+            if (!Array.isArray(libraryFiles.user)) {
+                libraryFiles.user = [];
+            }
+        }
+    },
     setLibraryVisible: (visible) => { isLibraryVisible = visible; }
 };

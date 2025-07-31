@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+import os
 from io import StringIO
 
 import cadquery as cq
@@ -19,8 +20,10 @@ except ImportError:
 shown_objects = []
 
 # Initialize library manager with correct path to library files
-# The library files are in dazcad/library directory
-library_manager = LibraryManager(built_in_library_path="dazcad/library")
+# Use absolute path based on this file's location to ensure it works from any directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+library_path = os.path.join(current_dir, "library")
+library_manager = LibraryManager(built_in_library_path=library_path)
 
 
 def show_object(obj, name=None, color=None):
@@ -34,187 +37,180 @@ def show_object(obj, name=None, color=None):
 
 
 def run_tests_from_globals(exec_globals):
-    """Run tests found in the execution globals and return formatted results."""
-    test_classes = []
+    """Run tests found in the execution globals and return results."""
+    test_results = []
+    test_output = StringIO()
 
-    # Find all TestCase classes in the executed code
-    for obj in exec_globals.values():
+    # Find all test classes
+    test_classes = []
+    for _, obj in exec_globals.items():
         if (isinstance(obj, type) and
             issubclass(obj, unittest.TestCase) and
-            obj != unittest.TestCase):
+            obj is not unittest.TestCase):
             test_classes.append(obj)
 
     if not test_classes:
-        return "No tests found.\n"
+        return test_results, test_output.getvalue()
 
-    test_results = []
-    total_tests = 0
-    passed_tests = 0
-
+    # Create test suite
+    suite = unittest.TestSuite()
     for test_class in test_classes:
-        # Create a test suite for this class
-        suite = unittest.TestLoader().loadTestsFromTestCase(test_class)
+        tests = unittest.TestLoader().loadTestsFromTestCase(test_class)
+        suite.addTests(tests)
 
-        # Run tests with custom result class to capture individual results
-        class DetailedTestResult(unittest.TestResult):
-            """Custom test result class to capture detailed test outcomes."""
+    # Run tests and capture results
+    runner = unittest.TextTestRunner(stream=test_output, verbosity=2)
+    result = runner.run(suite)
 
-            def __init__(self):
-                super().__init__()
-                self.test_results = []
-                self.current_test = None
+    # Format results
+    for test_class in test_classes:
+        class_result = {
+            'name': test_class.__name__,
+            'tests': [],
+            'passed': 0,
+            'failed': 0
+        }
 
-            def startTest(self, test):
-                super().startTest(test)
-                self.current_test = test
+        # Get test methods
+        for method_name in dir(test_class):
+            if method_name.startswith('test_'):
+                test_id = f"{test_class.__name__}.{method_name}"
 
-            def addSuccess(self, test):
-                super().addSuccess(test)
-                self.test_results.append((test, "PASS", None))
+                # Check if test passed
+                passed = True
+                error_msg = None
 
-            def addError(self, test, err):
-                super().addError(test, err)
-                self.test_results.append((test, "ERROR", err))
+                # Check failures
+                for failure in result.failures:
+                    if failure[0].id() == test_id:
+                        passed = False
+                        error_msg = failure[1]
+                        break
 
-            def addFailure(self, test, err):
-                super().addFailure(test, err)
-                self.test_results.append((test, "FAIL", err))
+                # Check errors
+                for error in result.errors:
+                    if error[0].id() == test_id:
+                        passed = False
+                        error_msg = error[1]
+                        break
 
-        # Run the tests
-        result = DetailedTestResult()
-        suite.run(result)
+                class_result['tests'].append({
+                    'name': method_name,
+                    'passed': passed,
+                    'error': error_msg
+                })
 
-        # Format results for this test class
-        class_name = test_class.__name__
-        test_results.append(f"\n📋 {class_name}:")
+                if passed:
+                    class_result['passed'] += 1
+                else:
+                    class_result['failed'] += 1
 
-        for test, status, error in result.test_results:
-            total_tests += 1
-            test_name = test._testMethodName  # pylint: disable=protected-access
+        test_results.append(class_result)
 
-            if status == "PASS":
-                test_results.append(f"  ✅ {test_name}")
-                passed_tests += 1
-            elif status == "FAIL":
-                test_results.append(f"  ❌ {test_name}")
-                if error:
-                    # Get just the assertion message, not full traceback
-                    error_msg = str(error[1]).split('\n', maxsplit=1)[0]
-                    test_results.append(f"     └─ {error_msg}")
-            elif status == "ERROR":
-                test_results.append(f"  💥 {test_name}")
-                if error:
-                    error_msg = str(error[1]).split('\n', maxsplit=1)[0]
-                    test_results.append(f"     └─ {error_msg}")
-
-    # Add summary
-    summary = f"\n🧪 Test Summary: {passed_tests}/{total_tests} passed"
-    if passed_tests == total_tests:
-        summary += " 🎉"
-
-    return summary + "\n" + "\n".join(test_results) + "\n"
+    return test_results, test_output.getvalue()
 
 
-def run_cadquery_code(code_str):
-    """Execute CadQuery code and capture results"""
-    global shown_objects  # pylint: disable=global-statement
-    shown_objects = []
 
-    # Import everything needed for exec environment
-    # pylint: disable=import-outside-toplevel
-    from cadquery import Color, Assembly, Location, Workplane, Vector
-    import traceback
-    # pylint: enable=import-outside-toplevel
+def run_cadquery_code(code):
+    """Execute CadQuery code and return results."""
+    # Clear previous shown objects
+    shown_objects.clear()
 
-    # Prepare execution environment
+    # Set up execution environment
     exec_globals = {
         'cq': cq,
-        'Color': Color,
-        'Assembly': Assembly,
-        'Location': Location,
-        'Workplane': Workplane,
-        'Vector': Vector,
+        'cadquery': cq,
         'show_object': show_object,
-        'unittest': unittest,
+        'show': show_object,  # Alias for compatibility
         '__name__': '__main__'
     }
 
     # Capture stdout
     old_stdout = sys.stdout
-    stdout_capture = StringIO()
-    sys.stdout = stdout_capture
+    sys.stdout = StringIO()
 
     try:
-        # pylint: disable=exec-used
-        exec(code_str, exec_globals)
-        # pylint: enable=exec-used
+        # Execute the code
+        exec(code, exec_globals)  # pylint: disable=exec-used
 
-        # Get the main execution output
-        main_output = stdout_capture.getvalue()
+        # Get output
+        output = sys.stdout.getvalue()
 
-        # Reset stdout capture for test output
-        stdout_capture = StringIO()
-        sys.stdout = stdout_capture
+        # Run tests if any exist
+        test_results, test_output = run_tests_from_globals(exec_globals)
 
-        # Run tests and get detailed results
-        test_output = run_tests_from_globals(exec_globals)
+        # Process shown objects
+        objects = process_objects(shown_objects)
 
-        # Combine outputs
-        combined_output = ""
-        if main_output.strip():
-            combined_output += main_output
-        if test_output.strip() and test_output != "No tests found.\n":
-            combined_output += "\n" + test_output
+        return {
+            'success': True,
+            'objects': objects,
+            'output': output,
+            'test_output': test_output,
+            'test_results': test_results
+        }
 
     except Exception as e:  # pylint: disable=broad-exception-caught
-        combined_output = None
-        # Get full traceback with line numbers
-        error_traceback = traceback.format_exc()
-        return {"success": False, "error": str(e),
-                "traceback": error_traceback, "objects": []}
+        import traceback
+        return {
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+            'output': sys.stdout.getvalue()
+        }
     finally:
         sys.stdout = old_stdout
 
-    # Process shown objects
-    result_objects = process_objects(shown_objects)
-
-    return {"success": True, "objects": result_objects, "output": combined_output}
-
 
 class TestServerCore(unittest.TestCase):
-    """Tests for server core functionality."""
+    """Unit tests for server core functionality."""
 
     def test_show_object(self):
-        """Test the show_object function."""
-        global shown_objects  # pylint: disable=global-statement
-        shown_objects = []
+        """Test show_object function."""
+        # Clear any existing objects
+        shown_objects.clear()
 
         # Create a test object
-        test_box = cq.Workplane("XY").box(10, 10, 10)
-        result = show_object(test_box, name="TestBox", color="red")
+        box = cq.Workplane("XY").box(10, 10, 10)
 
-        # Check that object was captured
+        # Show it
+        result = show_object(box, "TestBox", (1.0, 0.0, 0.0))
+
+        # Verify it was stored
         self.assertEqual(len(shown_objects), 1)
         self.assertEqual(shown_objects[0]['name'], "TestBox")
-        self.assertEqual(shown_objects[0]['color'], "red")
-        self.assertEqual(result, test_box)
+        self.assertEqual(shown_objects[0]['color'], (1.0, 0.0, 0.0))
+        self.assertEqual(result, box)
 
     def test_run_cadquery_code(self):
-        """Test running CadQuery code."""
-        code = '''
+        """Test executing CadQuery code."""
+        code = """
 import cadquery as cq
 box = cq.Workplane("XY").box(10, 10, 10)
-show_object(box, name="test_box")
-'''
+show_object(box, "MyBox")
+print("Box created!")
+"""
         result = run_cadquery_code(code)
 
-        self.assertTrue(result["success"])
-        self.assertEqual(len(result["objects"]), 1)
-        self.assertIn("test_box", [obj["name"] for obj in result["objects"]])
+        self.assertTrue(result['success'])
+        self.assertEqual(len(result['objects']), 1)
+        self.assertIn("Box created!", result['output'])
 
-    def test_library_manager_initialized(self):
+    def test_run_cadquery_code_with_error(self):
+        """Test executing CadQuery code with error."""
+        code = """
+import cadquery as cq
+# This will cause an error
+undefined_variable
+"""
+        result = run_cadquery_code(code)
+
+        self.assertFalse(result['success'])
+        self.assertIn("undefined_variable", result['error'])
+        self.assertIn("NameError", result['traceback'])
+
+    def test_library_manager_initialization(self):
         """Test that library manager is properly initialized."""
         self.assertIsNotNone(library_manager)
         self.assertTrue(hasattr(library_manager, 'list_files'))
-        self.assertTrue(hasattr(library_manager, 'get_file_content'))
-        self.assertTrue(hasattr(library_manager, 'save_file'))
+        self.assertTrue(os.path.exists(library_manager.built_in_library_path))
