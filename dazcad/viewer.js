@@ -1,9 +1,7 @@
 /*
  * DazCAD 3D Viewer - Z-UP Coordinate System Implementation
  * 
- * 🚨 CRITICAL: This viewer uses Z-UP coordinate system to match CadQuery/OpenCascade
- * 📖 READ coordinate_system_docs.js for COMPREHENSIVE documentation before making changes!
- * 
+ * CRITICAL: This viewer uses Z-UP coordinate system to match CadQuery/OpenCascade
  * Key Rules:
  * 1. THREE.Object3D.DefaultUp = new THREE.Vector3(0, 0, 1) - NEVER change this!
  * 2. Grid MUST be rotated to XY plane: grid.rotateX(Math.PI / 2)
@@ -44,12 +42,8 @@ function createAxisLabel(text, position, color) {
 }
 
 function initViewer() {
-    // 🚨 CRITICAL: Set Z-up coordinate system - MUST be first line!
-    // See coordinate_system_docs.js for detailed explanation
+    // CRITICAL: Set Z-up coordinate system - MUST be first line!
     THREE.Object3D.DefaultUp = new THREE.Vector3(0, 0, 1);
-    
-    console.log('🔧 Coordinate System: Z-up initialized');
-    console.log('📖 See coordinate_system_docs.js for comprehensive documentation');
     
     const container = document.getElementById('viewer3d');
     const w = container.clientWidth;
@@ -89,7 +83,7 @@ function initViewer() {
     dirLight.shadow.camera.bottom = -100;
     scene.add(dirLight);
 
-    // 🚨 CRITICAL: Create grid in XY plane (Z=0) to match CAD workplane
+    // CRITICAL: Create grid in XY plane (Z=0) to match CAD workplane
     const grid = new THREE.GridHelper(100, 20, 0x444444, 0x222222);
     grid.rotateX(Math.PI / 2); // Rotate from XZ to XY plane
     scene.add(grid);
@@ -137,54 +131,69 @@ function clearScene() {
 }
 
 function loadSTL(stlData, name, color, transform) {
-    console.log(`🔧 Loading STL: ${name}`);
-    
-    const loader = new THREE.STLLoader();
-    const binaryString = atob(stlData);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+    try {
+        // Decode base64 STL data
+        const binaryString = atob(stlData);
+        
+        // Check if we have enough data for a valid STL
+        if (binaryString.length < 84) {  // Minimum STL size
+            console.error(`ERROR: STL data too short for ${name}: ${binaryString.length} bytes`);
+            return;
+        }
+        
+        // Convert to Uint8Array
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        // Try to parse with STLLoader
+        const loader = new THREE.STLLoader();
+        let geometry;
+        try {
+            geometry = loader.parse(bytes.buffer);
+        } catch (parseError) {
+            console.error(`ERROR parsing STL for ${name}:`, parseError);
+            return;
+        }
+        
+        const material = new THREE.MeshPhongMaterial({
+            color: new THREE.Color(color),
+            specular: 0x111111,
+            shininess: 200
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.name = name;
+        
+        // Handle transformations in Z-up coordinate system
+        if (transform && transform.length === 16) {
+            // Extract translation from row-major matrix (backend format)
+            const tx = transform[3];  // X translation
+            const ty = transform[7];  // Y translation  
+            const tz = transform[11]; // Z translation
+            
+            // Apply directly - no coordinate conversion needed!
+            mesh.position.set(tx, ty, tz);
+        } else {
+            // 3D PRINTING: Position objects on build plate (z=0)
+            geometry.computeBoundingBox();
+            const center = new THREE.Vector3();
+            geometry.boundingBox.getCenter(center);
+            
+            // Center in X and Y, place on build plate for 3D printing
+            const minZ = geometry.boundingBox.min.z;
+            geometry.translate(-center.x, -center.y, -minZ);
+        }
+        
+        scene.add(mesh);
+        currentObjects.push(mesh);
+        fitCameraToObjects();
+        
+    } catch (error) {
+        console.error(`ERROR loading STL for ${name}:`, error);
     }
-    const geometry = loader.parse(bytes.buffer);
-    const material = new THREE.MeshPhongMaterial({
-        color: new THREE.Color(color),
-        specular: 0x111111,
-        shininess: 200
-    });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.name = name;
-    
-    // 🚨 CRITICAL: Handle transformations in Z-up coordinate system
-    if (transform && transform.length === 16) {
-        // Extract translation from row-major matrix (backend format)
-        // See coordinate_system_docs.js for detailed matrix explanation
-        const tx = transform[3];  // X translation (right/left)
-        const ty = transform[7];  // Y translation (forward/back)  
-        const tz = transform[11]; // Z translation (up/down)
-        
-        // Apply directly - no coordinate conversion needed!
-        mesh.position.set(tx, ty, tz);
-        console.log(`🔧 Applied transform: (${tx}, ${ty}, ${tz})`);
-        
-        // TODO: Add rotation/scaling extraction for advanced assemblies
-    } else {
-        // 🖨️ 3D PRINTING: Position objects on build plate (z=0)
-        geometry.computeBoundingBox();
-        const center = new THREE.Vector3();
-        geometry.boundingBox.getCenter(center);
-        
-        // Center in X and Y for good viewing, but place on build plate for 3D printing
-        // Move minimum Z to z=0 so object sits on build plate
-        const minZ = geometry.boundingBox.min.z;
-        geometry.translate(-center.x, -center.y, -minZ);
-        console.log(`🔧 Positioned object on build plate: centered XY, min Z -> 0 (was ${minZ.toFixed(2)})`);
-    }
-    
-    scene.add(mesh);
-    currentObjects.push(mesh);
-    fitCameraToObjects();
 }
 
 function fitCameraToObjects() {

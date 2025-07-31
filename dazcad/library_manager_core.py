@@ -78,9 +78,9 @@ class LibraryManager:
                 for filename in os.listdir(self.built_in_library_path):
                     if filename.endswith('.py') and not filename.startswith('__'):
                         built_in_files.append(filename)
-            except OSError:
+            except OSError as e:
                 # Directory not accessible
-                pass
+                print(f"ERROR accessing built-in library: {e}")
 
         # List user files
         if os.path.exists(self.user_library_path):
@@ -90,9 +90,9 @@ class LibraryManager:
                         not filename.startswith('__') and
                         not filename.startswith('.')):
                         user_files.append(filename)
-            except OSError:
+            except OSError as e:
                 # Directory not accessible
-                pass
+                print(f"ERROR accessing user library: {e}")
 
         return {
             'built_in': sorted(built_in_files),

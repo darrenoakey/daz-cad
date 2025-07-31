@@ -28,21 +28,24 @@ def process_regular_object(shown):
         Dictionary with 'name', 'color', 'stl', and 'transform' keys
     """
     try:
+        obj = shown['object']
+        name = shown['name']
+
         # Export the shape to STL
-        stl_data = export_shape_to_stl(shown['object'])
+        stl_data = export_shape_to_stl(obj, name)
 
         # Use provided color or default gray
         color = shown.get('color', '#808080')
 
         return {
-            'name': shown['name'],
+            'name': name,
             'color': color,
             'stl': stl_data,
             'transform': None  # Regular objects don't have transforms
         }
 
     except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Error processing regular object {shown['name']}: {e}")
+        print(f"ERROR processing regular object {shown['name']}: {type(e).__name__}: {e}")
         traceback.print_exc()
         return None
 

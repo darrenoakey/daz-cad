@@ -65,6 +65,8 @@ class TestExportFunctions(unittest.TestCase):
         # Mock shape object that returns a mock when toSTL() is called
         mock_shape = Mock()
         mock_shape.toSTL.return_value = "mock stl data"
+        # Ensure it doesn't have val() method so it's treated as a shape directly
+        delattr(mock_shape, 'val')
 
         # Export to STL
         stl_data = export_shape_to_stl(mock_shape)
