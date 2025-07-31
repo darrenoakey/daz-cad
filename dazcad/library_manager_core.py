@@ -1,211 +1,208 @@
-"""Core LibraryManager class for DazCAD library management."""
+"""Core library management functionality."""
 
+import os
+import tempfile
 import unittest
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
 
-# Import git operations with fallback for direct execution
 try:
     from .library_manager_git import GitOperations
+    from .library_manager_file_ops import LibraryFileOperations
 except ImportError:
     # Fallback for direct execution
     from library_manager_git import GitOperations
+    from library_manager_file_ops import LibraryFileOperations
 
 
 class LibraryManager:
-    """Manages example library and user library with git integration."""
+    """Manages CAD library files with git integration."""
 
-    def __init__(self, built_in_library_path: str = "library",
-                 user_library_path: str = None):
-        """Initialize library manager with paths to libraries.
+    def __init__(self, built_in_library_path=None, user_library_path=None):
+        """Initialize the library manager.
 
         Args:
-            built_in_library_path: Path to built-in examples (relative to app)
-            user_library_path: Path to user library (defaults to ~/dazcad/library)
+            built_in_library_path: Path to built-in library files
+            user_library_path: Path to user library files (default: ~/.dazcad/library)
         """
-        self.built_in_library_path = Path(built_in_library_path)
+        # Set up paths
+        if built_in_library_path:
+            self.built_in_library_path = built_in_library_path
+        else:
+            # Default to library subdirectory of this file's directory
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            self.built_in_library_path = os.path.join(current_dir, 'library')
 
-        if user_library_path is None:
-            user_library_path = Path.home() / "dazcad" / "library"
-        self.user_library_path = Path(user_library_path)
+        if user_library_path:
+            self.user_library_path = user_library_path
+        else:
+            # Default to ~/.dazcad/library
+            home_dir = os.path.expanduser('~')
+            self.user_library_path = os.path.join(home_dir, '.dazcad', 'library')
 
-        # Initialize git operations for user library
-        self.git_ops = GitOperations(self.user_library_path)
+        # Initialize git operations
+        try:
+            self.git_ops = GitOperations(self.user_library_path)
+        except Exception:  # pylint: disable=broad-exception-caught
+            # Git operations not available
+            self.git_ops = None
 
-        # Ensure user library exists and is initialized with git
+        # Initialize file operations
+        self.file_ops = LibraryFileOperations(self)
+
+        # Ensure user library exists
         self._ensure_user_library()
 
     def _ensure_user_library(self):
-        """Ensure user library directory exists and has git initialized."""
-        # Create directory if it doesn't exist
-        self.user_library_path.mkdir(parents=True, exist_ok=True)
+        """Ensure the user library directory exists and is initialized."""
+        os.makedirs(self.user_library_path, exist_ok=True)
 
-        # Initialize git if not already initialized
-        self.git_ops.ensure_git_initialized()
+        # Initialize git repository if git operations are available
+        if self.git_ops and not os.path.exists(os.path.join(self.user_library_path, '.git')):
+            try:
+                self.git_ops.init_repository()
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Git initialization failed, continue without git
+                self.git_ops = None
 
-    def list_files(self) -> Dict[str, List[Dict[str, str]]]:
-        """List all library files from both built-in and user libraries.
+    def list_files(self):
+        """List all available library files.
 
         Returns:
-            Dictionary with 'builtin' and 'user' keys containing file lists
+            Dictionary with 'built_in' and 'user' lists of filenames
         """
-        result = {
-            "builtin": [],
-            "user": []
+        built_in_files = []
+        user_files = []
+
+        # List built-in files
+        if os.path.exists(self.built_in_library_path):
+            try:
+                for filename in os.listdir(self.built_in_library_path):
+                    if filename.endswith('.py') and not filename.startswith('__'):
+                        built_in_files.append(filename)
+            except OSError:
+                # Directory not accessible
+                pass
+
+        # List user files
+        if os.path.exists(self.user_library_path):
+            try:
+                for filename in os.listdir(self.user_library_path):
+                    if (filename.endswith('.py') and
+                        not filename.startswith('__') and
+                        not filename.startswith('.')):
+                        user_files.append(filename)
+            except OSError:
+                # Directory not accessible
+                pass
+
+        return {
+            'built_in': sorted(built_in_files),
+            'user': sorted(user_files)
         }
 
-        # List built-in library files
-        if self.built_in_library_path.exists():
-            for file_path in sorted(self.built_in_library_path.glob("*.py")):
-                result["builtin"].append({
-                    "name": file_path.stem,
-                    "path": str(file_path),
-                    "type": "builtin"
-                })
-
-        # List user library files
-        if self.user_library_path.exists():
-            for file_path in sorted(self.user_library_path.glob("*.py")):
-                result["user"].append({
-                    "name": file_path.stem,
-                    "path": str(file_path),
-                    "type": "user"
-                })
-
-        return result
-
-    def get_file_content(self, name: str, file_type: str = "user") -> Optional[str]:
-        """Get content of a library file.
+    def get_file_content(self, filename):
+        """Get the content of a file from built-in or user library.
 
         Args:
-            name: File name (without .py extension)
-            file_type: Either 'user' or 'builtin'
+            filename: Name of the file to read
 
         Returns:
-            File content or None if not found
+            String content of the file
+
+        Raises:
+            FileNotFoundError: If file doesn't exist in either location
         """
-        if file_type == "builtin":
-            file_path = self.built_in_library_path / f"{name}.py"
-        else:
-            file_path = self.user_library_path / f"{name}.py"
+        return self.file_ops.get_file_content(filename)
 
-        if file_path.exists():
-            return file_path.read_text()
-        return None
-
-    def save_file(self, name: str, content: str, old_name: Optional[str] = None,
-                  file_type: str = "user") -> Tuple[bool, str]:
-        """Save a library file and commit to git if in user library.
+    def save_file(self, filename, content, commit_message=None):
+        """Save a file to the user library.
 
         Args:
-            name: File name (without .py extension)
-            content: File content
-            old_name: Previous name if renaming
-            file_type: Either 'user' or 'builtin'
+            filename: Name of the file
+            content: Content to save
+            commit_message: Optional git commit message
 
         Returns:
-            Tuple of (success, message)
+            Dictionary with success status and message
         """
-        # Determine file path based on type
-        if file_type == "builtin":
-            file_path = self.built_in_library_path / f"{name}.py"
-        else:
-            file_path = self.user_library_path / f"{name}.py"
+        # Handle filename changes
+        original_filename = filename
+        if '/' in filename or '\\' in filename:
+            # Extract just the filename part
+            filename = os.path.basename(filename)
 
-        try:
-            # Handle rename if old_name provided
-            if old_name and old_name != name:
-                old_path = file_path.parent / f"{old_name}.py"
-                if old_path.exists():
-                    if file_type == "user":
-                        # Use git mv for user files
-                        success, msg = self.git_ops.git_move_file(f"{old_name}.py", f"{name}.py")
-                        if not success:
-                            return False, msg
-                    else:
-                        # Just rename for built-in files
-                        old_path.rename(file_path)
+        # Check if this is a rename operation
+        if original_filename != filename and original_filename.endswith('.py'):
+            success, message = self.file_ops.handle_rename(original_filename, filename, content)
+            if not success:
+                return {'success': False, 'message': message}
 
-            # Write the file
-            file_path.write_text(content)
+        return self.file_ops.save_file(filename, content, commit_message)
 
-            # For user files, commit to git
-            if file_type == "user":
-                if old_name and old_name != name:
-                    action = f"Renamed {old_name} to {name} and updated"
-                else:
-                    action = f"Updated {name}"
-
-                success, msg = self.git_ops.git_add_and_commit(f"{name}.py", action, content)
-                if success:
-                    return True, f"Saved and {msg}"
-                else:
-                    return False, msg
-
-            return True, f"Saved {name}.py"
-
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            return False, f"Error saving file: {str(e)}"
-
-    def create_file(self, name: str, content: str = "") -> Tuple[bool, str]:
+    def create_file(self, filename, content):
         """Create a new file in the user library.
 
         Args:
-            name: File name (without .py extension)
-            content: Initial content (defaults to 3D printing ready template)
+            filename: Name of the new file
+            content: Initial content
 
         Returns:
-            Tuple of (success, message)
+            Dictionary with success status and message
         """
-        file_path = self.user_library_path / f"{name}.py"
+        return self.file_ops.create_file(filename, content)
 
-        if file_path.exists():
-            return False, f"File {name}.py already exists"
-
-        # Use 3D printing ready template if no content provided
-        if not content:
-            content = '''"""3D Printable CadQuery model"""
-
-import cadquery as cq
-
-# Create your model here - positioned to sit on the build plate (z=0)
-result = cq.Workplane("XY").workplane(offset=5).box(20, 20, 10)
-
-# Show the result
-show_object(result, name="MyModel")
-'''
-
-        return self.save_file(name, content)
-
-    def get_git_history(self, name: str) -> List[Dict[str, str]]:
-        """Get git history for a file in the user library.
+    def get_git_history(self, filename=None, max_entries=10):
+        """Get git history for a file or the entire repository.
 
         Args:
-            name: File name (without .py extension)
+            filename: Optional filename to get history for
+            max_entries: Maximum number of history entries to return
 
         Returns:
-            List of commit info dictionaries
+            List of history entries or empty list if git not available
         """
-        return self.git_ops.get_file_history(f"{name}.py")
+        if not self.git_ops:
+            return []
+
+        try:
+            return self.git_ops.get_history(filename, max_entries)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
 
 
 class TestLibraryManagerCore(unittest.TestCase):
-    """Basic tests for LibraryManager core functionality."""
+    """Tests for LibraryManager core functionality."""
 
     def test_library_manager_creation(self):
         """Test that LibraryManager can be created."""
-        import tempfile  # pylint: disable=import-outside-toplevel
-        temp_dir = tempfile.mkdtemp()
-        manager = LibraryManager(
-            built_in_library_path=temp_dir,
-            user_library_path=temp_dir
-        )
-        self.assertIsNotNone(manager)
-        self.assertTrue(hasattr(manager, 'list_files'))
+        # Use temporary directories for testing
+        with tempfile.TemporaryDirectory() as temp_dir:
+            built_in_path = os.path.join(temp_dir, 'built_in')
+            user_path = os.path.join(temp_dir, 'user')
+
+            # Create directories
+            os.makedirs(built_in_path, exist_ok=True)
+
+            manager = LibraryManager(
+                built_in_library_path=built_in_path,
+                user_library_path=user_path
+            )
+
+            self.assertIsInstance(manager, LibraryManager)
+            self.assertEqual(manager.built_in_library_path, built_in_path)
+            self.assertEqual(manager.user_library_path, user_path)
+            self.assertTrue(os.path.exists(user_path))
 
     def test_file_path_setup(self):
         """Test that file paths are properly set up."""
+        # Test with default paths
         manager = LibraryManager()
         self.assertIsNotNone(manager.built_in_library_path)
         self.assertIsNotNone(manager.user_library_path)
-        self.assertIsNotNone(manager.git_ops)
+
+        # Test list_files doesn't crash
+        files = manager.list_files()
+        self.assertIsInstance(files, dict)
+        self.assertIn('built_in', files)
+        self.assertIn('user', files)
+        self.assertIsInstance(files['built_in'], list)
+        self.assertIsInstance(files['user'], list)

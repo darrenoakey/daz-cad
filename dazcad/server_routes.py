@@ -3,6 +3,7 @@
 import traceback
 import unittest
 from sanic.response import json as json_response
+from sanic import response
 
 # Import dependencies with fallback for direct execution
 try:
@@ -41,25 +42,51 @@ async def run_code(request):
 async def download_format(request, export_format):
     """Download the current assembly in the specified format."""
     try:
+        # Debug logging
+        print(f"Download request: method={request.method}, format={export_format}")
+        print(f"Headers: {dict(request.headers)}")
+
+        # Handle OPTIONS requests for CORS preflight
+        if request.method == 'OPTIONS':
+            print("Handling OPTIONS (preflight) request")
+            return response.empty(
+                headers={
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                    'Access-Control-Max-Age': '86400'
+                }
+            )
+
         # Handle POST requests that include code
         if request.method == 'POST':
+            print("Handling POST request")
             request_data = request.json
             code = request_data.get('code', '')
-            
+
             # If code is provided, run it first
             if code:
+                print(f"Running code: {code[:100]}...")  # Show first 100 chars
                 result = run_cadquery_code(code)
                 if not result.get('success'):
+                    print(f"Code execution failed: {result.get('error')}")
                     return json_response({
-                        'error': f'Failed to generate objects: {result.get("error", "Unknown error")}'
+                        'error': ('Failed to generate objects: '
+                                f'{result.get("error", "Unknown error")}')
                     }, status=400)
-        
+                objects_count = len(result.get('objects', []))
+                print(f"Code execution successful, {objects_count} objects generated")
+            else:
+                print("No code provided in POST request")
+
         # Check if there are any objects to export
         if not shown_objects:
+            print("No objects available for export")
             error_msg = ('No objects to export. Please run some CadQuery code '
                         'first to generate objects.')
             return json_response({'error': error_msg}, status=400)
 
+        print(f"Proceeding with download: {len(shown_objects)} objects available")
         return await handle_download_request(request, export_format, shown_objects)
 
     except Exception as e:  # pylint: disable=broad-exception-caught
