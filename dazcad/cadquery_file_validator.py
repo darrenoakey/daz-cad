@@ -8,19 +8,24 @@ import unittest
 from pathlib import Path
 from typing import Dict, Any
 
+# Import common patterns to reduce duplication
 try:
-    from .test_cadquery_file import (execute_cadquery_file,
-                                     extract_exportable_objects,
-                                     test_export_format)
+    from .common_imports import CADQUERY_AVAILABLE
+    from .validation_patterns import (
+        create_validation_result_template, check_common_validation_assertions
+    )
+    from .test_cadquery_file import (execute_cadquery_file, extract_exportable_objects)
     from .export_utils import get_supported_export_formats
-    from .library_validation_core import validate_cadquery_object
+    from .validation_object_handler import validate_single_object
 except ImportError:
     # Fallback for direct execution
-    from test_cadquery_file import (execute_cadquery_file,
-                                   extract_exportable_objects,
-                                   test_export_format)
+    from common_imports import CADQUERY_AVAILABLE
+    from validation_patterns import (
+        create_validation_result_template, check_common_validation_assertions
+    )
+    from test_cadquery_file import (execute_cadquery_file, extract_exportable_objects)
     from export_utils import get_supported_export_formats
-    from library_validation_core import validate_cadquery_object
+    from validation_object_handler import validate_single_object
 
 
 def validate_cadquery_file(file_path: Path, verbose: bool = False) -> Dict[str, Any]:
@@ -41,18 +46,8 @@ def validate_cadquery_file(file_path: Path, verbose: bool = False) -> Dict[str, 
         - objects: list - Validation results for each object
         - summary: dict - Summary statistics
     """
-    result = {
-        'success': True,
-        'file': file_path.name,
-        'execution_error': '',
-        'objects': [],
-        'summary': {
-            'total_objects': 0,
-            'valid_objects': 0,
-            'total_export_tests': 0,
-            'successful_exports': 0
-        }
-    }
+    result = create_validation_result_template()
+    result['file'] = file_path.name
 
     # Execute the file
     exec_success, exec_result, exec_error = execute_cadquery_file(file_path)
@@ -75,72 +70,31 @@ def validate_cadquery_file(file_path: Path, verbose: bool = False) -> Dict[str, 
     result['summary']['total_objects'] = len(exportable_objects)
 
     # Get supported export formats
-    try:
-        import cadquery  # pylint: disable=unused-import
-        cadquery_available = True
-    except ImportError:
-        cadquery_available = False
-
     supported_formats = (list(get_supported_export_formats().values())
-                        if cadquery_available else [])
+                        if CADQUERY_AVAILABLE else [])
 
     # Validate each object
     for obj_info in exportable_objects:
-        obj = obj_info['object']
-        obj_name = obj_info['name']
-        obj_type = obj_info['type']
+        obj_result, test_count, success_count = validate_single_object(
+            obj_info, supported_formats, verbose)
 
-        # Validate object structure
-        obj_valid, obj_error = validate_cadquery_object(obj)
-        obj_result = {
-            'name': obj_name,
-            'type': obj_type,
-            'valid': obj_valid,
-            'error': obj_error,
-            'exports': {}
-        }
-
-        if obj_valid:
+        if obj_result['valid']:
             result['summary']['valid_objects'] += 1
 
-            # Test exports for valid objects
-            for export_format in supported_formats:
-                format_name = export_format.extension
-
-                # Skip formats that don't support assemblies
-                if (obj_type == 'assembly' and
-                    export_format.assembly_handler is None):
-                    continue
-
-                result['summary']['total_export_tests'] += 1
-
-                export_success, export_error = test_export_format(
-                    obj, obj_type, format_name)
-
-                obj_result['exports'][format_name] = {
-                    'success': export_success,
-                    'error': export_error
-                }
-
-                if export_success:
-                    result['summary']['successful_exports'] += 1
-                else:
-                    if verbose:
-                        print(f"  ❌ {obj_name} -> {format_name}: {export_error}")
-        else:
-            if verbose:
-                print(f"  ❌ {obj_name}: Invalid object - {obj_error}")
-
+        result['summary']['total_export_tests'] += test_count
+        result['summary']['successful_exports'] += success_count
         result['objects'].append(obj_result)
 
     # Check if all exports were successful
-    if (result['summary']['valid_objects'] < result['summary']['total_objects'] or
-        result['summary']['successful_exports'] < result['summary']['total_export_tests']):
+    summary = result['summary']
+    if (summary['valid_objects'] < summary['total_objects'] or
+        summary['successful_exports'] < summary['total_export_tests']):
         result['success'] = False
 
     if verbose and result['success']:
-        print(f"✅ {file_path.name}: All {result['summary']['total_objects']} objects "
-              f"valid, {result['summary']['successful_exports']} exports successful")
+        msg = (f"✅ {file_path.name}: All {summary['total_objects']} objects "
+               f"valid, {summary['successful_exports']} exports successful")
+        print(msg)
 
     return result
 
@@ -158,16 +112,5 @@ class TestCadQueryFileValidator(unittest.TestCase):
         """Test that validation returns correct structure."""
         result = validate_cadquery_file(Path("nonexistent.py"))
 
-        # Check all required keys exist
-        self.assertIn('success', result)
-        self.assertIn('file', result)
-        self.assertIn('execution_error', result)
-        self.assertIn('objects', result)
-        self.assertIn('summary', result)
-
-        # Check summary structure
-        summary = result['summary']
-        self.assertIn('total_objects', summary)
-        self.assertIn('valid_objects', summary)
-        self.assertIn('total_export_tests', summary)
-        self.assertIn('successful_exports', summary)
+        # Use common validation assertions
+        check_common_validation_assertions(self, result)

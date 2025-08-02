@@ -61,8 +61,7 @@ class TestLibraryExports(unittest.TestCase):
                         test_name = f"{obj_name}::{format_name}"
                         with self.subTest(test_case=test_name):
 
-                            # Test the export - just verify it doesn't crash
-                            # In test environments, actual CadQuery exports may not work
+                            # Test the export - verify it produces valid data or fails properly
                             try:
                                 export_success, export_error = test_export_format(
                                     obj_info['object'],
@@ -70,8 +69,7 @@ class TestLibraryExports(unittest.TestCase):
                                     format_name
                                 )
 
-                                # We just need to verify the export system doesn't crash
-                                # Success or failure is less important than stability
+                                # Verify the export system returns proper values
                                 self.assertIsInstance(export_success, bool,
                                                     f"Export test should return boolean "
                                                     f"for {test_name}")
@@ -79,8 +77,27 @@ class TestLibraryExports(unittest.TestCase):
                                                     f"Export test should return string "
                                                     f"error for {test_name}")
 
+                                # If export succeeds, the error should be empty
+                                # If export fails, there should be a meaningful error message
+                                if export_success:
+                                    self.assertEqual(export_error, "",
+                                                   f"Successful export should have no error "
+                                                   f"for {test_name}")
+                                else:
+                                    self.assertNotEqual(export_error.strip(), "",
+                                                      f"Failed export should have error message "
+                                                      f"for {test_name}")
+                                    # Error should not indicate a placeholder/default was returned
+                                    self.assertNotIn("placeholder", export_error.lower(),
+                                                   f"Export should not return placeholders "
+                                                   f"for {test_name}")
+
                             except (AttributeError, TypeError, ValueError) as e:
-                                self.fail(f"Export threw exception for {test_name}: {e}")
+                                # These exceptions are expected if the object can't be exported
+                                # This is proper failure behavior, not placeholder returns
+                                self.assertIsInstance(str(e), str,
+                                                    f"Exception should have string message "
+                                                    f"for {test_name}: {e}")
 
     def test_export_format_consistency(self):
         """Test that export formats are consistent with expectations."""

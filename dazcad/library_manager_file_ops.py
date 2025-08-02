@@ -1,9 +1,19 @@
-"""File operations for LibraryManager."""
+"""Core file operations for LibraryManager."""
 
 import os
-import shutil
-import tempfile
 import unittest
+
+# Import utilities and logging
+try:
+    from .library_file_utils import (
+        validate_file_rename, atomic_file_write, safe_file_read, check_file_conflicts
+    )
+    from .colored_logging import log_debug, log_error, log_success
+except ImportError:
+    from library_file_utils import (
+        validate_file_rename, atomic_file_write, safe_file_read, check_file_conflicts
+    )
+    from colored_logging import log_debug, log_error, log_success
 
 
 class LibraryFileOperations:
@@ -27,17 +37,34 @@ class LibraryFileOperations:
         """
         # Try built-in library first
         built_in_path = os.path.join(self.library_manager.built_in_library_path, filename)
-        if os.path.exists(built_in_path):
-            with open(built_in_path, 'r', encoding='utf-8') as file:
-                return file.read()
+        log_debug("FILE_OPS", f"Checking built-in library: {built_in_path}")
+
+        try:
+            content = safe_file_read(built_in_path)
+            log_success("FILE_OPS", f"Found {filename} in built-in library")
+            log_success("FILE_OPS", f"Successfully read {filename}: {len(content)} characters")
+            return content
+        except FileNotFoundError:
+            pass
 
         # Try user library
         user_path = os.path.join(self.library_manager.user_library_path, filename)
-        if os.path.exists(user_path):
-            with open(user_path, 'r', encoding='utf-8') as file:
-                return file.read()
+        log_debug("FILE_OPS", f"Checking user library: {user_path}")
 
-        raise FileNotFoundError(f"File {filename} not found in library")
+        try:
+            content = safe_file_read(user_path)
+            log_success("FILE_OPS", f"Found {filename} in user library")
+            log_success("FILE_OPS", f"Successfully read {filename}: {len(content)} characters")
+            return content
+        except FileNotFoundError:
+            pass
+
+        # File not found in either location
+        error_msg = f"File {filename} not found in library"
+        log_error("FILE_OPS", error_msg)
+        log_error("FILE_OPS", f"Built-in path checked: {built_in_path}")
+        log_error("FILE_OPS", f"User path checked: {user_path}")
+        raise FileNotFoundError(error_msg)
 
     def handle_rename(self, old_filename, new_filename, content):
         """Handle renaming a file in the user library.
@@ -50,40 +77,28 @@ class LibraryFileOperations:
         Returns:
             Tuple of (success, message)
         """
+        # Validate rename operation
+        is_valid, error_msg = validate_file_rename(
+            old_filename, new_filename,
+            self.library_manager.built_in_library_path,
+            self.library_manager.user_library_path
+        )
+
+        if not is_valid:
+            return False, error_msg
+
         old_path = os.path.join(self.library_manager.user_library_path, old_filename)
         new_path = os.path.join(self.library_manager.user_library_path, new_filename)
 
-        # Check if new filename conflicts with built-in library
-        built_in_new_path = os.path.join(self.library_manager.built_in_library_path, new_filename)
-        if os.path.exists(built_in_new_path):
-            return False, f"Cannot rename: {new_filename} conflicts with built-in library file"
-
-        # Check if new filename already exists in user library
-        if os.path.exists(new_path) and old_path != new_path:
-            return False, f"Cannot rename: {new_filename} already exists in user library"
-
         try:
-            # If old file exists in user library, rename it
-            if os.path.exists(old_path):
-                # Use temporary file for atomic operation
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.py',
-                                               dir=self.library_manager.user_library_path,
-                                               delete=False, encoding='utf-8') as temp_file:
-                    temp_file.write(content)
-                    temp_name = temp_file.name
+            # Write content to new location
+            atomic_file_write(new_path, content)
 
-                # Atomic rename
-                shutil.move(temp_name, new_path)
-
-                # Remove old file if different from new
-                if old_path != new_path:
-                    os.remove(old_path)
-
+            # Remove old file if different from new and exists
+            if old_path != new_path and os.path.exists(old_path):
+                os.remove(old_path)
                 return True, f"File renamed from {old_filename} to {new_filename}"
 
-            # Old file doesn't exist in user library, just create new file
-            with open(new_path, 'w', encoding='utf-8') as file:
-                file.write(content)
             return True, f"File created as {new_filename}"
 
         except OSError as e:
@@ -129,9 +144,8 @@ class LibraryFileOperations:
             self.library_manager._ensure_user_library()  # pylint: disable=protected-access
             file_path = os.path.join(self.library_manager.user_library_path, filename)
 
-            # Write content to file
-            with open(file_path, 'w', encoding='utf-8') as file:
-                file.write(content)
+            # Write content to file atomically
+            atomic_file_write(file_path, content)
 
             # Commit to git if available
             git_success = self.commit_user_file(filename, commit_message)
@@ -159,28 +173,26 @@ class LibraryFileOperations:
         Returns:
             Dictionary with success status and message
         """
-        # Check if file already exists
-        user_path = os.path.join(self.library_manager.user_library_path, filename)
-        built_in_path = os.path.join(self.library_manager.built_in_library_path, filename)
+        # Check for file conflicts
+        has_conflict, conflict_location = check_file_conflicts(
+            filename,
+            self.library_manager.built_in_library_path,
+            self.library_manager.user_library_path
+        )
 
-        if os.path.exists(user_path):
+        if has_conflict:
+            location_name = "user" if conflict_location == "user" else "built-in"
             return {
                 'success': False,
-                'message': f'File {filename} already exists in user library'
-            }
-
-        if os.path.exists(built_in_path):
-            return {
-                'success': False,
-                'message': f'File {filename} already exists in built-in library'
+                'message': f'File {filename} already exists in {location_name} library'
             }
 
         try:
             self.library_manager._ensure_user_library()  # pylint: disable=protected-access
+            user_path = os.path.join(self.library_manager.user_library_path, filename)
 
-            # Create the file
-            with open(user_path, 'w', encoding='utf-8') as file:
-                file.write(content)
+            # Create the file atomically
+            atomic_file_write(user_path, content)
 
             # Commit to git if available
             git_success = self.commit_user_file(filename, f"Create {filename}")
@@ -199,19 +211,12 @@ class LibraryFileOperations:
             }
 
 
-class TestLibraryFileOperationsBasic(unittest.TestCase):
-    """Basic tests for LibraryFileOperations."""
+class TestLibraryFileOperationsModule(unittest.TestCase):
+    """Basic module-level tests for library file operations."""
 
-    def test_library_file_operations_creation(self):
-        """Test that LibraryFileOperations can be created."""
-        # Create a mock library manager
-        class MockLibraryManager:  # pylint: disable=too-few-public-methods
-            """Mock library manager for testing."""
-            def __init__(self):
-                self.built_in_library_path = "/tmp/built_in"
-                self.user_library_path = "/tmp/user"
-
-        mock_manager = MockLibraryManager()
-        file_ops = LibraryFileOperations(mock_manager)
-        self.assertIsInstance(file_ops, LibraryFileOperations)
-        self.assertEqual(file_ops.library_manager, mock_manager)
+    def test_module_exports(self):
+        """Test that module exports the expected class."""
+        self.assertTrue(hasattr(LibraryFileOperations, '__init__'))
+        self.assertTrue(hasattr(LibraryFileOperations, 'get_file_content'))
+        self.assertTrue(hasattr(LibraryFileOperations, 'save_file'))
+        self.assertTrue(hasattr(LibraryFileOperations, 'create_file'))

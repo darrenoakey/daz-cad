@@ -11,10 +11,10 @@ from pathlib import Path
 # Import utility classes with fallback for direct execution
 try:
     from .import_test_utils import ImportUtils
-    from .import_test_mocks import MockUtils
+    from .test_all_imports_runner import run_comprehensive_import_tests
 except ImportError:
     from import_test_utils import ImportUtils
-    from import_test_mocks import MockUtils
+    from test_all_imports_runner import run_comprehensive_import_tests
 
 
 class TestAllImports(unittest.TestCase):
@@ -42,63 +42,7 @@ class TestAllImports(unittest.TestCase):
 
     def test_import_all_python_files(self):
         """Test importing all Python files in the dazcad directory."""
-        python_files = self.import_utils.find_python_files()
-        self.assertGreater(len(python_files), 0, "No Python files found to test")
-
-        # Track results
-        successful_imports = []
-        failed_imports = []
-        relative_import_failures = []
-
-        # Expected failures (files that need special context)
-        expected_failures = {
-            'server.py': 'Sanic app name conflicts during testing',
-            'bearing.py': 'Library file needs show_object context',
-            'gear.py': 'Library file needs show_object context',
-            'vase.py': 'Library file needs show_object context',
-            'assembly.py': 'Library file needs show_object context',
-            'bracket.py': 'Library file needs show_object context'
-        }
-
-        for file_path in python_files:
-            try:
-                self.import_utils.import_module_from_path(file_path)
-                successful_imports.append(file_path.name)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                error_msg = str(e)
-
-                # Check if this is the critical relative import issue
-                if "attempted relative import with no known parent package" in error_msg:
-                    relative_import_failures.append((file_path.name, error_msg))
-
-                failed_imports.append((file_path.name, error_msg))
-
-        # Print summary
-        print("\\nImport test summary:")
-        print(f"Successful imports: {len(successful_imports)}")
-        print(f"Failed imports: {len(failed_imports)}")
-
-        if successful_imports:
-            print(f"Successfully imported: {', '.join(successful_imports)}")
-
-        if failed_imports:
-            print("Failed imports:")
-            for filename, error in failed_imports:
-                if filename in expected_failures:
-                    print(f"  {filename}: {error} (EXPECTED - {expected_failures[filename]})")
-                else:
-                    print(f"  {filename}: {error} (UNEXPECTED)")
-
-        # Only fail the test for critical relative import issues
-        if relative_import_failures:
-            failure_msg = "Critical relative import failures found:\\n"
-            for filename, error in relative_import_failures:
-                failure_msg += f"  {filename}: {error}\\n"
-            self.fail(failure_msg)
-
-        # Verify we have a reasonable number of successful imports
-        self.assertGreaterEqual(len(successful_imports), 15,
-                               "Too few successful imports - may indicate systemic issues")
+        run_comprehensive_import_tests(self, self.import_utils)
 
     def test_specific_known_imports(self):
         """Test specific imports that we know should work."""
@@ -162,29 +106,51 @@ class TestAllImports(unittest.TestCase):
                 failure_msg += f"  {filename}: {error}\\n"
             self.fail(failure_msg)
 
-    def test_import_with_mock_dependencies(self):
-        """Test importing with mock dependencies for modules that need external deps."""
-        mock_modules = {
-            'cadquery': MockUtils.create_mock_cadquery(),
-            'sanic': MockUtils.create_mock_sanic(),
-        }
-
-        original_modules = MockUtils.install_mocks(mock_modules)
+    def test_import_with_real_dependencies(self):
+        """Test importing files that have external dependencies to verify they import correctly."""
+        # Only test files if their dependencies are actually available
+        try:
+            import cadquery  # pylint: disable=unused-import,import-outside-toplevel
+            cadquery_available = True
+        except ImportError:
+            cadquery_available = False
 
         try:
-            # Try importing files that depend on external modules
-            files_with_deps = ['server.py', 'server_routes.py',
-                             'cadquery_processor.py', 'cadquery_core.py']
+            import sanic  # pylint: disable=unused-import,import-outside-toplevel
+            sanic_available = True
+        except ImportError:
+            sanic_available = False
 
-            for filename in files_with_deps:
+        # Test CadQuery-dependent files if available
+        if cadquery_available:
+            cadquery_files = ['cadquery_processor.py', 'cadquery_core.py',
+                             'export_utils.py', 'cadquery_file_validator.py']
+
+            for filename in cadquery_files:
                 file_path = self.test_dir / filename
                 if file_path.exists():
                     with self.subTest(file=filename):
                         try:
                             self.import_utils.import_module_from_path(file_path)
                         except Exception as e:  # pylint: disable=broad-exception-caught
-                            # Allow some failures with mocked deps, just log them
-                            print(f"Warning: {filename} failed with mocked deps: {e}")
+                            # Only fail if it's not a known issue
+                            if "attempted relative import" not in str(e):
+                                msg = f"Failed to import {filename} with CadQuery available: {e}"
+                                self.fail(msg)
 
-        finally:
-            MockUtils.restore_mocks(mock_modules, original_modules)
+        # Test Sanic-dependent files if available
+        if sanic_available:
+            sanic_files = ['server_core.py', 'server_routes.py', 'server_static_routes.py']
+
+            for filename in sanic_files:
+                file_path = self.test_dir / filename
+                if file_path.exists():
+                    with self.subTest(file=filename):
+                        try:
+                            self.import_utils.import_module_from_path(file_path)
+                        except Exception as e:  # pylint: disable=broad-exception-caught
+                            # Only fail if it's not a known issue or Sanic app name conflict
+                            if ("attempted relative import" not in str(e) and
+                                "Sanic app name" not in str(e)):
+                                msg = f"Failed to import {filename} with Sanic available: {e}"
+                                self.fail(msg)

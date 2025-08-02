@@ -1,8 +1,9 @@
 """Core server functionality for DazCAD."""
 
-import sys
-import unittest
 import os
+import sys
+import traceback
+import unittest
 from io import StringIO
 
 import cadquery as cq
@@ -11,10 +12,14 @@ import cadquery as cq
 try:
     from .cadquery_processor import process_objects
     from .library_manager import LibraryManager
+    from .colored_logging import log_debug, log_success, log_error, log_library_operation
+    from .server_test_runner import run_tests_from_globals
 except ImportError:
     # Fallback for direct execution
     from cadquery_processor import process_objects
     from library_manager import LibraryManager
+    from colored_logging import log_debug, log_success, log_error, log_library_operation
+    from server_test_runner import run_tests_from_globals
 
 # Store for objects shown via show_object
 shown_objects = []
@@ -23,6 +28,29 @@ shown_objects = []
 # Use absolute path based on this file's location to ensure it works from any directory
 current_dir = os.path.dirname(os.path.abspath(__file__))
 library_path = os.path.join(current_dir, "library")
+
+log_library_operation("STARTUP", "Server core initializing")
+log_library_operation("STARTUP", f"Current directory: {current_dir}")
+log_library_operation("STARTUP", f"Looking for library at: {library_path}")
+log_library_operation("STARTUP", f"Library path exists: {os.path.exists(library_path)}")
+
+# List what's actually in the current directory for debugging
+try:
+    current_contents = os.listdir(current_dir)
+    log_debug("STARTUP", f"Current directory contents: {current_contents}")
+
+    # Also check if there's a library subdirectory
+    if 'library' in current_contents:
+        library_contents = os.listdir(library_path)
+        log_debug("STARTUP", f"Library directory contents: {library_contents}")
+
+        # Count .py files
+        py_files = [f for f in library_contents if f.endswith('.py') and not f.startswith('__')]
+        log_library_operation("STARTUP",
+                            f"Found {len(py_files)} Python files in library: {py_files}")
+except Exception as e:  # pylint: disable=broad-exception-caught
+    log_error("STARTUP", f"Error listing directories: {e}")
+
 library_manager = LibraryManager(built_in_library_path=library_path)
 
 
@@ -36,83 +64,10 @@ def show_object(obj, name=None, color=None):
     return obj
 
 
-def run_tests_from_globals(exec_globals):
-    """Run tests found in the execution globals and return results."""
-    test_results = []
-    test_output = StringIO()
-
-    # Find all test classes
-    test_classes = []
-    for _, obj in exec_globals.items():
-        if (isinstance(obj, type) and
-            issubclass(obj, unittest.TestCase) and
-            obj is not unittest.TestCase):
-            test_classes.append(obj)
-
-    if not test_classes:
-        return test_results, test_output.getvalue()
-
-    # Create test suite
-    suite = unittest.TestSuite()
-    for test_class in test_classes:
-        tests = unittest.TestLoader().loadTestsFromTestCase(test_class)
-        suite.addTests(tests)
-
-    # Run tests and capture results
-    runner = unittest.TextTestRunner(stream=test_output, verbosity=2)
-    result = runner.run(suite)
-
-    # Format results
-    for test_class in test_classes:
-        class_result = {
-            'name': test_class.__name__,
-            'tests': [],
-            'passed': 0,
-            'failed': 0
-        }
-
-        # Get test methods
-        for method_name in dir(test_class):
-            if method_name.startswith('test_'):
-                test_id = f"{test_class.__name__}.{method_name}"
-
-                # Check if test passed
-                passed = True
-                error_msg = None
-
-                # Check failures
-                for failure in result.failures:
-                    if failure[0].id() == test_id:
-                        passed = False
-                        error_msg = failure[1]
-                        break
-
-                # Check errors
-                for error in result.errors:
-                    if error[0].id() == test_id:
-                        passed = False
-                        error_msg = error[1]
-                        break
-
-                class_result['tests'].append({
-                    'name': method_name,
-                    'passed': passed,
-                    'error': error_msg
-                })
-
-                if passed:
-                    class_result['passed'] += 1
-                else:
-                    class_result['failed'] += 1
-
-        test_results.append(class_result)
-
-    return test_results, test_output.getvalue()
-
-
-
 def run_cadquery_code(code):
     """Execute CadQuery code and return results."""
+    log_debug("CODE_EXEC", f"Starting execution of {len(code)} characters of code")
+
     # Clear previous shown objects
     shown_objects.clear()
 
@@ -130,17 +85,24 @@ def run_cadquery_code(code):
     sys.stdout = StringIO()
 
     try:
+        log_debug("CODE_EXEC", "Executing code...")
+
         # Execute the code
         exec(code, exec_globals)  # pylint: disable=exec-used
 
         # Get output
         output = sys.stdout.getvalue()
+        log_success("CODE_EXEC",
+                   f"Code executed successfully, {len(shown_objects)} objects created")
 
         # Run tests if any exist
         test_results, test_output = run_tests_from_globals(exec_globals)
 
         # Process shown objects
+        log_debug("CODE_EXEC", f"Processing {len(shown_objects)} shown objects...")
         objects = process_objects(shown_objects)
+        log_success("CODE_EXEC",
+                   f"Successfully processed {len(objects)} objects for visualization")
 
         return {
             'success': True,
@@ -151,11 +113,15 @@ def run_cadquery_code(code):
         }
 
     except Exception as e:  # pylint: disable=broad-exception-caught
-        import traceback
+        error_msg = str(e)
+        error_traceback = traceback.format_exc()
+        log_error("CODE_EXEC", f"Code execution failed: {error_msg}")
+        log_debug("CODE_EXEC", f"Full traceback: {error_traceback}")
+
         return {
             'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc(),
+            'error': error_msg,
+            'traceback': error_traceback,
             'output': sys.stdout.getvalue()
         }
     finally:

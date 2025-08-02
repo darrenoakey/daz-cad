@@ -12,6 +12,12 @@ try:
 except ImportError:
     CADQUERY_AVAILABLE = False
 
+# Import format validators
+try:
+    from .library_validation_formats import validate_export_data
+except ImportError:
+    from library_validation_formats import validate_export_data
+
 
 def validate_cadquery_object(obj: Any) -> Tuple[bool, str]:
     """Validate that an object has valid CadQuery data.
@@ -23,66 +29,52 @@ def validate_cadquery_object(obj: Any) -> Tuple[bool, str]:
         return False, "CadQuery not available"
 
     try:
+        # Check if object is an assembly
         if isinstance(obj, cq.Assembly):
-            # Check assembly has parts
-            if not obj.children:
-                return False, "Assembly has no parts"
-            # Verify we can get shapes from assembly
-            shapes = obj.toCompound()
-            if not shapes:
-                return False, "Assembly compound is empty"
-            return True, ""
+            return _validate_assembly(obj)
 
+        # Check if object has val() method (Workplane or Shape)
         if hasattr(obj, 'val'):
-            # CadQuery Workplane or Shape
-            if hasattr(obj.val(), 'isNull') and obj.val().isNull():
-                return False, "Shape is null"
-            # Check if shape has geometry
-            if hasattr(obj.val(), 'Vertices') and not obj.val().Vertices():
-                return False, "Shape has no vertices"
-            return True, ""
+            return _validate_workplane_or_shape(obj)
 
+        # Check if object has wrapped attribute (other CadQuery objects)
         if hasattr(obj, 'wrapped'):
-            # Other CadQuery objects
-            if hasattr(obj.wrapped, 'isNull') and obj.wrapped.isNull():
-                return False, "Wrapped object is null"
-            return True, ""
+            return _validate_wrapped_object(obj)
 
         return False, "Object is not a recognized CadQuery type"
     except Exception as e:  # pylint: disable=broad-exception-caught
         return False, f"Validation error: {e}"
 
 
-def validate_export_data(data: bytes, format_name: str) -> Tuple[bool, str]:
-    """Validate exported data for a specific format.
+def _validate_assembly(assembly: Any) -> Tuple[bool, str]:
+    """Validate a CadQuery assembly."""
+    if not assembly.children:
+        return False, "Assembly has no parts"
 
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    # Basic validation
-    if not isinstance(data, bytes):
-        return False, f"Export did not return bytes, got {type(data).__name__}"
+    shapes = assembly.toCompound()
+    if not shapes:
+        return False, "Assembly compound is empty"
 
-    if len(data) == 0:
-        return False, "Export returned empty data"
+    return True, ""
 
-    # Additional sanity check - verify it's not just whitespace
-    if len(data.strip()) == 0:
-        return False, "Export returned only whitespace"
 
-    # Format-specific validation
-    if format_name == 'stl':
-        # STL files should start with "solid" or be binary
-        if not (data.startswith(b'solid') or len(data) >= 84):
-            return False, "Invalid STL format"
-    elif format_name == 'step':
-        # STEP files should contain ISO-10303
-        if b'ISO-10303' not in data:
-            return False, "Invalid STEP format - missing ISO-10303 header"
-    elif format_name == '3mf':
-        # 3MF files are ZIP archives starting with PK
-        if not data.startswith(b'PK'):
-            return False, "Invalid 3MF format - not a ZIP archive"
+def _validate_workplane_or_shape(obj: Any) -> Tuple[bool, str]:
+    """Validate a CadQuery Workplane or Shape."""
+    shape_val = obj.val()
+
+    if hasattr(shape_val, 'isNull') and shape_val.isNull():
+        return False, "Shape is null"
+
+    if hasattr(shape_val, 'Vertices') and not shape_val.Vertices():
+        return False, "Shape has no vertices"
+
+    return True, ""
+
+
+def _validate_wrapped_object(obj: Any) -> Tuple[bool, str]:
+    """Validate a wrapped CadQuery object."""
+    if hasattr(obj.wrapped, 'isNull') and obj.wrapped.isNull():
+        return False, "Wrapped object is null"
 
     return True, ""
 
@@ -127,47 +119,6 @@ class TestLibraryValidationCore(unittest.TestCase):
         valid, error = validate_export_data("not bytes", 'stl')  # type: ignore
         self.assertFalse(valid)
         self.assertIn("Export did not return bytes", error)
-
-    def test_validate_export_data_stl(self):
-        """Test STL format validation."""
-        # Valid ASCII STL
-        valid, error = validate_export_data(b'solid test\nendsolid', 'stl')
-        self.assertTrue(valid)
-        self.assertEqual(error, "")
-
-        # Valid binary STL (at least 84 bytes)
-        valid, error = validate_export_data(b'x' * 100, 'stl')
-        self.assertTrue(valid)
-        self.assertEqual(error, "")
-
-        # Invalid STL
-        valid, error = validate_export_data(b'invalid', 'stl')
-        self.assertFalse(valid)
-        self.assertEqual(error, "Invalid STL format")
-
-    def test_validate_export_data_step(self):
-        """Test STEP format validation."""
-        # Valid STEP
-        valid, error = validate_export_data(b'ISO-10303-21;', 'step')
-        self.assertTrue(valid)
-        self.assertEqual(error, "")
-
-        # Invalid STEP
-        valid, error = validate_export_data(b'invalid step', 'step')
-        self.assertFalse(valid)
-        self.assertIn("ISO-10303", error)
-
-    def test_validate_export_data_3mf(self):
-        """Test 3MF format validation."""
-        # Valid 3MF (ZIP file)
-        valid, error = validate_export_data(b'PK\x03\x04', '3mf')
-        self.assertTrue(valid)
-        self.assertEqual(error, "")
-
-        # Invalid 3MF
-        valid, error = validate_export_data(b'not a zip', '3mf')
-        self.assertFalse(valid)
-        self.assertIn("ZIP archive", error)
 
     def test_is_exportable_object(self):
         """Test exportable object detection."""

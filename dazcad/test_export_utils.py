@@ -1,124 +1,44 @@
-"""Unit tests for export utilities."""
+"""Export utilities tests.
 
-import base64
+Tests for export format functionality.
+"""
+
 import unittest
-from unittest.mock import Mock
 
 try:
-    from .export_utils import (
-        ExportFormat, get_format_by_name,
-        export_shape_to_stl, export_shape_to_format, export_assembly_to_format,
-        get_supported_formats, get_supported_export_formats
-    )
+    import cadquery as cq
+    CADQUERY_AVAILABLE = True
 except ImportError:
-    from export_utils import (
-        ExportFormat, get_format_by_name,
-        export_shape_to_stl, export_shape_to_format, export_assembly_to_format,
-        get_supported_formats, get_supported_export_formats
-    )
+    CADQUERY_AVAILABLE = False
+
+try:
+    from .export_utils import export_assembly_to_format
+except ImportError:
+    # Fallback for direct execution
+    from export_utils import export_assembly_to_format
 
 
-class TestExportFunctions(unittest.TestCase):
-    """Test the export utility functions."""
+class TestExportUtils(unittest.TestCase):
+    """Tests for export utilities."""
 
-    def test_export_format_structure(self):
-        """Test that export format structure is correct."""
-        # Create a format with the actual constructor
-        fmt = ExportFormat(
-            extension="stl",
-            mime_type="model/stl",
-            description="STL 3D Model",
-            supports_colors=False
-        )
+    @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
+    def test_export_assembly_to_format_real(self):
+        """Test assembly export to different formats with real CadQuery assemblies."""
+        # Create a simple assembly with two parts
+        box1 = cq.Workplane("XY").box(10, 10, 10)
+        box2 = cq.Workplane("XY").box(5, 5, 20)
 
-        # Test attributes
-        self.assertEqual(fmt.name, "STL")
-        self.assertEqual(fmt.extension, "stl")
-        self.assertEqual(fmt.mime_type, "model/stl")
-        self.assertFalse(fmt.supports_colors)
-        self.assertIsNone(fmt.assembly_handler)
-
-    def test_export_format_methods(self):
-        """Test ExportFormat methods."""
-        # Test without assembly handler
-        fmt = ExportFormat("stl", "model/stl", "STL 3D Model")
-        self.assertFalse(fmt.supports_assemblies())
-
-        # Test with assembly handler
-        fmt.set_assembly_handler(lambda a: b"assembly data")
-        self.assertTrue(fmt.supports_assemblies())
-
-    def test_get_format_by_name(self):
-        """Test getting format by name."""
-        # Test valid formats
-        stl = get_format_by_name('stl')
-        self.assertIsNotNone(stl)
-        self.assertEqual(stl.name, 'STL')
-
-        # Test case insensitive
-        step = get_format_by_name('STEP')
-        self.assertIsNotNone(step)
-        self.assertEqual(step.extension, 'step')
-
-    def test_export_shape_to_stl(self):
-        """Test STL export functionality."""
-        # Mock shape object that returns a mock when toSTL() is called
-        mock_shape = Mock()
-        mock_shape.toSTL.return_value = "mock stl data"
-        # Ensure it doesn't have val() method so it's treated as a shape directly
-        delattr(mock_shape, 'val')
-
-        # Export to STL
-        stl_data = export_shape_to_stl(mock_shape)
-
-        # Verify export was called
-        mock_shape.toSTL.assert_called_once()
-
-        # Should return base64-encoded string
-        self.assertIsInstance(stl_data, str)
-
-        # Should be valid base64
-        try:
-            decoded = base64.b64decode(stl_data)
-            self.assertIsInstance(decoded, bytes)
-        except ValueError as e:
-            self.fail(f"Invalid base64 string: {e}")
-
-    def test_export_shape_to_format(self):
-        """Test shape export to different formats."""
-        # Mock shape that returns string content
-        mock_shape = Mock()
-        mock_shape.toSTL.return_value = "mock stl data"
+        # Create assembly without location for now to avoid constructor issues
+        assembly = cq.Assembly()
+        assembly.add(box1, name="box1")
+        assembly.add(box2, name="box2")
 
         # Test STL export
-        stl_data = export_shape_to_format(mock_shape, 'stl')
+        stl_data = export_assembly_to_format(assembly, 'stl')
         self.assertIsInstance(stl_data, bytes)
+        self.assertGreater(len(stl_data), 100)  # Assembly should be larger
 
-    def test_export_assembly_to_format(self):
-        """Test assembly export to different formats."""
-        # Mock assembly with compound conversion
-        mock_assembly = Mock()
-        mock_compound = Mock()
-        mock_assembly.toCompound.return_value = mock_compound
-        mock_compound.toSTEP.return_value = "mock step data"
-
-        # Test that export_assembly_to_format works with step format
-        result = export_assembly_to_format(mock_assembly, 'step')
-        self.assertIsInstance(result, bytes)
-
-    def test_get_supported_formats(self):
-        """Test that supported formats function works."""
-        formats = get_supported_formats()
-        self.assertIsInstance(formats, list)
-        self.assertTrue(len(formats) > 0)
-        self.assertIn('stl', formats)
-        self.assertIn('step', formats)
-
-    def test_get_supported_export_formats(self):
-        """Test getting export formats as dictionary."""
-        formats = get_supported_export_formats()
-        self.assertIsInstance(formats, dict)
-        self.assertIn('stl', formats)
-        self.assertIn('step', formats)
-        # Test that values are ExportFormat objects
-        self.assertIsInstance(formats['stl'], ExportFormat)
+        # Test STEP export
+        step_data = export_assembly_to_format(assembly, 'step')
+        self.assertIsInstance(step_data, bytes)
+        self.assertGreater(len(step_data), 100)

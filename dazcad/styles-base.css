@@ -1,0 +1,205 @@
+/* Base styles, layout, and toolbar components */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #1a1a1a;
+    color: #e0e0e0;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.toolbar {
+    background-color: #2d2d2d;
+    padding: 10px;
+    border-bottom: 1px solid #444;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-shrink: 0;
+}
+
+.run-button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 8px 20px;
+    font-size: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.run-button:hover {
+    background-color: #45a049;
+}
+
+.run-button:active {
+    background-color: #3d8b40;
+}
+
+.run-button:disabled {
+    background-color: #666;
+    cursor: not-allowed;
+}
+
+.download-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.download-label {
+    color: #ccc;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.download-button {
+    background-color: #007acc;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    text-transform: uppercase;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+
+.download-button:hover {
+    background-color: #005a9e;
+}
+
+.download-button:active {
+    background-color: #004578;
+}
+
+.download-button:disabled {
+    background-color: #666;
+    cursor: not-allowed;
+}
+
+.main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Main panels with viewport relative sizing */
+.left-panel {
+    width: calc((100vw - 220px) * 0.4);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #444;
+    transition: width 0.3s ease;
+}
+
+.main-content.library-collapsed .left-panel,
+.main-content.library-collapsed .viewer-panel {
+    width: calc((100vw - 0px) * 0.5);
+}
+
+.viewer-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    width: calc((100vw - 220px) * 0.6);
+    transition: width 0.3s ease;
+}
+
+/* Save indicator styles */
+.save-indicator {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: #4CAF50;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 3px;
+    font-size: 12px;
+    animation: fadeIn 0.3s ease-in-out;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    z-index: 10;
+}
+
+/* Keyframe animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Output styles */
+.error-output {
+    color: #ff6b6b;
+}
+
+.success-output {
+    color: #51cf66;
+}
+
+.loading-output {
+    color: #ffa94d;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.info-output {
+    color: #74b9ff;
+}
+
+.traceback-output {
+    color: #ffa94d;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    background-color: #2a1f1f;
+    padding: 8px;
+    border-radius: 4px;
+    margin-top: 8px;
+    border-left: 3px solid #ff6b6b;
+}
+
+/* Loading animation for messages */
+.message-loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid #444;
+    border-radius: 50%;
+    border-top-color: #007acc;
+    animation: spin 1s ease-in-out infinite;
+}

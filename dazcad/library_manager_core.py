@@ -7,10 +7,12 @@ import unittest
 try:
     from .library_manager_git import GitOperations
     from .library_manager_file_ops import LibraryFileOperations
+    from .library_manager_paths import LibraryPathManager
 except ImportError:
     # Fallback for direct execution
     from library_manager_git import GitOperations
     from library_manager_file_ops import LibraryFileOperations
+    from library_manager_paths import LibraryPathManager
 
 
 class LibraryManager:
@@ -23,20 +25,10 @@ class LibraryManager:
             built_in_library_path: Path to built-in library files
             user_library_path: Path to user library files (default: ~/.dazcad/library)
         """
-        # Set up paths
-        if built_in_library_path:
-            self.built_in_library_path = built_in_library_path
-        else:
-            # Default to library subdirectory of this file's directory
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            self.built_in_library_path = os.path.join(current_dir, 'library')
-
-        if user_library_path:
-            self.user_library_path = user_library_path
-        else:
-            # Default to ~/.dazcad/library
-            home_dir = os.path.expanduser('~')
-            self.user_library_path = os.path.join(home_dir, '.dazcad', 'library')
+        # Initialize path manager
+        self.path_manager = LibraryPathManager(built_in_library_path, user_library_path)
+        self.built_in_library_path = self.path_manager.built_in_library_path
+        self.user_library_path = self.path_manager.user_library_path
 
         # Initialize git operations
         try:
@@ -69,35 +61,7 @@ class LibraryManager:
         Returns:
             Dictionary with 'built_in' and 'user' lists of filenames
         """
-        built_in_files = []
-        user_files = []
-
-        # List built-in files
-        if os.path.exists(self.built_in_library_path):
-            try:
-                for filename in os.listdir(self.built_in_library_path):
-                    if filename.endswith('.py') and not filename.startswith('__'):
-                        built_in_files.append(filename)
-            except OSError as e:
-                # Directory not accessible
-                print(f"ERROR accessing built-in library: {e}")
-
-        # List user files
-        if os.path.exists(self.user_library_path):
-            try:
-                for filename in os.listdir(self.user_library_path):
-                    if (filename.endswith('.py') and
-                        not filename.startswith('__') and
-                        not filename.startswith('.')):
-                        user_files.append(filename)
-            except OSError as e:
-                # Directory not accessible
-                print(f"ERROR accessing user library: {e}")
-
-        return {
-            'built_in': sorted(built_in_files),
-            'user': sorted(user_files)
-        }
+        return self.path_manager.list_files()
 
     def get_file_content(self, filename):
         """Get the content of a file from built-in or user library.
@@ -113,30 +77,40 @@ class LibraryManager:
         """
         return self.file_ops.get_file_content(filename)
 
-    def save_file(self, filename, content, commit_message=None):
+    def save_file(self, filename, content, file_type='user', options=None):
         """Save a file to the user library.
 
         Args:
             filename: Name of the file
             content: Content to save
-            commit_message: Optional git commit message
+            file_type: Type of file ('user' or 'builtin') - currently unused, kept for compatibility
+            options: Optional dict with 'old_name' and 'commit_message' keys
 
         Returns:
-            Dictionary with success status and message
+            Tuple of (success, message) for compatibility with calling code
         """
+        # file_type is currently unused but kept for API compatibility
+        _ = file_type
+
+        # Extract options
+        options = options or {}
+        old_name = options.get('old_name')
+        commit_message = options.get('commit_message')
+
         # Handle filename changes
-        original_filename = filename
         if '/' in filename or '\\' in filename:
             # Extract just the filename part
             filename = os.path.basename(filename)
 
-        # Check if this is a rename operation
-        if original_filename != filename and original_filename.endswith('.py'):
-            success, message = self.file_ops.handle_rename(original_filename, filename, content)
+        # Check if this is a rename operation (when old_name is provided and different)
+        if old_name and old_name != filename and old_name.endswith('.py'):
+            success, message = self.file_ops.handle_rename(old_name, filename, content)
             if not success:
-                return {'success': False, 'message': message}
+                return False, message
 
-        return self.file_ops.save_file(filename, content, commit_message)
+        # Handle regular save operation
+        result = self.file_ops.save_file(filename, content, commit_message)
+        return result.get('success', False), result.get('message', 'Unknown error')
 
     def create_file(self, filename, content):
         """Create a new file in the user library.
