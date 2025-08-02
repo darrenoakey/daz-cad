@@ -105,6 +105,15 @@ async def library_file_loader_script(_request):
     return resp
 
 
+async def library_file_operations_script(_request):
+    """Serve the Library File Operations JavaScript file with cache-busting headers."""
+    resp = await response.file('library_file_operations.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
 async def library_code_executor_script(_request):
     """Serve the Library Code Executor JavaScript file with cache-busting headers."""
     resp = await response.file('library_code_executor.js')
@@ -159,6 +168,7 @@ class TestStaticRoutes(unittest.TestCase):
         self.assertTrue(callable(library_ui_rendering_script))
         self.assertTrue(callable(library_ui_controls_script))
         self.assertTrue(callable(library_file_loader_script))
+        self.assertTrue(callable(library_file_operations_script))
         self.assertTrue(callable(library_code_executor_script))
         self.assertTrue(callable(library_file_ops_script))
         self.assertTrue(callable(library_save_ops_script))

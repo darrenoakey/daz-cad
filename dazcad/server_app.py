@@ -10,8 +10,8 @@ try:
     from .server_static_routes import (
         index, style, styles_base, styles_panels, script, chat_script, viewer_script, editor_script,
         library_script, library_ui_script, library_ui_rendering_script, library_ui_controls_script,
-        library_file_loader_script, library_code_executor_script, library_file_ops_script,
-        library_save_ops_script, autosave_script
+        library_file_loader_script, library_file_operations_script, library_code_executor_script, 
+        library_file_ops_script, library_save_ops_script, autosave_script
     )
     from .server_routes import (
         run_code, download_format, chat_with_ai, list_library_files,
@@ -22,8 +22,8 @@ except ImportError:
     from server_static_routes import (
         index, style, styles_base, styles_panels, script, chat_script, viewer_script, editor_script,
         library_script, library_ui_script, library_ui_rendering_script, library_ui_controls_script,
-        library_file_loader_script, library_code_executor_script, library_file_ops_script,
-        library_save_ops_script, autosave_script
+        library_file_loader_script, library_file_operations_script, library_code_executor_script,
+        library_file_ops_script, library_save_ops_script, autosave_script
     )
     from server_routes import (
         run_code, download_format, chat_with_ai, list_library_files,
@@ -81,6 +81,7 @@ def register_static_routes():
     app.route("/library_ui_rendering.js")(library_ui_rendering_script)
     app.route("/library_ui_controls.js")(library_ui_controls_script)
     app.route("/library_file_loader.js")(library_file_loader_script)
+    app.route("/library_file_operations.js")(library_file_operations_script)
     app.route("/library_code_executor.js")(library_code_executor_script)
     app.route("/autosave.js")(autosave_script)
     app.route("/library_file_ops.js")(library_file_ops_script)

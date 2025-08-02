@@ -78,7 +78,8 @@
     <script src="library_ui.js"></script>
     <script src="autosave.js"></script>
     <script src="library_save_ops.js"></script>
-    <!-- Library file operations modules - load specialized modules first -->
+    <!-- Library file operations modules - load in dependency order -->
+    <script src="library_file_operations.js"></script>
     <script src="library_file_loader.js"></script>
     <script src="library_code_executor.js"></script>
     <script src="library_file_ops.js"></script>
