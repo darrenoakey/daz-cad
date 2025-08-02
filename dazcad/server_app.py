@@ -8,8 +8,9 @@ from sanic.exceptions import SanicException
 # Import server route handlers
 try:
     from .server_static_routes import (
-        index, style, script, chat_script, viewer_script, editor_script,
-        library_script, library_ui_script, library_file_ops_script,
+        index, style, styles_base, styles_panels, script, chat_script, viewer_script, editor_script,
+        library_script, library_ui_script, library_ui_rendering_script, library_ui_controls_script,
+        library_file_loader_script, library_code_executor_script, library_file_ops_script,
         library_save_ops_script, autosave_script
     )
     from .server_routes import (
@@ -19,8 +20,9 @@ try:
 except ImportError:
     # Fallback for direct execution
     from server_static_routes import (
-        index, style, script, chat_script, viewer_script, editor_script,
-        library_script, library_ui_script, library_file_ops_script,
+        index, style, styles_base, styles_panels, script, chat_script, viewer_script, editor_script,
+        library_script, library_ui_script, library_ui_rendering_script, library_ui_controls_script,
+        library_file_loader_script, library_code_executor_script, library_file_ops_script,
         library_save_ops_script, autosave_script
     )
     from server_routes import (
@@ -68,12 +70,18 @@ def register_static_routes():
     """Register static file routes."""
     app.route("/")(index)
     app.route("/style.css")(style)
+    app.route("/styles-base.css")(styles_base)
+    app.route("/styles-panels.css")(styles_panels)
     app.route("/script.js")(script)
     app.route("/chat.js")(chat_script)
     app.route("/viewer.js")(viewer_script)
     app.route("/editor.js")(editor_script)
     app.route("/library.js")(library_script)
     app.route("/library_ui.js")(library_ui_script)
+    app.route("/library_ui_rendering.js")(library_ui_rendering_script)
+    app.route("/library_ui_controls.js")(library_ui_controls_script)
+    app.route("/library_file_loader.js")(library_file_loader_script)
+    app.route("/library_code_executor.js")(library_code_executor_script)
     app.route("/autosave.js")(autosave_script)
     app.route("/library_file_ops.js")(library_file_ops_script)
     app.route("/library_save_ops.js")(library_save_ops_script)

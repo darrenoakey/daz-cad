@@ -14,6 +14,16 @@ async def style(_request):
     return await response.file('style.css')
 
 
+async def styles_base(_request):
+    """Serve the base CSS file."""
+    return await response.file('styles-base.css')
+
+
+async def styles_panels(_request):
+    """Serve the panels CSS file."""
+    return await response.file('styles-panels.css')
+
+
 async def script(_request):
     """Serve the JavaScript file with cache-busting headers."""
     resp = await response.file('script.js')
@@ -68,6 +78,42 @@ async def library_ui_script(_request):
     return resp
 
 
+async def library_ui_rendering_script(_request):
+    """Serve the Library UI Rendering JavaScript file with cache-busting headers."""
+    resp = await response.file('library_ui_rendering.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+async def library_ui_controls_script(_request):
+    """Serve the Library UI Controls JavaScript file with cache-busting headers."""
+    resp = await response.file('library_ui_controls.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+async def library_file_loader_script(_request):
+    """Serve the Library File Loader JavaScript file with cache-busting headers."""
+    resp = await response.file('library_file_loader.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+async def library_code_executor_script(_request):
+    """Serve the Library Code Executor JavaScript file with cache-busting headers."""
+    resp = await response.file('library_code_executor.js')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
 async def library_file_ops_script(_request):
     """Serve the Library File Ops JavaScript file with cache-busting headers."""
     resp = await response.file('library_file_ops.js')
@@ -102,8 +148,18 @@ class TestStaticRoutes(unittest.TestCase):
         """Test that route functions exist."""
         self.assertTrue(callable(index))
         self.assertTrue(callable(style))
+        self.assertTrue(callable(styles_base))
+        self.assertTrue(callable(styles_panels))
         self.assertTrue(callable(script))
         self.assertTrue(callable(chat_script))
         self.assertTrue(callable(viewer_script))
         self.assertTrue(callable(editor_script))
         self.assertTrue(callable(library_script))
+        self.assertTrue(callable(library_ui_script))
+        self.assertTrue(callable(library_ui_rendering_script))
+        self.assertTrue(callable(library_ui_controls_script))
+        self.assertTrue(callable(library_file_loader_script))
+        self.assertTrue(callable(library_code_executor_script))
+        self.assertTrue(callable(library_file_ops_script))
+        self.assertTrue(callable(library_save_ops_script))
+        self.assertTrue(callable(autosave_script))
