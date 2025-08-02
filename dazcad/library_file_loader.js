@@ -1,6 +1,6 @@
 // Library file loading operations - loading and parsing library files
 
-async function loadLibraryFiles() {
+async function loadLibraryFiles(autoLoadFirst = true) {
     console.log("🔄 Starting loadLibraryFiles()");
     const outputDiv = document.getElementById('output');
     
@@ -51,8 +51,8 @@ async function loadLibraryFiles() {
             console.log("🖼️ Rendering library list...");
             window.libraryUI.renderLibraryList();
             
-            // Only try to load example if we have builtin files
-            if (normalizedFiles.builtin && normalizedFiles.builtin.length > 0) {
+            // Only auto-load first file if explicitly requested (initial page load)
+            if (autoLoadFirst && normalizedFiles.builtin && normalizedFiles.builtin.length > 0) {
                 console.log(`📚 Found ${normalizedFiles.builtin.length} builtin files, loading first one...`);
                 console.log("📄 Available builtin files:", normalizedFiles.builtin);
                 
@@ -66,13 +66,15 @@ async function loadLibraryFiles() {
                 } else {
                     console.error("❌ Library file operations module not available");
                 }
-            } else {
+            } else if (autoLoadFirst) {
                 console.warn('⚠️ No builtin library files found');
                 console.log("📊 Builtin files array:", normalizedFiles.builtin);
                 
                 if (outputDiv) {
                     outputDiv.innerHTML = '<span class="warning-output">⚠️ No library files found. Please check the server installation.</span>';
                 }
+            } else {
+                console.log("🔄 Auto-load skipped - just refreshing library list");
             }
         } else {
             console.error('❌ Server response marked as failed:', data.error);

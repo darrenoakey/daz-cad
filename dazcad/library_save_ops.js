@@ -33,9 +33,19 @@ async function saveCurrentFile() {
             window.autoSave.setLastSavedContent(content);
             window.autoSave.setLastSavedName(name);
             
+            // If filename changed, update current file reference and refresh library list
             if (currentFile.name !== name) {
                 window.libraryUI.setCurrentFile({ name, type: currentFile.type });
-                await window.libraryFileOps.loadLibraryFiles();
+                
+                // Refresh library list without auto-loading files
+                // This updates the display but doesn't change what's being edited
+                if (window.libraryFileOps && window.libraryFileOps.refreshLibraryList) {
+                    try {
+                        await window.libraryFileOps.refreshLibraryList();
+                    } catch (error) {
+                        console.error('Error refreshing library list:', error);
+                    }
+                }
             }
             
             const output = document.getElementById('output');
@@ -121,8 +131,17 @@ async function createNewFile() {
         const data = await response.json();
         
         if (data.success) {
-            await window.libraryFileOps.loadLibraryFiles();
-            await window.libraryFileOps.loadFile(sanitizedName, 'user');
+            // Refresh library list without auto-loading files
+            if (window.libraryFileOps && window.libraryFileOps.refreshLibraryList) {
+                try {
+                    await window.libraryFileOps.refreshLibraryList();
+                } catch (error) {
+                    console.error('Error refreshing library list:', error);
+                }
+            }
+            
+            // Now load the new file
+            await window.libraryFileOperations.loadFile(sanitizedName, 'user');
         } else {
             alert(`Failed to create file: ${data.error || data.message}`);
         }
