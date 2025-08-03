@@ -12,24 +12,6 @@ except ImportError:
     from library_manager import LibraryManager
 
 
-class MockLibraryManager:  # pylint: disable=too-few-public-methods
-    """Mock library manager for testing LibraryFileOperations."""
-
-    def __init__(self, built_in_path, user_path):
-        """Initialize mock library manager."""
-        self.built_in_library_path = built_in_path
-        self.user_library_path = user_path
-        self.git_ops = None
-
-    def _ensure_user_library(self):
-        """Ensure user library directory exists."""
-        os.makedirs(self.user_library_path, exist_ok=True)
-
-    def list_files(self):
-        """Mock list_files method for completeness."""
-        return {'built_in': [], 'user': []}
-
-
 class TestLibraryFileOperations(unittest.TestCase):
     """Comprehensive tests for LibraryFileOperations."""
 
@@ -165,3 +147,13 @@ class TestLibraryFileOperations(unittest.TestCase):
         # Try to commit (should succeed even without git)
         result = self.file_ops.commit_user_file("test.py")
         self.assertTrue(result)
+
+    def test_library_manager_integration(self):
+        """Test integration with real LibraryManager."""
+        # Test that file_ops is properly integrated with library manager
+        self.assertIsNotNone(self.file_ops)
+        self.assertEqual(self.file_ops.library_manager, self.library_manager)
+        
+        # Test that paths are correctly set
+        self.assertEqual(self.library_manager.built_in_library_path, self.built_in_dir)
+        self.assertEqual(self.library_manager.user_library_path, self.user_dir)

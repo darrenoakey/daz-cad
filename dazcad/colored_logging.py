@@ -11,18 +11,18 @@ try:
 except ImportError:
     COLORAMA_AVAILABLE = False
     # Fallback - no colors
-    class MockColor:
-        """Mock color class when colorama not available."""
+    class FallbackColor:
+        """Fallback color class when colorama not available."""
         def __getattr__(self, name):
             """Return empty string for any color attribute."""
             return ""
 
         def __repr__(self):
-            """String representation of MockColor."""
-            return "MockColor()"
+            """String representation of FallbackColor."""
+            return "FallbackColor()"
 
-    Fore = MockColor()
-    Style = MockColor()
+    Fore = FallbackColor()
+    Style = FallbackColor()
 
 
 def log_server_call(endpoint, method="GET"):

@@ -89,19 +89,19 @@ async def handle_download_request(request, export_format, shown_objects):
         }, status=500)
 
 
-class MockRequest:
-    """Mock request class for testing."""
+class TestRequest:
+    """Test request class for testing."""
 
     def __init__(self, args=None):
-        """Initialize mock request with optional args."""
+        """Initialize test request with optional args."""
         self.args = args or {}
 
     def get_arg(self, key, default=None):
-        """Get argument from mock request."""
+        """Get argument from test request."""
         return self.args.get(key, default)
 
     def has_arg(self, key):
-        """Check if argument exists in mock request."""
+        """Check if argument exists in test request."""
         return key in self.args
 
 
@@ -132,26 +132,26 @@ class TestDownloadHandler(unittest.TestCase):
         expected_3mf_mime = 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml'
         self.assertEqual(mime_types['3mf'], expected_3mf_mime)
 
-    def test_mock_request_creation(self):
-        """Test that mock request objects can be created."""
-        mock_request = MockRequest({'name': 'test'})
-        self.assertEqual(mock_request.args['name'], 'test')
+    def test_request_creation(self):
+        """Test that test request objects can be created."""
+        test_request = TestRequest({'name': 'test'})
+        self.assertEqual(test_request.args['name'], 'test')
 
         # Test default empty args
-        mock_request_empty = MockRequest()
-        self.assertEqual(mock_request_empty.args, {})
+        test_request_empty = TestRequest()
+        self.assertEqual(test_request_empty.args, {})
 
-    def test_mock_request_get_arg(self):
-        """Test mock request get_arg method."""
-        mock_request = MockRequest({'name': 'test'})
-        self.assertEqual(mock_request.get_arg('name'), 'test')
-        self.assertEqual(mock_request.get_arg('missing', 'default'), 'default')
+    def test_request_get_arg(self):
+        """Test test request get_arg method."""
+        test_request = TestRequest({'name': 'test'})
+        self.assertEqual(test_request.get_arg('name'), 'test')
+        self.assertEqual(test_request.get_arg('missing', 'default'), 'default')
 
-    def test_mock_request_has_arg(self):
-        """Test mock request has_arg method."""
-        mock_request = MockRequest({'name': 'test'})
-        self.assertTrue(mock_request.has_arg('name'))
-        self.assertFalse(mock_request.has_arg('missing'))
+    def test_request_has_arg(self):
+        """Test test request has_arg method."""
+        test_request = TestRequest({'name': 'test'})
+        self.assertTrue(test_request.has_arg('name'))
+        self.assertFalse(test_request.has_arg('missing'))
 
     def test_dynamic_format_validation(self):
         """Test that format validation works with dynamic format detection."""

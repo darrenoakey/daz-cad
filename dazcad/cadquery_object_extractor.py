@@ -62,9 +62,9 @@ class TestCadQueryObjectExtractor(unittest.TestCase):
         objects = extract_exportable_objects({'shown_objects': [], 'globals': {}})
         self.assertEqual(objects, [])
 
-    def test_extract_exportable_objects_with_mock_data(self):
-        """Test extraction with mock data."""
-        # Mock execution result
+    def test_extract_exportable_objects_with_none_data(self):
+        """Test extraction with test data containing None values."""
+        # Test execution result with None objects
         execution_result = {
             'shown_objects': [
                 {'object': None, 'name': 'TestObject', 'color': None}

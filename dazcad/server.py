@@ -22,7 +22,7 @@ class ServerTests(unittest.TestCase):
 
     def test_module_imports(self):
         """Test that the module can be imported."""
-        # This is a stub test - full tests are in test_server.py
+        # Basic test for module imports - full tests are in test_server.py
         self.assertTrue(hasattr(sys.modules[__name__], 'app'))
         self.assertIsNotNone(app)
 

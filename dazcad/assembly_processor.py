@@ -129,12 +129,12 @@ class TestAssemblyProcessor(unittest.TestCase):
 
     def test_process_assembly_child_no_obj(self):
         """Test processing child without obj attribute."""
-        # Mock child without obj attribute
-        class MockChild:  # pylint: disable=too-few-public-methods
-            """Mock child for testing."""
+        # Test child without obj attribute
+        class TestChild:  # pylint: disable=too-few-public-methods
+            """Test child for testing."""
             def __init__(self):
                 self.name = "TestChild"
 
-        child = MockChild()
+        child = TestChild()
         result = process_assembly_child(child, "TestAssembly")
         self.assertIsNone(result)

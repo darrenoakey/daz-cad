@@ -147,7 +147,43 @@ async def create_library_file(request):
             log_error("LIBRARY_CREATE", "Missing name")
             return json_response({"success": False, "error": "Missing name"}, status=400)
 
-        success, message = library_manager.create_file(name)
+        # Ensure the filename has .py extension
+        if not name.endswith('.py'):
+            filename = f"{name}.py"
+        else:
+            filename = name
+
+        # Create default content template for new files
+        default_content = '''"""Created with DazCAD - A parametric CAD model."""
+
+import cadquery as cq
+import unittest
+
+
+def create_model():
+    """Create a parametric model."""
+    return cq.Workplane("XY").box(20, 20, 10).edges("|Z").fillet(2)
+
+
+# Create the model
+model = create_model()
+
+
+class TestModel(unittest.TestCase):
+    """Tests for the CAD model."""
+    
+    def test_model_creation(self):
+        """Test model creation."""
+        result = create_model()
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, cq.Workplane)
+'''
+
+        # The create_file method returns a dictionary, not a tuple
+        result = library_manager.create_file(filename, default_content)
+        
+        success = result.get('success', False)
+        message = result.get('message', 'Unknown error')
 
         if success:
             log_success("LIBRARY_CREATE", message)

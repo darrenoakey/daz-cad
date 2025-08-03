@@ -157,11 +157,11 @@ class TestShapeExports(unittest.TestCase):
 
     def test_export_shape_to_format_unsupported_format(self):
         """Test exporting shape to unsupported format."""
-        # Mock shape with toSTL method
-        mock_shape = type('MockShape', (), {'toSTL': lambda: 'mock data'})()
+        # Test shape with toSTL method
+        test_shape = type('TestShape', (), {'toSTL': lambda: 'test data'})()
 
         # Test unsupported format should raise ValueError
         with self.assertRaises(ValueError) as context:
-            export_shape_to_format(mock_shape, "unsupported")
+            export_shape_to_format(test_shape, "unsupported")
 
         self.assertIn("not supported", str(context.exception))

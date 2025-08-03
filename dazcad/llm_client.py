@@ -84,3 +84,35 @@ class TestLlmClient(unittest.TestCase):
         self.assertTrue(callable(get_llm))
         self.assertTrue(callable(is_llm_available))
         self.assertTrue(callable(get_current_model))
+
+    def test_llm_has_correct_dazllm_methods(self):
+        """Test that retrieved LLM has correct dazllm API methods."""
+        llm = get_llm()
+        if llm is not None:
+            # Verify LLM has the correct method from dazllm API
+            self.assertTrue(hasattr(llm, 'chat'),
+                          "LLM client should have 'chat' method from dazllm API")
+            
+            # Ensure it doesn't have incorrect method names
+            self.assertFalse(hasattr(llm, 'invoke'),
+                           "LLM should use 'chat' method, not 'invoke'")
+
+    def test_dazllm_import_and_usage(self):
+        """Test that dazllm can be imported and used correctly."""
+        try:
+            import dazllm  # pylint: disable=import-outside-toplevel
+            
+            # Test that dazllm has the expected API
+            self.assertTrue(hasattr(dazllm, 'Llm'),
+                          "dazllm should have Llm class")
+            
+            # Test that Llm class has correct methods
+            if hasattr(dazllm, 'Llm'):
+                llm_class = dazllm.Llm
+                # Check if chat method exists in class
+                self.assertTrue(hasattr(llm_class, 'chat'),
+                              "dazllm.Llm class should have 'chat' method")
+                
+        except ImportError:
+            # dazllm not available, skip this test
+            self.skipTest("dazllm not available for testing")

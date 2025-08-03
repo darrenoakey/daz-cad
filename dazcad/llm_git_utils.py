@@ -45,7 +45,7 @@ Examples:
 
 Commit message:"""
 
-        response = llm.invoke(prompt)
+        response = llm.chat(prompt)
 
         if hasattr(response, 'content'):
             commit_msg = response.content.strip()
@@ -86,3 +86,25 @@ class TestGitCommitGeneration(unittest.TestCase):
         self.assertIsInstance(result, str)
         # Should still return something reasonable
         self.assertGreater(len(result), 0)
+
+    def test_generate_commit_uses_chat_not_invoke(self):
+        """Test that git commit generation uses chat() method, not invoke()."""
+        llm = get_llm()
+        if llm is not None:
+            # Verify the LLM has chat method and not invoke
+            self.assertTrue(hasattr(llm, 'chat'),
+                          "LLM should have 'chat' method for dazllm API")
+            self.assertFalse(hasattr(llm, 'invoke'),
+                           "LLM should NOT have 'invoke' method")
+            
+            # Test that calling generate_git_commit_message doesn't fail with AttributeError
+            try:
+                result = generate_git_commit_message("Test commit", "test = 1")
+                self.assertIsInstance(result, str)
+            except AttributeError as e:
+                # Should not fail due to missing 'chat' method
+                error_msg = str(e)
+                self.assertNotIn("'invoke'", error_msg,
+                               "Error should not be about missing 'invoke' method")
+                self.assertNotIn("has no attribute 'chat'", error_msg,
+                               "LLM should have 'chat' method")

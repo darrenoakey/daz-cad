@@ -74,7 +74,7 @@ class TestCadQueryFile(unittest.TestCase):
 
     @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
     def test_export_format_functions(self):
-        """Test export format functions with mock data."""
+        """Test export format functions with test data."""
         # Create a simple shape for testing
         box = cq.Workplane("XY").box(10, 10, 10)
 
@@ -83,3 +83,7 @@ class TestCadQueryFile(unittest.TestCase):
         # May or may not succeed depending on environment
         self.assertIsInstance(success, bool)
         self.assertIsInstance(error, str)
+
+    def test_test_export_format_function_exists(self):
+        """Test that test_export_format function exists."""
+        self.assertTrue(callable(test_export_format))

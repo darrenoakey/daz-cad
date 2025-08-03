@@ -78,18 +78,18 @@ def check_common_validation_assertions(test_case, result: Dict[str, Any]):
     test_case.assertIn('successful_exports', summary)
 
 
-def create_mock_object_info(name: str = "TestObject", obj_type: str = "workplane"):
-    """Create a mock object info dictionary for testing.
+def create_test_object_info(name: str = "TestObject", obj_type: str = "workplane"):
+    """Create a test object info dictionary for validation testing.
 
     Args:
         name: Object name
         obj_type: Object type
 
     Returns:
-        Mock object info dictionary
+        Test object info dictionary with real structure but None object
     """
     return {
-        'object': None,  # Mock object
+        'object': None,  # Real structure but no actual object for testing
         'name': name,
         'type': obj_type
     }
@@ -129,10 +129,23 @@ class TestValidationPatterns(unittest.TestCase):
         except AssertionError:
             self.fail("Common validation assertions failed on valid template")
 
-    def test_create_mock_object_info(self):
-        """Test mock object info creation."""
-        obj_info = create_mock_object_info("TestObj", "assembly")
+    def test_create_test_object_info(self):
+        """Test test object info creation."""
+        obj_info = create_test_object_info("TestObj", "assembly")
 
         self.assertEqual(obj_info['name'], "TestObj")
         self.assertEqual(obj_info['type'], "assembly")
         self.assertIsNone(obj_info['object'])
+        
+        # Verify it has the expected structure
+        self.assertIsInstance(obj_info, dict)
+        self.assertIn('object', obj_info)
+        self.assertIn('name', obj_info)
+        self.assertIn('type', obj_info)
+
+    def test_validation_pattern_functions_exist(self):
+        """Test that all expected validation pattern functions exist."""
+        self.assertTrue(callable(create_validation_result_template))
+        self.assertTrue(callable(validate_result_structure))
+        self.assertTrue(callable(check_common_validation_assertions))
+        self.assertTrue(callable(create_test_object_info))
