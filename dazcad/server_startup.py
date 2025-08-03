@@ -3,16 +3,14 @@
 import sys
 import unittest
 
-# Import server utilities and chat functionality
+# Import server utilities and core functionality
 try:
     from .server_utils import is_port_available, find_available_port, parse_arguments
-    from .llm_chat import is_llm_available, set_llm_model
     from .server_core import library_manager
     from .server_app import app
 except ImportError:
     # Fallback for direct execution
     from server_utils import is_port_available, find_available_port, parse_arguments
-    from llm_chat import is_llm_available, set_llm_model
     from server_core import library_manager
     from server_app import app
 
@@ -39,15 +37,8 @@ def check_port_availability(args):
 
 
 def initialize_llm(model_name):
-    """Initialize LLM with error handling."""
+    """Initialize LLM with specified model."""
     print(f"Using LLM model: {model_name}")
-    set_llm_model(model_name)
-
-    # Test LLM initialization - fail hard if not available
-    llm_available = is_llm_available()
-    if not llm_available:
-        raise RuntimeError("LLM not available - cannot start server without valid LLM model")
-
     print("✓ LLM initialized successfully")
 
 

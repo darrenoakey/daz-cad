@@ -5,20 +5,20 @@ import unittest
 # Import core functionality
 try:
     from .llm_core import (
-        CodeResponse, set_llm_model, get_llm, generate_git_commit_message,
-        improve_code_with_llm, is_llm_available, get_current_model
+        CodeResponse, get_llm, generate_git_commit_message,
+        improve_code_with_llm, get_current_model
     )
 except ImportError:
     # Fallback for direct execution
     from llm_core import (
-        CodeResponse, set_llm_model, get_llm, generate_git_commit_message,
-        improve_code_with_llm, is_llm_available, get_current_model
+        CodeResponse, get_llm, generate_git_commit_message,
+        improve_code_with_llm, get_current_model
     )
 
 # Re-export all functions for backward compatibility
 __all__ = [
-    'CodeResponse', 'set_llm_model', 'get_llm', 'generate_git_commit_message',
-    'improve_code_with_llm', 'is_llm_available', 'get_current_model'
+    'CodeResponse', 'get_llm', 'generate_git_commit_message',
+    'improve_code_with_llm', 'get_current_model'
 ]
 
 
@@ -34,9 +34,21 @@ class TestLlmChatModule(unittest.TestCase):
     def test_basic_functionality(self):
         """Test basic module functionality."""
         # Test model management
-        original_model = get_current_model()
-        self.assertIsInstance(original_model, str)
+        current_model = get_current_model()
+        self.assertIsInstance(current_model, str)
+        self.assertGreater(len(current_model), 0)
 
-        # Test availability check
-        available = is_llm_available()
-        self.assertIsInstance(available, bool)
+        # Test LLM client retrieval
+        llm = get_llm()
+        self.assertIsNotNone(llm, "LLM client should always be available")
+
+    def test_code_response_model(self):
+        """Test CodeResponse model functionality."""
+        response = CodeResponse(
+            success=True,
+            code="test_code = 'example'",
+            explanation="This is test code"
+        )
+        self.assertTrue(response.success)
+        self.assertEqual(response.code, "test_code = 'example'")
+        self.assertEqual(response.explanation, "This is test code")
