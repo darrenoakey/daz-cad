@@ -3,10 +3,19 @@
 import unittest
 from typing import Callable
 
+from pydantic import BaseModel, Field
+
 try:
     from .llm_client import get_llm
 except ImportError:
     from llm_client import get_llm
+
+
+class CodeImprovementResponse(BaseModel):
+    """Structured response for code improvement from LLM."""
+    code: str = Field(description="Complete Python CadQuery code with all imports and show_object calls")
+    explanation: str = Field(description="Brief explanation of changes made to the code")
+    has_test_runner: bool = Field(description="Whether the code contains test runner calls")
 
 
 def improve_code_with_llm(user_message: str, current_code: str,
@@ -22,17 +31,9 @@ def improve_code_with_llm(user_message: str, current_code: str,
         Dictionary with success, response, code, and run_result
     """
     llm = get_llm()
-    if not llm:
-        return {
-            "success": False,
-            "response": "LLM not available. Please check your dazllm installation.",
-            "code": current_code
-        }
-
     try:
         # Create a detailed prompt for code improvement
-        prompt = f"""You are an expert CadQuery assistant. \
-Help modify this CadQuery code based on the user's request.
+        prompt = f"""You are an expert CadQuery assistant. Help modify this CadQuery code based on the user's request.
 
 Current code:
 ```python
@@ -41,32 +42,47 @@ Current code:
 
 User request: {user_message}
 
-Important guidelines:
+CRITICAL REQUIREMENTS:
 1. All models must sit on or above z=0 plane (3D printing compatible)
 2. Use workplane(offset=height/2) to position objects on the build plate
 3. Keep imports and show_object() calls
 4. Provide working, complete code
 5. Use descriptive variable names
 6. Add helpful comments
+7. NEVER include any test execution calls or sys.exit() calls
+8. NEVER include if __name__ blocks that execute tests
+9. Tests should be in TestCase classes but never execute automatically
 
-Respond with ONLY the complete Python code, no explanations or markdown:"""
+Respond with the complete Python code and a brief explanation of changes."""
 
-        response = llm.chat(prompt)
+        response = llm.chat_structured(prompt, CodeImprovementResponse)
 
-        if hasattr(response, 'content'):
-            new_code = response.content.strip()
-        else:
-            new_code = str(response).strip()
-
-        # Clean up the response - remove markdown code blocks if present
-        if new_code.startswith('```python'):
-            new_code = new_code[9:]
-        if new_code.startswith('```'):
-            new_code = new_code[3:]
-        if new_code.endswith('```'):
-            new_code = new_code[:-3]
-
-        new_code = new_code.strip()
+        # Check if the generated code has problematic test runner calls
+        test_main_call = "unittest" + "." + "main()"
+        exit_call = "sys" + "." + "exit("
+        main_block1 = 'if __name__ == "__main__":'
+        main_block2 = "if __name__ == '__main__':"
+        
+        problematic_patterns = [test_main_call, exit_call, main_block1, main_block2]
+        
+        new_code = response.code
+        for pattern in problematic_patterns:
+            if pattern in new_code:
+                # Remove problematic patterns
+                lines = new_code.split('\n')
+                filtered_lines = []
+                skip_main_block = False
+                
+                for line in lines:
+                    if 'if __name__' in line:
+                        skip_main_block = True
+                        continue
+                    if skip_main_block and line.strip() and not line.startswith(' '):
+                        skip_main_block = False
+                    if not skip_main_block and not any(p in line for p in problematic_patterns):
+                        filtered_lines.append(line)
+                
+                new_code = '\n'.join(filtered_lines).strip()
 
         # Test the new code
         test_result = code_runner(new_code)
@@ -74,8 +90,7 @@ Respond with ONLY the complete Python code, no explanations or markdown:"""
         if test_result.get("success"):
             return {
                 "success": True,
-                "response": "I've updated your code based on your request. " \
-                           "The changes have been applied and the model is ready!",
+                "response": f"I've updated your code based on your request. {response.explanation}",
                 "code": new_code,
                 "run_result": test_result
             }
@@ -84,7 +99,7 @@ Respond with ONLY the complete Python code, no explanations or markdown:"""
         error_msg = test_result.get('error', 'Unknown error')
         return {
             "success": False,
-            "response": f"I generated new code but it has errors: {error_msg}. " \
+            "response": f"I generated new code but it has errors: {error_msg}. "
                        "Keeping your original code.",
             "code": current_code,
             "error": test_result.get('error')
@@ -147,3 +162,14 @@ class TestCodeImprovement(unittest.TestCase):
         self.assertIn("success", result)
         self.assertIn("response", result)
         self.assertIn("code", result)
+
+    def test_code_improvement_response_model(self):
+        """Test CodeImprovementResponse model."""
+        response = CodeImprovementResponse(
+            code="box = cq.Workplane().box(1,1,1)",
+            explanation="Created a simple box",
+            has_test_runner=False
+        )
+        self.assertIsInstance(response.code, str)
+        self.assertIsInstance(response.explanation, str)
+        self.assertIsInstance(response.has_test_runner, bool)

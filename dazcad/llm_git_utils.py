@@ -2,10 +2,18 @@
 
 import unittest
 
+from pydantic import BaseModel, Field
+
 try:
     from .llm_client import get_llm
 except ImportError:
     from llm_client import get_llm
+
+
+class GitCommitResponse(BaseModel):
+    """Structured response for git commit message generation."""
+    commit_message: str = Field(description="Concise git commit message under 50 characters")
+    action_verb: str = Field(description="The action verb used (Add, Update, Fix, Create, etc.)")
 
 
 def generate_git_commit_message(action: str, code_content: str) -> str:
@@ -19,9 +27,6 @@ def generate_git_commit_message(action: str, code_content: str) -> str:
         Generated commit message or fallback message
     """
     llm = get_llm()
-    if not llm:
-        return f"{action} - Auto-commit"
-
     try:
         # Create a prompt for generating commit message
         prompt = f"""Analyze this CadQuery code and generate a concise git commit message.
@@ -29,7 +34,7 @@ def generate_git_commit_message(action: str, code_content: str) -> str:
 Action: {action}
 
 Code:
-{code_content[:1000]}  # Limit code length
+{code_content[:1000]}
 
 Generate a commit message that:
 1. Starts with a verb (e.g., "Add", "Update", "Fix", "Create")
@@ -43,16 +48,14 @@ Examples:
 - "Create spiral vase model"
 - "Fix bearing dimensions"
 
-Commit message:"""
+Provide the commit message and the action verb used."""
 
-        response = llm.chat(prompt)
+        response = llm.chat_structured(prompt, GitCommitResponse)
 
-        if hasattr(response, 'content'):
-            commit_msg = response.content.strip()
-        else:
-            commit_msg = str(response).strip()
+        # Use the structured response
+        commit_msg = response.commit_message.strip()
 
-        # Clean up the response - remove quotes and extra text
+        # Clean up the response - remove quotes if present
         if commit_msg.startswith('"') and commit_msg.endswith('"'):
             commit_msg = commit_msg[1:-1]
 
@@ -87,24 +90,32 @@ class TestGitCommitGeneration(unittest.TestCase):
         # Should still return something reasonable
         self.assertGreater(len(result), 0)
 
-    def test_generate_commit_uses_chat_not_invoke(self):
-        """Test that git commit generation uses chat() method, not invoke()."""
+    def test_generate_commit_uses_chat_structured(self):
+        """Test that git commit generation uses chat_structured method."""
         llm = get_llm()
-        if llm is not None:
-            # Verify the LLM has chat method and not invoke
-            self.assertTrue(hasattr(llm, 'chat'),
-                          "LLM should have 'chat' method for dazllm API")
-            self.assertFalse(hasattr(llm, 'invoke'),
-                           "LLM should NOT have 'invoke' method")
-            
-            # Test that calling generate_git_commit_message doesn't fail with AttributeError
-            try:
-                result = generate_git_commit_message("Test commit", "test = 1")
-                self.assertIsInstance(result, str)
-            except AttributeError as e:
-                # Should not fail due to missing 'chat' method
-                error_msg = str(e)
-                self.assertNotIn("'invoke'", error_msg,
-                               "Error should not be about missing 'invoke' method")
-                self.assertNotIn("has no attribute 'chat'", error_msg,
-                               "LLM should have 'chat' method")
+        # Verify the LLM has chat_structured method
+        self.assertTrue(hasattr(llm, 'chat_structured'),
+                      "LLM should have 'chat_structured' method for dazllm API")
+        
+        # Test that calling generate_git_commit_message works
+        try:
+            result = generate_git_commit_message("Test commit", "test = 1")
+            self.assertIsInstance(result, str)
+            self.assertGreater(len(result), 0)
+        except AttributeError as e:
+            # Should not fail due to missing methods
+            error_msg = str(e)
+            self.assertNotIn("'invoke'", error_msg,
+                           "Error should not be about missing 'invoke' method")
+            self.assertNotIn("has no attribute 'chat_structured'", error_msg,
+                           "LLM should have 'chat_structured' method")
+
+    def test_git_commit_response_model(self):
+        """Test GitCommitResponse model."""
+        response = GitCommitResponse(
+            commit_message="Add test component",
+            action_verb="Add"
+        )
+        self.assertIsInstance(response.commit_message, str)
+        self.assertIsInstance(response.action_verb, str)
+        self.assertLessEqual(len(response.commit_message), 50)

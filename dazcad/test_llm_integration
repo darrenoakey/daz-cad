@@ -6,6 +6,8 @@ the correct dazllm API methods are being called.
 
 import unittest
 
+from pydantic import BaseModel, Field
+
 try:
     from .llm_client import get_llm
     from .llm_git_utils import generate_git_commit_message
@@ -14,6 +16,12 @@ except ImportError:
     from llm_client import get_llm
     from llm_git_utils import generate_git_commit_message
     from llm_code_improvement import improve_code_with_llm
+
+
+class SimpleTestResponse(BaseModel):
+    """Simple test response model for structured chat testing."""
+    answer: str = Field(description="A simple one-word answer")
+    number: int = Field(description="A simple number")
 
 
 class TestLlmIntegration(unittest.TestCase):
@@ -28,40 +36,43 @@ class TestLlmIntegration(unittest.TestCase):
         self.assertTrue(hasattr(llm, 'chat'), 
                       "LLM should have 'chat' method from dazllm API")
         
+        self.assertTrue(hasattr(llm, 'chat_structured'), 
+                      "LLM should have 'chat_structured' method from dazllm API")
+        
         # Make sure it doesn't have the incorrect 'invoke' method
         self.assertFalse(hasattr(llm, 'invoke'), 
                        "LLM should NOT have 'invoke' method - use 'chat' instead")
 
-    def test_llm_chat_method_works(self):
-        """Test that LLM chat method works correctly."""
+    def test_llm_chat_structured_method_works(self):
+        """Test that LLM chat_structured method works correctly."""
         llm = get_llm()
         self.assertIsNotNone(llm, "LLM should always be available")
         
         try:
-            # Test the chat method with a simple prompt
-            response = llm.chat("Say 'test' in one word")
+            # Test the chat_structured method with a simple prompt
+            response = llm.chat_structured(
+                "Respond with the word 'test' and the number 42", 
+                SimpleTestResponse
+            )
             
-            # Response should be a string or have a content attribute
-            if hasattr(response, 'content'):
-                result = response.content
-            else:
-                result = str(response)
-            
-            self.assertIsInstance(result, str)
-            self.assertGreater(len(result.strip()), 0)
+            # Response should be an instance of our model
+            self.assertIsInstance(response, SimpleTestResponse)
+            self.assertIsInstance(response.answer, str)
+            self.assertIsInstance(response.number, int)
+            self.assertGreater(len(response.answer.strip()), 0)
             
         except Exception as e:
-            # If there's an error, it shouldn't be about missing 'chat' method
+            # If there's an error, it shouldn't be about missing 'chat_structured' method
             error_msg = str(e).lower()
-            self.assertNotIn("has no attribute 'chat'", error_msg,
-                           "LLM should have 'chat' method")
+            self.assertNotIn("has no attribute 'chat_structured'", error_msg,
+                           "LLM should have 'chat_structured' method")
             # Re-raise the exception if it's something else
-            if "'chat'" in error_msg:
+            if "'chat_structured'" in error_msg:
                 raise
 
-    def test_git_commit_generation_uses_correct_api(self):
-        """Test that git commit generation uses correct LLM API."""
-        # This should not raise an AttributeError about 'invoke'
+    def test_git_commit_generation_uses_structured_api(self):
+        """Test that git commit generation uses structured LLM API."""
+        # This should not raise an AttributeError about missing methods
         try:
             result = generate_git_commit_message("Test action", "test code")
             self.assertIsInstance(result, str)
@@ -69,16 +80,16 @@ class TestLlmIntegration(unittest.TestCase):
         except AttributeError as e:
             error_msg = str(e)
             self.assertNotIn("'invoke'", error_msg,
-                           "Should use 'chat' method, not 'invoke'")
+                           "Should use structured methods, not 'invoke'")
             # Re-raise if it's a different AttributeError
             raise
 
-    def test_code_improvement_uses_correct_api(self):
-        """Test that code improvement uses correct LLM API."""
+    def test_code_improvement_uses_structured_api(self):
+        """Test that code improvement uses structured LLM API."""
         def simple_runner(code):
             return {"success": True, "objects": []}
         
-        # This should not raise an AttributeError about 'invoke'
+        # This should not raise an AttributeError about missing methods
         try:
             result = improve_code_with_llm(
                 "make it red",
@@ -90,7 +101,7 @@ class TestLlmIntegration(unittest.TestCase):
         except AttributeError as e:
             error_msg = str(e)
             self.assertNotIn("'invoke'", error_msg,
-                           "Should use 'chat' method, not 'invoke'")
+                           "Should use structured methods, not 'invoke'")
             # Re-raise if it's a different AttributeError
             raise
 
@@ -100,13 +111,15 @@ class TestLlmIntegration(unittest.TestCase):
             # Try importing dazllm to check available methods
             import dazllm  # pylint: disable=import-outside-toplevel
             
-            # Check that Llm class exists and has chat method
+            # Check that Llm class exists and has required methods
             if hasattr(dazllm, 'Llm'):
                 llm_class = dazllm.Llm
                 # Create a test instance to check methods
                 test_llm = llm_class("test:model")
                 self.assertTrue(hasattr(test_llm, 'chat'),
                               "dazllm.Llm should have 'chat' method")
+                self.assertTrue(hasattr(test_llm, 'chat_structured'),
+                              "dazllm.Llm should have 'chat_structured' method")
             
         except ImportError:
             # dazllm not available, skip this test
@@ -115,29 +128,29 @@ class TestLlmIntegration(unittest.TestCase):
             # Other errors are OK for this test
             pass
 
-    def test_real_llm_chat_call(self):
-        """Test making a real LLM chat call."""
+    def test_real_llm_structured_call(self):
+        """Test making a real LLM structured call."""
         llm = get_llm()
         self.assertIsNotNone(llm, "LLM should always be available")
         
         try:
-            # Make a real call to test the API
-            response = llm.chat("What is 2+2? Answer with just the number.")
+            # Make a real structured call to test the API
+            response = llm.chat_structured(
+                "Respond with the answer 'hello' and the number 5", 
+                SimpleTestResponse
+            )
             
-            # Verify we get a response
-            if hasattr(response, 'content'):
-                result = response.content.strip()
-            else:
-                result = str(response).strip()
-            
-            self.assertIsInstance(result, str)
-            self.assertGreater(len(result), 0)
+            # Verify we get a structured response
+            self.assertIsInstance(response, SimpleTestResponse)
+            self.assertIsInstance(response.answer, str)
+            self.assertIsInstance(response.number, int)
+            self.assertGreater(len(response.answer), 0)
             
         except Exception as e:
-            # Check that the error is not about missing 'chat' method
+            # Check that the error is not about missing methods
             error_msg = str(e).lower()
-            self.assertNotIn("has no attribute 'chat'", error_msg,
-                           "LLM should have 'chat' method from dazllm")
+            self.assertNotIn("has no attribute 'chat_structured'", error_msg,
+                           "LLM should have 'chat_structured' method from dazllm")
             
             # For other errors, just log them but don't fail the test
-            print(f"LLM call failed (this may be expected): {e}")
+            print(f"LLM structured call failed (this may be expected): {e}")
