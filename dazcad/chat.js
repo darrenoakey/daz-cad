@@ -102,13 +102,20 @@ async function sendChatMessage() {
             // Add assistant response
             addChatMessage('assistant', result.response, new Date().toLocaleTimeString());
             
-            // Update code if new code was provided
-            if (result.new_code && result.new_code !== currentCode) {
-                codeEditor.setValue(result.new_code);
+            // Update code if new code was provided (handles both new_code and code fields)
+            const newCode = result.code || result.new_code;
+            if (newCode && newCode !== currentCode) {
+                codeEditor.setValue(newCode);
                 addChatMessage('system', 'Code updated successfully!');
                 
                 // If new objects were generated, update the viewer
-                if (result.objects) {
+                if (result.run_result && result.run_result.objects) {
+                    clearScene();
+                    result.run_result.objects.forEach(obj => {
+                        loadSTL(obj.stl, obj.name, obj.color, obj.transform);
+                    });
+                } else if (result.objects) {
+                    // Fallback for backward compatibility
                     clearScene();
                     result.objects.forEach(obj => {
                         loadSTL(obj.stl, obj.name, obj.color, obj.transform);
@@ -116,7 +123,14 @@ async function sendChatMessage() {
                 }
             }
         } else {
-            addChatMessage('assistant', `Sorry, I encountered an error: ${result.error}`, new Date().toLocaleTimeString());
+            // Add assistant response
+            addChatMessage('assistant', result.response || `Sorry, I encountered an error: ${result.error}`, new Date().toLocaleTimeString());
+            
+            // If there are multiple errors from retry attempts, show them
+            if (result.all_errors && result.all_errors.length > 1) {
+                addChatMessage('system', 'I made multiple attempts to fix the code. You can check the browser console for details.');
+                console.log('LLM retry attempts:', result.all_errors);
+            }
         }
     } catch (error) {
         // Remove loading message
