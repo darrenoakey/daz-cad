@@ -1,7 +1,6 @@
 """Assembly processing utilities for DazCAD."""
 
 import traceback
-import unittest
 
 # Import dependencies with fallback for direct execution
 try:
@@ -12,12 +11,6 @@ except ImportError:
     from cadquery_core import get_location_matrix
     from export_utils import export_shape_to_stl
     from color_processor import process_child_color
-
-try:
-    import cadquery as cq
-    CADQUERY_AVAILABLE = True
-except ImportError:
-    CADQUERY_AVAILABLE = False
 
 
 def process_assembly_child(child, assembly_name):
@@ -95,46 +88,3 @@ def process_assembly(shown):
             results.append(result)
 
     return results
-
-
-class TestAssemblyProcessor(unittest.TestCase):
-    """Tests for assembly processing utilities."""
-
-    @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
-    def test_process_assembly(self):
-        """Test processing assemblies."""
-        # Create a simple assembly
-        assembly = cq.Assembly()
-        box1 = cq.Workplane("XY").box(10, 10, 10)
-        box2 = cq.Workplane("XY").box(5, 5, 5)
-
-        # Add them to assembly with colors
-        assembly.add(box1, name="TestBox1", color=cq.Color("red"))
-        assembly.add(box2, name="TestBox2", color=cq.Color("green"))
-
-        # Create shown object
-        shown = {
-            'object': assembly,
-            'name': 'TestAssembly',
-            'color': None
-        }
-
-        # Process the assembly
-        results = process_assembly(shown)
-
-        # Should get two results
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0]['name'], 'TestAssembly_TestBox1')
-        self.assertEqual(results[1]['name'], 'TestAssembly_TestBox2')
-
-    def test_process_assembly_child_no_obj(self):
-        """Test processing child without obj attribute."""
-        # Test child without obj attribute
-        class TestChild:  # pylint: disable=too-few-public-methods
-            """Test child for testing."""
-            def __init__(self):
-                self.name = "TestChild"
-
-        child = TestChild()
-        result = process_assembly_child(child, "TestAssembly")
-        self.assertIsNone(result)

@@ -1,15 +1,4 @@
 """DazCAD - A simple CadQuery runner with web interface."""
 
-import unittest
-
-
-class PackageTests(unittest.TestCase):
-    """Tests for the DazCAD package."""
-
-    def test_package_attributes(self):
-        """Test that the package has expected attributes."""
-        # Test that this module has expected attributes
-        self.assertIsNotNone(self.__class__)
-        self.assertEqual(self.__class__.__name__, 'PackageTests')
-        # Ensure package can be imported without issues
-        self.assertTrue(hasattr(self, 'test_package_attributes'))
+__version__ = "1.0.0"
+__author__ = "DazCAD Team"

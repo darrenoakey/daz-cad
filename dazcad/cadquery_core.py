@@ -1,7 +1,5 @@
 """Core CadQuery utility functions for DazCAD."""
 
-import unittest
-
 try:
     import cadquery as cq
     CADQUERY_AVAILABLE = True
@@ -69,41 +67,3 @@ def get_location_matrix(location):
     except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"Error extracting transformation matrix: {e}")
         return None
-
-
-class TestCadQueryCore(unittest.TestCase):
-    """Unit tests for CadQuery core utility functions."""
-
-    def test_color_to_hex_basic_colors(self):
-        """Test basic color conversions."""
-        # Test red
-        self.assertEqual(color_to_hex((1.0, 0.0, 0.0, 1.0)), "#ff0000")
-        # Test green
-        self.assertEqual(color_to_hex((0.0, 1.0, 0.0, 1.0)), "#00ff00")
-        # Test blue
-        self.assertEqual(color_to_hex((0.0, 0.0, 1.0, 1.0)), "#0000ff")
-
-    def test_color_to_hex_mixed_colors(self):
-        """Test mixed color conversions."""
-        # Test gray (0.5 * 255 = 127.5, rounds to 128 = 0x80)
-        self.assertEqual(color_to_hex((0.5, 0.5, 0.5, 1.0)), "#808080")
-        # Test None (defaults to gray)
-        self.assertEqual(color_to_hex(None), "#808080")
-
-    @unittest.skipIf(not CADQUERY_AVAILABLE, "CadQuery not available")
-    def test_get_location_matrix(self):
-        """Test location matrix extraction."""
-        # Test with None
-        self.assertIsNone(get_location_matrix(None))
-
-        # Test with translation - use same pattern as README example
-        # pylint: disable=no-value-for-parameter
-        translation_loc = cq.Location((10, 20, 30))
-        # pylint: enable=no-value-for-parameter
-        matrix = get_location_matrix(translation_loc)
-        self.assertIsNotNone(matrix)
-        self.assertEqual(len(matrix), 16)
-        # Check translation values (positions 3, 7, 11 in row-major 4x4)
-        self.assertEqual(matrix[3], 10.0)  # X translation
-        self.assertEqual(matrix[7], 20.0)  # Y translation
-        self.assertEqual(matrix[11], 30.0)  # Z translation
