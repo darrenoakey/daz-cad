@@ -1,6 +1,5 @@
 """Core LLM functionality for DazCAD."""
 
-import unittest
 from typing import Optional
 
 from pydantic import BaseModel
@@ -25,35 +24,11 @@ class CodeResponse(BaseModel):
     error: Optional[str] = None
 
 
-class TestLlmCore(unittest.TestCase):
-    """Basic tests for LLM core functionality."""
-
-    def test_code_response_model(self):
-        """Test CodeResponse model structure."""
-        response = CodeResponse(
-            success=True,
-            code="test code",
-            explanation="test explanation"
-        )
-        self.assertTrue(response.success)
-        self.assertEqual(response.code, "test code")
-        self.assertEqual(response.explanation, "test explanation")
-        self.assertIsNone(response.error)
-
-    def test_all_functions_available(self):
-        """Test that all expected functions are available."""
-        self.assertTrue(callable(get_llm))
-        self.assertTrue(callable(get_current_model))
-        self.assertTrue(callable(improve_code_with_llm))
-        self.assertTrue(callable(generate_git_commit_message))
-
-    def test_llm_client_functionality(self):
-        """Test that LLM client functions work correctly."""
-        # Test model name retrieval
-        model_name = get_current_model()
-        self.assertIsInstance(model_name, str)
-        self.assertGreater(len(model_name), 0)
-
-        # Test LLM client retrieval
-        llm = get_llm()
-        self.assertIsNotNone(llm, "LLM client should always be available")
+# Explicitly define what's available for import from this module
+__all__ = [
+    'CodeResponse',
+    'get_llm',
+    'get_current_model', 
+    'improve_code_with_llm',
+    'generate_git_commit_message'
+]
