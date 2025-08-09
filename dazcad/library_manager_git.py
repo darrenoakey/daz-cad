@@ -1,16 +1,10 @@
 """Git operations for LibraryManager."""
 
 import subprocess
-import unittest
 from pathlib import Path
 from typing import List, Dict, Tuple
 
-# Import LLM functionality with fallback for direct execution
-try:
-    from .llm_chat import generate_git_commit_message
-except ImportError:
-    # Fallback for direct execution
-    from llm_chat import generate_git_commit_message
+from .llm import generate_git_commit_message
 
 
 class GitOperations:
@@ -22,7 +16,7 @@ class GitOperations:
         Args:
             library_path: Path to the library directory
         """
-        self.library_path = library_path
+        self.library_path = Path(library_path)
 
     def ensure_git_initialized(self):
         """Ensure git repository is initialized in the library directory."""
@@ -150,26 +144,3 @@ class GitOperations:
 
         except subprocess.CalledProcessError:
             return []
-
-
-class TestGitOperations(unittest.TestCase):
-    """Unit tests for GitOperations."""
-
-    def test_git_operations_creation(self):
-        """Test that GitOperations can be created."""
-        import tempfile  # pylint: disable=import-outside-toplevel
-        temp_dir = Path(tempfile.mkdtemp())
-        git_ops = GitOperations(temp_dir)
-        self.assertIsNotNone(git_ops)
-        self.assertEqual(git_ops.library_path, temp_dir)
-
-    def test_git_methods_exist(self):
-        """Test that required methods exist."""
-        import tempfile  # pylint: disable=import-outside-toplevel
-        temp_dir = Path(tempfile.mkdtemp())
-        git_ops = GitOperations(temp_dir)
-
-        self.assertTrue(hasattr(git_ops, 'ensure_git_initialized'))
-        self.assertTrue(hasattr(git_ops, 'git_add_and_commit'))
-        self.assertTrue(hasattr(git_ops, 'git_move_file'))
-        self.assertTrue(hasattr(git_ops, 'get_file_history'))

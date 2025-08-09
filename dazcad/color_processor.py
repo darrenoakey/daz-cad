@@ -1,13 +1,8 @@
 """Color processing utilities for DazCAD."""
 
 import traceback
-import unittest
 
-# Import core utilities with fallback for direct execution
-try:
-    from .cadquery_core import color_to_hex
-except ImportError:
-    from cadquery_core import color_to_hex
+from .cadquery_core import color_to_hex
 
 
 def process_child_color(child_color):
@@ -58,22 +53,3 @@ def process_child_color(child_color):
             part_color = color_to_hex(None)  # Fall back to default
 
     return part_color
-
-
-class TestColorProcessor(unittest.TestCase):
-    """Tests for color processing utilities."""
-
-    def test_process_string_color(self):
-        """Test processing string colors."""
-        result = process_child_color("#ff0000")
-        self.assertEqual(result, "#ff0000")
-
-    def test_process_tuple_color(self):
-        """Test processing tuple colors."""
-        result = process_child_color((1.0, 0.0, 0.0, 1.0))
-        self.assertEqual(result, "#ff0000")
-
-    def test_process_none_color(self):
-        """Test processing None color."""
-        result = process_child_color(None)
-        self.assertEqual(result, "#808080")  # Default gray

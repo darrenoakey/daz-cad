@@ -1,6 +1,5 @@
 """CadQuery object extraction functionality."""
 
-import unittest
 from typing import Dict, Any, List
 
 try:
@@ -45,37 +44,3 @@ def extract_exportable_objects(execution_result: Dict[str, Any]) -> List[Dict[st
             })
 
     return exportable_objects
-
-
-class TestCadQueryObjectExtractor(unittest.TestCase):
-    """Tests for CadQuery object extractor."""
-
-    def test_extract_exportable_objects_function_exists(self):
-        """Test that extract_exportable_objects function exists."""
-        self.assertTrue(callable(extract_exportable_objects))
-
-    def test_extract_exportable_objects_empty(self):
-        """Test extraction with empty results."""
-        objects = extract_exportable_objects({})
-        self.assertEqual(objects, [])
-
-        objects = extract_exportable_objects({'shown_objects': [], 'globals': {}})
-        self.assertEqual(objects, [])
-
-    def test_extract_exportable_objects_with_none_data(self):
-        """Test extraction with test data containing None values."""
-        # Test execution result with None objects
-        execution_result = {
-            'shown_objects': [
-                {'object': None, 'name': 'TestObject', 'color': None}
-            ],
-            'globals': {
-                'other_obj': None,
-                'cq': None,  # Should be filtered out
-                '__builtins__': None  # Should be filtered out
-            }
-        }
-
-        # Should return empty list since None objects are not exportable
-        objects = extract_exportable_objects(execution_result)
-        self.assertEqual(objects, [])

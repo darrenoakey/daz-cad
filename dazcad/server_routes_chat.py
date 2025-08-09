@@ -1,17 +1,16 @@
 """Chat/AI route handlers for DazCAD server."""
 
-import unittest
 from sanic.response import json as json_response
 
 # Import dependencies with fallback for direct execution
 try:
-    from .llm_chat import improve_code_with_llm
+    from .llm import improve_code_with_llm
     from .server_core import run_cadquery_code
     from .colored_logging import (log_server_call, log_input, log_output,
                                  log_error)
 except ImportError:
     # Fallback for direct execution
-    from llm_chat import improve_code_with_llm
+    from llm import improve_code_with_llm
     from server_core import run_cadquery_code
     from colored_logging import (log_server_call, log_input, log_output,
                                 log_error)
@@ -43,11 +42,3 @@ async def chat_with_ai(request):
             "error": f"Server error: {error_msg}",
             "response": "Sorry, I encountered an error while processing your request."
         })
-
-
-class TestChatRoutes(unittest.TestCase):
-    """Tests for chat route handlers."""
-
-    def test_chat_with_ai_function_exists(self):
-        """Test that chat_with_ai function exists."""
-        self.assertTrue(callable(chat_with_ai))

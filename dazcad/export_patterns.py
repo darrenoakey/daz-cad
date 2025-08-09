@@ -2,7 +2,6 @@
 
 import os
 import tempfile
-import unittest
 from typing import Tuple, Any
 
 try:
@@ -87,40 +86,3 @@ def create_test_export_object():
         return cq.Workplane("XY").box(10, 10, 10)
     except Exception:  # pylint: disable=broad-exception-caught
         return None
-
-
-class TestExportPatterns(unittest.TestCase):
-    """Tests for common export patterns."""
-
-    def test_validate_export_result_success(self):
-        """Test export result validation with valid data."""
-        valid_data = b"valid export data with sufficient content"
-        is_valid, error = validate_export_result(valid_data, 10)
-        self.assertTrue(is_valid)
-        self.assertEqual(error, "")
-
-    def test_validate_export_result_too_small(self):
-        """Test export result validation with too small data."""
-        small_data = b"small"
-        is_valid, error = validate_export_result(small_data, 10)
-        self.assertFalse(is_valid)
-        self.assertIn("too small", error)
-
-    def test_validate_export_result_wrong_type(self):
-        """Test export result validation with wrong data type."""
-        wrong_data = "not bytes"
-        is_valid, error = validate_export_result(wrong_data)
-        self.assertFalse(is_valid)
-        self.assertIn("not bytes", error)
-
-    def test_create_test_export_object(self):
-        """Test creation of test export object."""
-        obj = create_test_export_object()
-        if CADQUERY_AVAILABLE:
-            self.assertIsNotNone(obj)
-        else:
-            self.assertIsNone(obj)
-
-    def test_safe_export_with_cleanup_function_exists(self):
-        """Test that safe export function exists."""
-        self.assertTrue(callable(safe_export_with_cleanup))

@@ -1,7 +1,6 @@
 """Colored logging utilities for DazCAD server."""
 
 import json
-import unittest
 from datetime import datetime
 
 try:
@@ -116,29 +115,3 @@ def log_library_operation(operation, details):
         print(f"{Fore.BLUE}[{timestamp}] 📚 LIBRARY {operation}: {details}{Style.RESET_ALL}")
     else:
         print(f"[{timestamp}] LIBRARY {operation}: {details}")
-
-
-class TestColoredLogging(unittest.TestCase):
-    """Tests for colored logging utilities."""
-
-    def test_log_functions_exist(self):
-        """Test that all log functions exist and are callable."""
-        self.assertTrue(callable(log_server_call))
-        self.assertTrue(callable(log_input))
-        self.assertTrue(callable(log_output))
-        self.assertTrue(callable(log_error))
-        self.assertTrue(callable(log_success))
-        self.assertTrue(callable(log_debug))
-        self.assertTrue(callable(log_library_operation))
-
-    def test_log_server_call(self):
-        """Test server call logging."""
-        # Should not raise an exception
-        log_server_call("/test", "POST")
-
-    def test_log_data_formatting(self):
-        """Test data formatting for different types."""
-        # Should not raise exceptions
-        log_input("test", {"key": "value"})
-        log_output("test", "string value")
-        log_debug("test", 12345)

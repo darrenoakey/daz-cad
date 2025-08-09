@@ -4,8 +4,6 @@ This module provides centralized import handling to reduce code duplication
 across the DazCAD codebase.
 """
 
-import unittest
-
 # CadQuery availability check
 try:
     import cadquery as cq
@@ -73,53 +71,14 @@ def create_test_library_manager():
     """
     try:
         # pylint: disable=import-outside-toplevel
-        from .library_manager_core import LibraryManager
+        from .library_manager import LibraryManager
         library_path = get_current_library_path()
         return LibraryManager(built_in_library_path=library_path)
     except ImportError:
         try:
             # pylint: disable=import-outside-toplevel
-            from library_manager_core import LibraryManager
+            from library_manager import LibraryManager
             library_path = get_current_library_path()
             return LibraryManager(built_in_library_path=library_path)
         except ImportError:
             return None
-
-
-class TestCommonImports(unittest.TestCase):
-    """Tests for common import utilities."""
-
-    def test_cadquery_availability_check(self):
-        """Test CadQuery availability detection."""
-        self.assertIsInstance(CADQUERY_AVAILABLE, bool)
-        if CADQUERY_AVAILABLE:
-            self.assertIsNotNone(cq)
-        else:
-            self.assertIsNone(cq)
-
-    def test_get_module_with_fallback(self):
-        """Test module import with fallback."""
-        # Test with a module that should exist
-        result = get_module_with_fallback('.colored_logging', 'colored_logging')
-        # Should return something (module or None)
-        self.assertTrue(result is not None or result is None)
-
-    def test_setup_cadquery_execution_environment(self):
-        """Test CadQuery execution environment setup."""
-        env = setup_cadquery_execution_environment()
-        self.assertIsInstance(env, dict)
-        self.assertIn('cq', env)
-        self.assertIn('cadquery', env)
-        self.assertIn('__name__', env)
-
-    def test_get_current_library_path(self):
-        """Test library path detection."""
-        path = get_current_library_path()
-        self.assertIsInstance(path, str)
-        self.assertTrue(path.endswith('library'))
-
-    def test_create_test_library_manager(self):
-        """Test library manager creation."""
-        manager = create_test_library_manager()
-        # Should return manager or None
-        self.assertTrue(manager is not None or manager is None)

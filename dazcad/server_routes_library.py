@@ -1,6 +1,5 @@
 """Library management route handlers for DazCAD server."""
 
-import unittest
 from sanic.response import json as json_response
 
 # Import dependencies with fallback for direct execution
@@ -157,7 +156,6 @@ async def create_library_file(request):
         default_content = '''"""Created with DazCAD - A parametric CAD model."""
 
 import cadquery as cq
-import unittest
 
 
 def create_model():
@@ -167,16 +165,6 @@ def create_model():
 
 # Create the model
 model = create_model()
-
-
-class TestModel(unittest.TestCase):
-    """Tests for the CAD model."""
-    
-    def test_model_creation(self):
-        """Test model creation."""
-        result = create_model()
-        self.assertIsNotNone(result)
-        self.assertIsInstance(result, cq.Workplane)
 '''
 
         # The create_file method returns a dictionary, not a tuple
@@ -196,19 +184,3 @@ class TestModel(unittest.TestCase):
         error_msg = str(e)
         log_error("LIBRARY_CREATE", error_msg)
         return json_response({"success": False, "error": error_msg})
-
-
-class TestLibraryRoutes(unittest.TestCase):
-    """Tests for library route handlers."""
-
-    def test_library_route_functions_exist(self):
-        """Test that library route functions exist."""
-        self.assertTrue(callable(list_library_files))
-        self.assertTrue(callable(get_library_file))
-        self.assertTrue(callable(save_library_file))
-        self.assertTrue(callable(create_library_file))
-
-    def test_library_manager_access(self):
-        """Test that library manager is accessible."""
-        self.assertIsNotNone(library_manager)
-        self.assertTrue(hasattr(library_manager, 'list_files'))

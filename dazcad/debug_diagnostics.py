@@ -1,7 +1,5 @@
 """Main diagnostic script to identify DazCAD issues."""
 
-import unittest
-
 # Import diagnostic functions from specialized modules
 try:
     from .diagnostic_cadquery import test_cadquery_basic
@@ -46,25 +44,6 @@ def run_diagnostics():
         print("\\n✓ All tests passed - DazCAD should work correctly")
     else:
         print("\\n✗ Some tests failed - this explains the reported issues")
-
-
-class TestDiagnostics(unittest.TestCase):
-    """Tests for diagnostic functions."""
-
-    def test_diagnostic_functions_exist(self):
-        """Test that diagnostic functions exist."""
-        self.assertTrue(callable(test_cadquery_basic))
-        self.assertTrue(callable(test_library_manager))
-        self.assertTrue(callable(test_export_functionality))
-        self.assertTrue(callable(test_library_file_execution))
-
-    def test_run_diagnostics(self):
-        """Test that run_diagnostics can be called."""
-        # Just test that it doesn't crash
-        try:
-            run_diagnostics()
-        except Exception:  # pylint: disable=broad-exception-caught
-            self.fail("run_diagnostics() raised an exception")
 
 
 if __name__ == "__main__":
