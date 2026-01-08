@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent
+TEST_OUT = PROJECT_ROOT / "output" / "testing"
+PORT = 8765
+
+
+# ##################################################################
+# run command
+# executes a shell command and returns exit code
+def _run(cmd: list[str]) -> int:
+    return subprocess.call(cmd)
+
+
+# ##################################################################
+# ensure venv
+# creates virtual environment if it does not exist
+def _ensure_venv() -> None:
+    venv_path = PROJECT_ROOT / ".venv"
+    if not venv_path.exists():
+        print("Creating virtual environment...")
+        subprocess.call([sys.executable, "-m", "venv", str(venv_path)])
+
+
+# ##################################################################
+# activate venv python
+# returns the python executable path inside the virtual environment
+def _venv_python() -> str:
+    return str(PROJECT_ROOT / ".venv" / "bin" / "python")
+
+
+# ##################################################################
+# ensure dependencies
+# installs dependencies if not already installed
+def _ensure_dependencies() -> None:
+    marker = PROJECT_ROOT / ".venv" / ".installed"
+    if not marker.exists():
+        print("Installing dependencies...")
+        _run([_venv_python(), "-m", "pip", "install", "-e", ".[dev]"])
+        _run([_venv_python(), "-m", "playwright", "install", "chromium"])
+        marker.touch()
+
+
+# ##################################################################
+# command serve
+# starts the fastapi server on the configured port
+def command_serve(_: argparse.Namespace) -> int:
+    _ensure_venv()
+    _ensure_dependencies()
+    print(f"Starting server at http://127.0.0.1:{PORT}")
+    return _run([
+        _venv_python(), "-m", "uvicorn",
+        "src.server:app",
+        "--host", "127.0.0.1",
+        "--port", str(PORT),
+        "--reload"
+    ])
+
+
+# ##################################################################
+# command test
+# runs a single test target and logs output to output/testing
+def command_test(args: argparse.Namespace) -> int:
+    _ensure_venv()
+    _ensure_dependencies()
+    TEST_OUT.mkdir(parents=True, exist_ok=True)
+    target = args.target
+    log_name = target.replace("/", "_").replace("::", "_").replace(".py", "") + ".log"
+    log_path = TEST_OUT / log_name
+    print(f"Running test: {target}")
+    print(f"Log: {log_path}")
+    with open(log_path, "w") as log_file:
+        result = subprocess.call(
+            [_venv_python(), "-m", "pytest", "-v", target, "--maxfail=1", "--disable-warnings"],
+            stdout=log_file,
+            stderr=subprocess.STDOUT
+        )
+    if result != 0:
+        print(f"Test failed. See {log_path}")
+    else:
+        print("Test passed.")
+    return result
+
+
+# ##################################################################
+# command lint
+# runs ruff linter with 120 char line length
+def command_lint(_: argparse.Namespace) -> int:
+    _ensure_venv()
+    _ensure_dependencies()
+    return _run([_venv_python(), "-m", "ruff", "check", "--line-length", "120", "src/", "run"])
+
+
+# ##################################################################
+# command check
+# runs full test suite and quality gates
+def command_check(_: argparse.Namespace) -> int:
+    _ensure_venv()
+    _ensure_dependencies()
+    TEST_OUT.mkdir(parents=True, exist_ok=True)
+    log_path = TEST_OUT / "full_suite.log"
+    print("Running full test suite...")
+    print(f"Log: {log_path}")
+    with open(log_path, "w") as log_file:
+        result = subprocess.call(
+            [_venv_python(), "-m", "pytest", "-v", "--disable-warnings"],
+            stdout=log_file,
+            stderr=subprocess.STDOUT
+        )
+    if result != 0:
+        print(f"Tests failed. See {log_path}")
+    else:
+        print("All tests passed.")
+    return result
+
+
+# ##################################################################
+# command install
+# installs all dependencies including dev and playwright
+def command_install(_: argparse.Namespace) -> int:
+    _ensure_venv()
+    print("Installing dependencies...")
+    result = _run([_venv_python(), "-m", "pip", "install", "-e", ".[dev]"])
+    if result != 0:
+        return result
+    result = _run([_venv_python(), "-m", "playwright", "install", "chromium"])
+    if result == 0:
+        (PROJECT_ROOT / ".venv" / ".installed").touch()
+    return result
+
+
+# ##################################################################
+# main
+# parses arguments and dispatches to appropriate command handler
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="CAD Editor development commands")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_serve = sub.add_parser("serve", help="Start the development server")
+    p_serve.set_defaults(func=command_serve)
+
+    p_test = sub.add_parser("test", help="Run a single test target")
+    p_test.add_argument("target", help="Test target (e.g. src/server_test.py::test_health)")
+    p_test.set_defaults(func=command_test)
+
+    p_lint = sub.add_parser("lint", help="Run linter")
+    p_lint.set_defaults(func=command_lint)
+
+    p_check = sub.add_parser("check", help="Run full test suite and quality gates")
+    p_check.set_defaults(func=command_check)
+
+    p_install = sub.add_parser("install", help="Install dependencies")
+    p_install.set_defaults(func=command_install)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+# ##################################################################
+# entry point
+# standard python dispatch for main
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
