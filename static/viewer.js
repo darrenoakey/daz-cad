@@ -338,7 +338,7 @@ class CADViewer {
         const material = new THREE.SpriteMaterial({
             map: texture,
             transparent: true,
-            depthTest: false
+            depthTest: true
         });
 
         const sprite = new THREE.Sprite(material);
