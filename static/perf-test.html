@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CAD Performance Tests - Full Benchmark</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            margin: 0;
+        }
+        h1 { color: #569cd6; }
+        h2 { color: #4ec9b0; margin-top: 30px; }
+        h3 { color: #dcdcaa; margin-top: 20px; }
+        .test-group { margin: 20px 0; padding: 15px; background: #252526; border-radius: 4px; }
+        .test-result { margin: 5px 0; padding: 8px; background: #2d2d2d; }
+        .test-name { color: #dcdcaa; }
+        .test-time { color: #b5cea8; font-weight: bold; }
+        .test-slow { color: #f44747; }
+        .test-fast { color: #4ec9b0; }
+        .test-medium { color: #dcdcaa; }
+        #status { padding: 10px; background: #264f78; margin-bottom: 20px; }
+        #results { white-space: pre-wrap; }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #0e639c;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #1177bb; }
+        button:disabled { background: #3c3c3c; cursor: not-allowed; }
+        #json-output {
+            background: #1a1a1a;
+            padding: 15px;
+            margin-top: 20px;
+            border: 1px solid #3c3c3c;
+            max-height: 400px;
+            overflow: auto;
+        }
+        .copy-btn {
+            background: #6a9955;
+            font-size: 12px;
+            padding: 5px 10px;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 10px 0;
+        }
+        th, td {
+            border: 1px solid #3c3c3c;
+            padding: 8px;
+            text-align: left;
+        }
+        th { background: #2d2d2d; }
+        .winner { background: #1a4d1a; }
+    </style>
+</head>
+<body>
+    <h1>OpenCascade Pattern Cutting - Full Benchmark</h1>
+    <div id="status">Loading OpenCascade...</div>
+    <div>
+        <button id="run-benchmark" disabled>Run Full Benchmark (All Techniques)</button>
+    </div>
+    <div id="results"></div>
+    <h2>JSON Results (copy for Claude memory)</h2>
+    <button class="copy-btn" onclick="copyResults()">Copy to Clipboard</button>
+    <div id="json-output"></div>
+
+    <script type="module">
+        // Load OpenCascade from CDN
+        const cdnBase = 'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist';
+        const { default: opencascade } = await import(`${cdnBase}/opencascade.full.js`);
+
+        let oc = null;
+        const results = {
+            timestamp: new Date().toISOString(),
+            system: navigator.userAgent,
+            testConfig: {
+                baseSize: 80,
+                baseThickness: 2,
+                hexSize: 5.67,  // auto-calculated for 80x40 base
+                wallThickness: 0.8,
+                border: 3
+            },
+            techniques: {}
+        };
+
+        function log(msg) {
+            document.getElementById('results').innerHTML += `<div>${msg}</div>`;
+        }
+
+        function updateJsonOutput() {
+            document.getElementById('json-output').textContent = JSON.stringify(results, null, 2);
+        }
+
+        // Create base plate solid
+        function createBasePlate(sizeX, sizeY, thickness) {
+            const box = new oc.BRepPrimAPI_MakeBox_3(
+                new oc.gp_Pnt_3(-sizeX/2, -sizeY/2, 0),
+                sizeX, sizeY, thickness
+            );
+            return box.Shape();
+        }
+
+        // Create a single hexagonal prism at origin
+        function createHexPrism(size, height) {
+            const points = [];
+            for (let i = 0; i < 6; i++) {
+                const angle = (i * Math.PI * 2) / 6 - Math.PI / 2;
+                const r = size / 2;
+                points.push(new oc.gp_Pnt_3(Math.cos(angle) * r, Math.sin(angle) * r, 0));
+            }
+            const wire = new oc.BRepBuilderAPI_MakeWire_1();
+            for (let i = 0; i < 6; i++) {
+                const edge = new oc.BRepBuilderAPI_MakeEdge_3(points[i], points[(i + 1) % 6]);
+                wire.Add_1(edge.Edge());
+                edge.delete();
+            }
+            const face = new oc.BRepBuilderAPI_MakeFace_15(wire.Wire(), true);
+            const prism = new oc.BRepPrimAPI_MakePrism_1(face.Face(), new oc.gp_Vec_4(0, 0, height), false, true);
+            const shape = prism.Shape();
+            prism.delete();
+            face.delete();
+            wire.delete();
+            points.forEach(p => p.delete());
+            return shape;
+        }
+
+        // Create a single hexagonal 2D face at origin
+        function createHexFace(size) {
+            const points = [];
+            for (let i = 0; i < 6; i++) {
+                const angle = (i * Math.PI * 2) / 6 - Math.PI / 2;
+                const r = size / 2;
+                points.push(new oc.gp_Pnt_3(Math.cos(angle) * r, Math.sin(angle) * r, 0));
+            }
+            const wire = new oc.BRepBuilderAPI_MakeWire_1();
+            for (let i = 0; i < 6; i++) {
+                const edge = new oc.BRepBuilderAPI_MakeEdge_3(points[i], points[(i + 1) % 6]);
+                wire.Add_1(edge.Edge());
+                edge.delete();
+            }
+            const face = new oc.BRepBuilderAPI_MakeFace_15(wire.Wire(), true);
+            const result = face.Face();
+            face.delete();
+            wire.delete();
+            points.forEach(p => p.delete());
+            return result;
+        }
+
+        // Calculate hex grid positions
+        function calcHexGrid(innerLength, innerWidth, hexSize, wallThickness, border) {
+            const sqrt3 = Math.sqrt(3);
+            const r = hexSize / 2;
+            const R = r / Math.cos(Math.PI / 6);
+            const d = 2 * R + wallThickness;  // horizontal spacing
+            const h = d * sqrt3 / 2;          // vertical spacing
+            const rowOffset = d / 2;
+
+            const nCols = Math.floor((innerLength) / d);
+            const nRows = Math.floor((innerWidth) / h);
+
+            const positions = [];
+            const startX = -((nCols - 1) * d) / 2;
+            const startY = -((nRows - 1) * h) / 2;
+
+            for (let row = 0; row < nRows; row++) {
+                const xOff = (row % 2 === 1) ? rowOffset : 0;
+                for (let col = 0; col < nCols; col++) {
+                    const x = startX + col * d + xOff;
+                    const y = startY + row * h;
+                    // Check if within border
+                    if (Math.abs(x) < (innerLength/2 - border) && Math.abs(y) < (innerWidth/2 - border)) {
+                        positions.push({x, y});
+                    }
+                }
+            }
+            return positions;
+        }
+
+        // ============================================================
+        // TECHNIQUE 1: Sequential Cuts (baseline - BAD)
+        // ============================================================
+        function technique1_SequentialCuts(basePlate, positions, hexSize, cutDepth) {
+            let result = basePlate;
+            for (const pos of positions) {
+                const prism = createHexPrism(hexSize, cutDepth);
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(pos.x, pos.y, -1));
+                const loc = new oc.TopLoc_Location_2(trsf);
+                const movedPrism = prism.Moved(loc, false);
+
+                const cut = new oc.BRepAlgoAPI_Cut_3(result, movedPrism, new oc.Message_ProgressRange_1());
+                cut.Build(new oc.Message_ProgressRange_1());
+                result = cut.Shape();
+                cut.delete();
+            }
+            return result;
+        }
+
+        // ============================================================
+        // TECHNIQUE 2: Compound of 3D Prisms + Single Cut
+        // ============================================================
+        function technique2_CompoundPrisms(basePlate, positions, hexSize, cutDepth) {
+            const compound = new oc.TopoDS_Compound();
+            const builder = new oc.BRep_Builder();
+            builder.MakeCompound(compound);
+
+            for (const pos of positions) {
+                const prism = createHexPrism(hexSize, cutDepth);
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(pos.x, pos.y, -1));
+                const loc = new oc.TopLoc_Location_2(trsf);
+                builder.Add(compound, prism.Moved(loc, false));
+            }
+
+            const cut = new oc.BRepAlgoAPI_Cut_3(basePlate, compound, new oc.Message_ProgressRange_1());
+            cut.Build(new oc.Message_ProgressRange_1());
+            return cut.Shape();
+        }
+
+        // ============================================================
+        // TECHNIQUE 3: 2D Faces -> Compound -> Extrude -> Cut
+        // ============================================================
+        function technique3_2DFacesExtrude(basePlate, positions, hexSize, cutDepth) {
+            const compound = new oc.TopoDS_Compound();
+            const builder = new oc.BRep_Builder();
+            builder.MakeCompound(compound);
+
+            for (const pos of positions) {
+                const face = createHexFace(hexSize);
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(pos.x, pos.y, -1));
+                const loc = new oc.TopLoc_Location_2(trsf);
+                builder.Add(compound, face.Moved(loc, false));
+            }
+
+            // Extrude compound of faces
+            const prism = new oc.BRepPrimAPI_MakePrism_1(compound, new oc.gp_Vec_4(0, 0, cutDepth), false, true);
+            const extruded = prism.Shape();
+            prism.delete();
+
+            const cut = new oc.BRepAlgoAPI_Cut_3(basePlate, extruded, new oc.Message_ProgressRange_1());
+            cut.Build(new oc.Message_ProgressRange_1());
+            return cut.Shape();
+        }
+
+        // ============================================================
+        // TECHNIQUE 4: ListOfShape API (SetArguments/SetTools)
+        // ============================================================
+        function technique4_ListOfShape(basePlate, positions, hexSize, cutDepth) {
+            const toolList = new oc.TopTools_ListOfShape_1();
+
+            for (const pos of positions) {
+                const prism = createHexPrism(hexSize, cutDepth);
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(pos.x, pos.y, -1));
+                const loc = new oc.TopLoc_Location_2(trsf);
+                toolList.Append_1(prism.Moved(loc, false));
+            }
+
+            const argList = new oc.TopTools_ListOfShape_1();
+            argList.Append_1(basePlate);
+
+            const cut = new oc.BRepAlgoAPI_Cut_1();
+            cut.SetArguments(argList);
+            cut.SetTools(toolList);
+            cut.Build(new oc.Message_ProgressRange_1());
+            return cut.Shape();
+        }
+
+        // ============================================================
+        // TECHNIQUE 5: Compound + Fuzzy Value
+        // ============================================================
+        function technique5_CompoundFuzzy(basePlate, positions, hexSize, cutDepth) {
+            const compound = new oc.TopoDS_Compound();
+            const builder = new oc.BRep_Builder();
+            builder.MakeCompound(compound);
+
+            for (const pos of positions) {
+                const prism = createHexPrism(hexSize, cutDepth);
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(pos.x, pos.y, -1));
+                const loc = new oc.TopLoc_Location_2(trsf);
+                builder.Add(compound, prism.Moved(loc, false));
+            }
+
+            const cut = new oc.BRepAlgoAPI_Cut_3(basePlate, compound, new oc.Message_ProgressRange_1());
+            // Try to set fuzzy value if available
+            try {
+                if (cut.SetFuzzyValue) cut.SetFuzzyValue(1e-5);
+            } catch (e) { /* API may not exist */ }
+            cut.Build(new oc.Message_ProgressRange_1());
+            return cut.Shape();
+        }
+
+        // ============================================================
+        // TECHNIQUE 6: Single Prism Transformed (reuse geometry)
+        // ============================================================
+        function technique6_SinglePrismTransforms(basePlate, positions, hexSize, cutDepth) {
+            // Create ONE prism
+            const basePrism = createHexPrism(hexSize, cutDepth);
+
+            const compound = new oc.TopoDS_Compound();
+            const builder = new oc.BRep_Builder();
+            builder.MakeCompound(compound);
+
+            for (const pos of positions) {
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(pos.x, pos.y, -1));
+                const loc = new oc.TopLoc_Location_2(trsf);
+                // Use Moved which is a lightweight transform
+                builder.Add(compound, basePrism.Moved(loc, false));
+            }
+
+            const cut = new oc.BRepAlgoAPI_Cut_3(basePlate, compound, new oc.Message_ProgressRange_1());
+            cut.Build(new oc.Message_ProgressRange_1());
+            return cut.Shape();
+        }
+
+        // ============================================================
+        // TECHNIQUE 7: Fuse cutters first, then cut (sequential)
+        // ============================================================
+        function technique7_FuseThenCut(basePlate, positions, hexSize, cutDepth) {
+            if (positions.length === 0) return basePlate;
+
+            // Create first prism
+            const firstPrism = createHexPrism(hexSize, cutDepth);
+            const trsf0 = new oc.gp_Trsf_1();
+            trsf0.SetTranslation_1(new oc.gp_Vec_4(positions[0].x, positions[0].y, -1));
+            const loc0 = new oc.TopLoc_Location_2(trsf0);
+            let fused = firstPrism.Moved(loc0, false);
+
+            // Fuse remaining prisms
+            for (let i = 1; i < positions.length; i++) {
+                const prism = createHexPrism(hexSize, cutDepth);
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(positions[i].x, positions[i].y, -1));
+                const loc = new oc.TopLoc_Location_2(trsf);
+                const movedPrism = prism.Moved(loc, false);
+
+                const fuseOp = new oc.BRepAlgoAPI_Fuse_3(fused, movedPrism, new oc.Message_ProgressRange_1());
+                fuseOp.Build(new oc.Message_ProgressRange_1());
+                fused = fuseOp.Shape();
+                fuseOp.delete();
+            }
+
+            // Single cut with fused tool
+            const cut = new oc.BRepAlgoAPI_Cut_3(basePlate, fused, new oc.Message_ProgressRange_1());
+            cut.Build(new oc.Message_ProgressRange_1());
+            return cut.Shape();
+        }
+
+        // ============================================================
+        // TECHNIQUE 8: Hierarchical Union (pairwise fusion tree)
+        // This is O(log n) depth instead of O(n) for fusing
+        // ============================================================
+        function technique8_HierarchicalUnion(basePlate, positions, hexSize, cutDepth) {
+            if (positions.length === 0) return basePlate;
+
+            // Create ONE template prism (reused for all positions)
+            const templatePrism = createHexPrism(hexSize, cutDepth);
+
+            // Create all positioned copies
+            const allShapes = [];
+            for (const pos of positions) {
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(pos.x, pos.y, -1));
+                const loc = new oc.TopLoc_Location_2(trsf);
+                allShapes.push(templatePrism.Moved(loc, false));
+                trsf.delete();
+            }
+
+            // Hierarchical union: pair shapes at each level
+            let currentShapes = allShapes;
+            while (currentShapes.length > 1) {
+                const nextLevel = [];
+                for (let i = 0; i < currentShapes.length; i += 2) {
+                    if (i + 1 < currentShapes.length) {
+                        const fuse = new oc.BRepAlgoAPI_Fuse_3(
+                            currentShapes[i],
+                            currentShapes[i + 1],
+                            new oc.Message_ProgressRange_1()
+                        );
+                        fuse.Build(new oc.Message_ProgressRange_1());
+                        if (fuse.IsDone()) {
+                            nextLevel.push(fuse.Shape());
+                        } else {
+                            nextLevel.push(currentShapes[i]);
+                        }
+                        fuse.delete();
+                    } else {
+                        nextLevel.push(currentShapes[i]);
+                    }
+                }
+                currentShapes = nextLevel;
+            }
+
+            // Single cut with combined tool
+            const cut = new oc.BRepAlgoAPI_Cut_3(basePlate, currentShapes[0], new oc.Message_ProgressRange_1());
+            cut.Build(new oc.Message_ProgressRange_1());
+            return cut.Shape();
+        }
+
+        // ============================================================
+        // RUN FULL BENCHMARK
+        // ============================================================
+        async function runBenchmark() {
+            const baseX = 80, baseY = 40, thickness = 2;
+            const hexSize = Math.min(baseX, baseY) / 6;  // ~6.67
+            const wallThickness = 0.8;
+            const border = 3;
+            const cutDepth = thickness + 2;
+
+            results.testConfig.hexSize = hexSize;
+            results.testConfig.wallThickness = wallThickness;
+
+            log('<h2>Test Configuration</h2>');
+            log(`Base: ${baseX}x${baseY}x${thickness}mm`);
+            log(`Hex size: ${hexSize.toFixed(2)}mm, Wall: ${wallThickness}mm, Border: ${border}mm`);
+
+            // Calculate grid
+            const positions = calcHexGrid(baseX - 2*border, baseY - 2*border, hexSize, wallThickness, border);
+            const holeCount = positions.length;
+            log(`<strong>Number of holes: ${holeCount}</strong>`);
+            results.testConfig.holeCount = holeCount;
+
+            log('<h2>Running Benchmarks...</h2>');
+            log('<em>Each test: Create base plate + Cut pattern (end-to-end)</em>');
+
+            const techniques = [
+                { name: 'T1: Sequential Cuts (N booleans)', fn: technique1_SequentialCuts, skip: holeCount > 20 },
+                { name: 'T2: Compound of 3D Prisms + Single Cut', fn: technique2_CompoundPrisms },
+                { name: 'T3: 2D Faces -> Extrude -> Single Cut', fn: technique3_2DFacesExtrude },
+                { name: 'T4: ListOfShape API (SetTools)', fn: technique4_ListOfShape },
+                { name: 'T5: Compound + Fuzzy Value', fn: technique5_CompoundFuzzy },
+                { name: 'T6: Single Prism + Transforms', fn: technique6_SinglePrismTransforms },
+                { name: 'T7: Fuse Cutters First (sequential)', fn: technique7_FuseThenCut, skip: holeCount > 20 },
+                { name: 'T8: Hierarchical Union (pairwise tree)', fn: technique8_HierarchicalUnion },
+            ];
+
+            const timings = [];
+
+            for (const tech of techniques) {
+                if (tech.skip) {
+                    log(`<div class="test-result"><span class="test-name">${tech.name}</span>: <span class="test-slow">SKIPPED (too slow for ${holeCount} holes)</span></div>`);
+                    results.techniques[tech.name] = { skipped: true, reason: `Too slow for ${holeCount} holes` };
+                    continue;
+                }
+
+                // Give UI time to update
+                await new Promise(r => setTimeout(r, 10));
+
+                log(`Running: ${tech.name}...`);
+
+                const start = performance.now();
+
+                // Create fresh base plate
+                const basePlate = createBasePlate(baseX, baseY, thickness);
+
+                // Run technique
+                try {
+                    const result = tech.fn(basePlate, positions, hexSize, cutDepth);
+                    const elapsed = performance.now() - start;
+
+                    const speedClass = elapsed < 1000 ? 'test-fast' : elapsed < 5000 ? 'test-medium' : 'test-slow';
+                    log(`<div class="test-result"><span class="test-name">${tech.name}</span>: <span class="test-time ${speedClass}">${elapsed.toFixed(0)}ms</span></div>`);
+
+                    results.techniques[tech.name] = {
+                        time_ms: elapsed,
+                        holes: holeCount
+                    };
+                    timings.push({ name: tech.name, time: elapsed });
+                } catch (e) {
+                    log(`<div class="test-result"><span class="test-name">${tech.name}</span>: <span class="test-slow">ERROR: ${e.message}</span></div>`);
+                    results.techniques[tech.name] = { error: e.message };
+                }
+            }
+
+            // Summary table
+            log('<h2>Summary (sorted by speed)</h2>');
+            timings.sort((a, b) => a.time - b.time);
+
+            let tableHtml = '<table><tr><th>Rank</th><th>Technique</th><th>Time (ms)</th><th>vs Best</th></tr>';
+            const best = timings[0]?.time || 1;
+            timings.forEach((t, i) => {
+                const ratio = (t.time / best).toFixed(1);
+                const rowClass = i === 0 ? 'winner' : '';
+                tableHtml += `<tr class="${rowClass}"><td>${i+1}</td><td>${t.name}</td><td>${t.time.toFixed(0)}</td><td>${ratio}x</td></tr>`;
+            });
+            tableHtml += '</table>';
+            log(tableHtml);
+
+            results.summary = timings.map(t => ({ name: t.name, time_ms: t.time }));
+            updateJsonOutput();
+
+            log('<h2>Benchmark Complete!</h2>');
+        }
+
+        // ============================================================
+        // INITIALIZATION
+        // ============================================================
+        async function init() {
+            document.getElementById('status').textContent = 'Initializing OpenCascade...';
+            try {
+                oc = await opencascade({
+                    locateFile: (file) => {
+                        if (file.endsWith('.wasm')) {
+                            return `${cdnBase}/${file}`;
+                        }
+                        return file;
+                    }
+                });
+                await oc.ready;
+                document.getElementById('status').textContent = 'OpenCascade ready! Click button to run benchmark.';
+                document.getElementById('run-benchmark').disabled = false;
+            } catch (e) {
+                document.getElementById('status').textContent = 'Failed to load OpenCascade: ' + e;
+                console.error('OpenCascade init error:', e);
+            }
+        }
+
+        document.getElementById('run-benchmark').onclick = runBenchmark;
+
+        window.copyResults = function() {
+            navigator.clipboard.writeText(JSON.stringify(results, null, 2));
+            alert('Results copied to clipboard!');
+        };
+
+        // Expose results for Playwright
+        window.results = results;
+
+        init();
+    </script>
+</body>
+</html>

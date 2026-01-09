@@ -549,20 +549,13 @@ class Workplane {
             }
 
             // Calculate polygon size from wall thickness
-            // For hexagons: we want the wall thickness to be the gap between shapes
-            // poly_size (flat-to-flat) is calculated to give desired wall thickness
             const sqrt3 = Math.sqrt(3);
 
             let polySize, d, h, rowOffset;
-            // Use provided size or auto-calculate
             const autoSize = Math.min(innerLength, innerWidth) / 6;
             polySize = size || autoSize;
 
             if (sides === 6) {
-                // For hexagons: wall_thick = d - 2*R where d is center spacing
-                // R = r / cos(30) = r * 2/sqrt(3), and r = polySize/2
-                // So R = polySize / sqrt(3)
-                // d = 2*R + wall_thick = 2*polySize/sqrt(3) + wall_thick
                 const r = polySize / 2;
                 const R = r / Math.cos(Math.PI / 6);
                 d = 2 * R + wallThickness;
@@ -573,7 +566,7 @@ class Workplane {
                 d = 2 * r + wallThickness;
                 h = d;
                 rowOffset = 0;
-            } else { // sides === 3
+            } else {
                 const r = polySize / 2;
                 const R = r / Math.cos(Math.PI / 3);
                 d = 2 * r + wallThickness;
@@ -581,17 +574,13 @@ class Workplane {
                 rowOffset = d / 2;
             }
 
-            // Calculate polygon circumradius (distance from center to vertex)
-            // This determines how far the polygon extends from its center
+            // Calculate polygon circumradius
             let circumRadius;
             if (sides === 6) {
-                // Hexagon: R = r / cos(30°) where r = polySize/2
                 circumRadius = (polySize / 2) / Math.cos(Math.PI / 6);
             } else if (sides === 4) {
-                // Square: R = r * sqrt(2) where r = polySize/2
                 circumRadius = (polySize / 2) * Math.sqrt(2);
             } else {
-                // Triangle: R = r / cos(60°) where r = polySize/2
                 circumRadius = (polySize / 2) / Math.cos(Math.PI / 3);
             }
 
@@ -604,51 +593,77 @@ class Workplane {
             const xStart = centerX - totalSpanX / 2;
             const yStart = centerY - totalSpanY / 2;
 
-            // Cut depth
             const cutDepth = depth || (thickness + 2);
             const cutZ = zMax.current + 1;
-
-            // Effective border: the polygon edge must stay within the border
-            // So the center must be at least (border + circumRadius) from the edge
             const effectiveBorder = border + circumRadius;
 
-            // FASTEST APPROACH: ListOfShape API with SetArguments/SetTools
-            // Benchmarked at 1913ms vs 4027ms for compound approach (2.1x faster)
-            const toolList = new oc.TopTools_ListOfShape_1();
+            // TILE-BASED APPROACH: Create template once, clone with Moved()
+            // Much faster than creating each prism individually
 
-            let holeCount = 0;
+            // Create template prism at origin (created once, reused for all positions)
+            const templatePrism = this.polygonPrism(sides, polySize, cutDepth);
+            if (!templatePrism._shape) {
+                result._shape = this._shape;
+                return result;
+            }
 
-            for (let row = 0; row < nRows; row++) {
-                const y = yStart + row * h;
-                const xOffset = (row % 2 === 1) ? rowOffset : 0;
+            // Create a "tile unit" containing two prisms at the repeating unit positions
+            // For hexagons: positions (0, 0) and (rowOffset, h) form the minimal repeating unit
+            // When this tile is repeated, it creates the full staggered pattern
 
-                for (let col = 0; col < nCols; col++) {
-                    const x = xStart + col * d + xOffset;
+            const tileWidth = d;
+            const tileHeight = 2 * h;
 
-                    // Check if polygon EDGE (not center) is within the border
-                    if (x < xMin.current + effectiveBorder || x > xMax.current - effectiveBorder ||
-                        y < yMin.current + effectiveBorder || y > yMax.current - effectiveBorder) {
-                        continue;
+            // Calculate how many tiles we need
+            const nTileRows = Math.ceil(nRows / 2);
+            const nTileCols = nCols;
+
+            // Collect all positioned prisms for each tile
+            const allShapes = [];
+
+            for (let tileRow = 0; tileRow < nTileRows; tileRow++) {
+                for (let tileCol = 0; tileCol < nTileCols; tileCol++) {
+                    // Tile origin
+                    const tileX = xStart + tileCol * tileWidth;
+                    const tileY = yStart + tileRow * tileHeight;
+
+                    // Add prism at even-row position (row offset = 0)
+                    const y1 = tileY;
+                    const x1 = tileX;
+                    if (x1 >= xMin.current + effectiveBorder && x1 <= xMax.current - effectiveBorder &&
+                        y1 >= yMin.current + effectiveBorder && y1 <= yMax.current - effectiveBorder) {
+                        const t1 = new oc.gp_Trsf_1();
+                        t1.SetTranslation_1(new oc.gp_Vec_4(x1, y1, cutZ - cutDepth));
+                        const loc1 = new oc.TopLoc_Location_2(t1);
+                        allShapes.push(templatePrism._shape.Moved(loc1, false));
+                        t1.delete();
                     }
 
-                    // Create polygon prism and translate to position
-                    const prism = this.polygonPrism(sides, polySize, cutDepth);
-                    if (!prism._shape) continue;
-
-                    const transform = new oc.gp_Trsf_1();
-                    transform.SetTranslation_1(new oc.gp_Vec_4(x, y, cutZ - cutDepth));
-                    const loc = new oc.TopLoc_Location_2(transform);
-                    const movedPrism = prism._shape.Moved(loc, false);
-                    transform.delete();
-
-                    // Add to tool list
-                    toolList.Append_1(movedPrism);
-                    holeCount++;
+                    // Add prism at odd-row position (row offset = rowOffset)
+                    const y2 = tileY + h;
+                    const x2 = tileX + rowOffset;
+                    if (y2 <= yStart + (nRows - 1) * h + 0.001 &&  // Check we're still in bounds
+                        x2 >= xMin.current + effectiveBorder && x2 <= xMax.current - effectiveBorder &&
+                        y2 >= yMin.current + effectiveBorder && y2 <= yMax.current - effectiveBorder) {
+                        const t2 = new oc.gp_Trsf_1();
+                        t2.SetTranslation_1(new oc.gp_Vec_4(x2, y2, cutZ - cutDepth));
+                        const loc2 = new oc.TopLoc_Location_2(t2);
+                        allShapes.push(templatePrism._shape.Moved(loc2, false));
+                        t2.delete();
+                    }
                 }
             }
 
-            if (holeCount > 0) {
-                // Use ListOfShape API - fastest boolean approach
+            if (allShapes.length > 0) {
+                // Use ListOfShape API for optimal boolean performance
+                // Combined with template reuse for minimal shape creation overhead
+                console.log(`[CAD] cutPattern: ${allShapes.length} holes, using ListOfShape API`);
+
+                const toolList = new oc.TopTools_ListOfShape_1();
+                for (const shape of allShapes) {
+                    toolList.Append_1(shape);
+                }
+
                 const argList = new oc.TopTools_ListOfShape_1();
                 argList.Append_1(this._shape);
 
