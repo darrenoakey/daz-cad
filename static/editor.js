@@ -8,35 +8,9 @@
 import { CADViewer } from './viewer.js';
 import { initCAD, Workplane, Assembly } from './cad.js';
 
-// Default example code - assembly with three colored objects
-const DEFAULT_CODE = `// CAD Example: Assembly with three colored parts
-// Edit this code to see live preview on the right!
-
-// Red cube with hole and chamfered edges
-const cube = new Workplane("XY")
-    .box(20, 20, 20)
-    .hole(8)
-    .chamfer(2)
-    .color("#e74c3c");
-
-// Green cylinder offset to the right
-const cylinder = new Workplane("XY")
-    .cylinder(8, 25)
-    .translate(30, 0, 0)
-    .color("#2ecc71");
-
-// Blue smaller cube offset to the left
-const smallCube = new Workplane("XY")
-    .box(12, 12, 15)
-    .translate(-25, 0, 0)
-    .color("#3498db");
-
-// Create assembly with all parts
-const result = new Assembly()
-    .add(cube)
-    .add(cylinder)
-    .add(smallCube);
-
+// Fallback code in case server load fails
+const FALLBACK_CODE = `// CAD Example
+const result = new Workplane("XY").box(20, 20, 20);
 result;
 `;
 
@@ -49,8 +23,17 @@ class CADEditor {
         this.debounceDelay = 800; // ms
         this.isReady = false;
         this._currentResult = null; // Store current Workplane or Assembly for export
+        this._currentFile = null; // Current file being edited
         this._downloadSTLBtn = null;
         this._download3MFBtn = null;
+
+        // Chat state
+        this._isProcessing = false; // True when waiting for agent response
+        this._isRendering = false; // True during render cycle
+        this._skipSave = false; // True when file update came from agent
+        this._chatInput = null;
+        this._chatSendBtn = null;
+        this._chatMessages = null;
 
         this._init();
     }
@@ -70,16 +53,25 @@ class CADEditor {
         this._download3MFBtn = document.getElementById('download-3mf-btn');
         this._download3MFBtn.addEventListener('click', () => this._download3MF());
 
+        // Initialize chat UI
+        this._initChat();
+
         // Load Monaco editor
         await this._loadMonaco();
 
         // Initialize OpenCascade
         await this._initOpenCascade();
 
+        // Load default file from server
+        await this._loadDefaultFile();
+
         // Set up editor change listener
         this.editor.onDidChangeModelContent(() => {
             this._onCodeChange();
         });
+
+        // Enable chat now that everything is ready
+        this._enableChat();
 
         // Initial render
         this._render();
@@ -119,7 +111,7 @@ class CADEditor {
                     this.editor = monaco.editor.create(
                         document.getElementById('editor-container'),
                         {
-                            value: DEFAULT_CODE,
+                            value: '// Loading...',
                             language: 'javascript',
                             theme: 'cad-dark',
                             fontSize: 14,
@@ -174,6 +166,62 @@ class CADEditor {
         }
     }
 
+    async _loadDefaultFile() {
+        try {
+            const response = await fetch('/api/models');
+            if (!response.ok) throw new Error('Failed to list models');
+
+            const data = await response.json();
+            const filename = data.default || 'default.js';
+
+            const fileResponse = await fetch(`/api/models/${filename}`);
+            if (!fileResponse.ok) throw new Error(`Failed to load ${filename}`);
+
+            const fileData = await fileResponse.json();
+            this._currentFile = fileData.filename;
+            this.editor.setValue(fileData.content);
+            this._updateFilenameDisplay();
+
+        } catch (error) {
+            console.warn('Failed to load default file from server:', error);
+            this.editor.setValue(FALLBACK_CODE);
+            this._currentFile = 'default.js';
+            this._updateFilenameDisplay();
+        }
+    }
+
+    _updateFilenameDisplay() {
+        const el = document.getElementById('filename-display');
+        if (el && this._currentFile) {
+            el.textContent = this._currentFile;
+        }
+    }
+
+    async _saveFile() {
+        if (!this._currentFile) return;
+
+        // Skip save if file update came from agent
+        if (this._skipSave) {
+            this._skipSave = false;
+            return;
+        }
+
+        try {
+            const content = this.editor.getValue();
+            const response = await fetch(`/api/models/${this._currentFile}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content })
+            });
+
+            if (!response.ok) {
+                console.warn('Failed to save file:', response.statusText);
+            }
+        } catch (error) {
+            console.warn('Failed to save file:', error);
+        }
+    }
+
     _onCodeChange() {
         // Clear previous timer
         if (this.debounceTimer) {
@@ -192,6 +240,7 @@ class CADEditor {
     _render() {
         if (!this.isReady) return;
 
+        this._isRendering = true;
         const code = this.editor.getValue();
         this._hideError();
         this._currentResult = null;
@@ -211,6 +260,7 @@ class CADEditor {
                     this._currentResult = result;
                     this._downloadSTLBtn.disabled = false;
                     this._download3MFBtn.disabled = false;
+                    this._saveFile();
                 } else {
                     throw new Error('Assembly has no valid parts');
                 }
@@ -223,6 +273,7 @@ class CADEditor {
                     this._currentResult = result;
                     this._downloadSTLBtn.disabled = false;
                     this._download3MFBtn.disabled = false;
+                    this._saveFile();
                 } else {
                     throw new Error('Failed to generate mesh from shape');
                 }
@@ -230,6 +281,7 @@ class CADEditor {
                 // Already mesh data - can't export to STL
                 this.viewer.displayMesh(result);
                 this._setStatus('ready', 'Ready');
+                this._saveFile();
             } else {
                 throw new Error('Code must return a Workplane, Assembly, or mesh data');
             }
@@ -242,6 +294,8 @@ class CADEditor {
             this._currentResult = null;
             this._downloadSTLBtn.disabled = true;
             this._download3MFBtn.disabled = true;
+        } finally {
+            this._isRendering = false;
         }
     }
 
@@ -378,6 +432,146 @@ class CADEditor {
             console.error('3MF export failed:', error);
             this._setStatus('error', 'Export failed');
             this._showError('3MF export failed: ' + error.message);
+        }
+    }
+
+    _initChat() {
+        this._chatInput = document.getElementById('chat-input');
+        this._chatSendBtn = document.getElementById('chat-send-btn');
+        this._chatMessages = document.getElementById('chat-messages');
+
+        // Enter key to send
+        this._chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this._sendChatMessage();
+            }
+        });
+
+        // Send button click
+        this._chatSendBtn.addEventListener('click', () => {
+            this._sendChatMessage();
+        });
+    }
+
+    _enableChat() {
+        this._chatInput.disabled = false;
+        this._chatSendBtn.disabled = false;
+        this._chatInput.placeholder = 'Ask to modify the model...';
+    }
+
+    _disableChat() {
+        this._chatInput.disabled = true;
+        this._chatSendBtn.disabled = true;
+    }
+
+    _lockEditor() {
+        if (this.editor) {
+            this.editor.updateOptions({ readOnly: true });
+        }
+    }
+
+    _unlockEditor() {
+        if (this.editor) {
+            this.editor.updateOptions({ readOnly: false });
+        }
+    }
+
+    _addChatMessage(role, content) {
+        const messageEl = document.createElement('div');
+        messageEl.className = `chat-message ${role}`;
+        messageEl.textContent = content;
+        this._chatMessages.appendChild(messageEl);
+        this._chatMessages.scrollTop = this._chatMessages.scrollHeight;
+    }
+
+    _showTypingIndicator() {
+        const indicator = document.createElement('div');
+        indicator.className = 'chat-typing';
+        indicator.id = 'chat-typing-indicator';
+        indicator.innerHTML = '<span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span>';
+        this._chatMessages.appendChild(indicator);
+        this._chatMessages.scrollTop = this._chatMessages.scrollHeight;
+    }
+
+    _hideTypingIndicator() {
+        const indicator = document.getElementById('chat-typing-indicator');
+        if (indicator) {
+            indicator.remove();
+        }
+    }
+
+    async _waitForRenderComplete() {
+        // Wait for any pending render to complete
+        while (this._isRendering) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        // Also wait for debounce timer to clear
+        if (this.debounceTimer) {
+            await new Promise(resolve => setTimeout(resolve, this.debounceDelay + 100));
+        }
+    }
+
+    async _sendChatMessage() {
+        const message = this._chatInput.value.trim();
+        if (!message || this._isProcessing) return;
+
+        // Wait for any pending render
+        await this._waitForRenderComplete();
+
+        // Set processing state
+        this._isProcessing = true;
+        this._disableChat();
+        this._lockEditor();
+
+        // Show user message
+        this._addChatMessage('user', message);
+        this._chatInput.value = '';
+
+        // Show typing indicator
+        this._showTypingIndicator();
+
+        try {
+            const response = await fetch('/api/chat/message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: message,
+                    current_file: this._currentFile,
+                    current_code: this.editor.getValue()
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            // Hide typing indicator
+            this._hideTypingIndicator();
+
+            // Show assistant response
+            if (data.response) {
+                this._addChatMessage('assistant', data.response);
+            }
+
+            // If file was changed by agent, update editor
+            if (data.file_changed && data.new_content) {
+                this._skipSave = true; // Don't save this change (agent already did)
+                this.editor.setValue(data.new_content);
+                // Render will be triggered by onDidChangeModelContent
+            }
+
+        } catch (error) {
+            this._hideTypingIndicator();
+            this._addChatMessage('error', `Error: ${error.message}`);
+        } finally {
+            // Restore normal state
+            this._isProcessing = false;
+            this._enableChat();
+            this._unlockEditor();
+            this._chatInput.focus();
         }
     }
 }

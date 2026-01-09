@@ -452,7 +452,7 @@ def test_editor_auto_renders_default_code(server):
 
             const coloredPercent = (coloredPixels / totalPixels) * 100;
             return {
-                success: coloredPercent > 2.0,
+                success: coloredPercent > 1.5,
                 coloredPixels: coloredPixels,
                 coloredPercent: coloredPercent.toFixed(2),
                 totalPixels: totalPixels
@@ -464,7 +464,7 @@ def test_editor_auto_renders_default_code(server):
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
         page.locator("#viewer-container canvas").screenshot(path=str(screenshot_path))
 
-        # the default code should render visible colored meshes (>2% of canvas)
+        # the default code should render visible colored meshes (>1.5% of canvas, reduced due to chat pane)
         assert pixel_analysis["success"], (
             f"Default code did not render colored assembly. "
             f"Colored: {pixel_analysis.get('coloredPercent')}% "
@@ -933,3 +933,29 @@ def test_3mf_export(server):
 
         page.close()
         browser.close()
+
+
+# ##################################################################
+# test chat message endpoint
+# verifies the chat endpoint responds with agent output
+def test_chat_message_endpoint(server):
+    # use a test-specific file to avoid overwriting user's default.js
+    test_file = "_test_chat_temp.js"
+    test_code = "const result = new Workplane('XY').box(20, 20, 20);\nresult;"
+
+    response = httpx.post(
+        f"{server}/api/chat/message",
+        json={
+            "message": "What shape is in this model?",
+            "current_file": test_file,
+            "current_code": test_code
+        },
+        timeout=60.0
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "response" in data
+    assert len(data["response"]) > 0
+    assert "file_changed" in data
+    # the response should mention something about the shape (box)
+    assert any(word in data["response"].lower() for word in ["box", "cube", "shape", "model"])

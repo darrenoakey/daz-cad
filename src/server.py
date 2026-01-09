@@ -2,16 +2,59 @@ import setproctitle
 import asyncio
 import threading
 import time
+import shutil
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 import uvicorn
 from pathlib import Path
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, AssistantMessage, TextBlock
 
 PORT = 8765
 BASE_DIR = Path(__file__).parent.parent
 WATCH_DIR = BASE_DIR / "static"
+MODELS_DIR = BASE_DIR / "local" / "models"
+EXAMPLES_DIR = BASE_DIR / "examples"
+DEFAULT_FILE = "default.js"
+LIBRARY_SPEC_PATH = BASE_DIR / "static" / "cad-library-spec.md"
+
+# global state for agent
+agent_client: ClaudeSDKClient | None = None
+
+
+# ##################################################################
+# load library spec
+# reads the cad library spec for the agent system prompt
+def load_library_spec() -> str:
+    if LIBRARY_SPEC_PATH.exists():
+        return LIBRARY_SPEC_PATH.read_text()
+    return "CAD library for creating 3D shapes using Workplane and Assembly classes."
+
+
+# ##################################################################
+# get system prompt
+# creates the system prompt for the cad assistant agent
+def get_system_prompt() -> str:
+    library_spec = load_library_spec()
+    return f"""You are an expert CAD assistant that helps users create and modify 3D models.
+
+You work with a JavaScript CAD library. The user's code is in a .js file that you can read and modify.
+
+IMPORTANT RULES:
+1. When asked to modify the model, edit the actual .js file directly using the Write tool
+2. Always preserve the overall structure: define shapes, combine them, set result variable
+3. The file must end with `result;` to return the final shape
+4. Use the Read tool to see the current file contents before making changes
+5. Make minimal, targeted changes - don't rewrite the entire file unless necessary
+6. After editing, briefly explain what you changed
+
+Here is the CAD library specification:
+
+{library_spec}
+"""
+
 
 # global state for hot reload
 reload_event = asyncio.Event()
@@ -94,14 +137,32 @@ def start_file_watcher():
 
 
 # ##################################################################
+# setup models directory
+# creates models directory and copies example files if needed
+def setup_models_directory():
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if EXAMPLES_DIR.exists():
+        for example_file in EXAMPLES_DIR.glob("*.js"):
+            target = MODELS_DIR / example_file.name
+            if not target.exists():
+                shutil.copy(example_file, target)
+
+
+# ##################################################################
 # lifespan
 # manages startup and shutdown events for the application
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global agent_client
+    setup_models_directory()
     start_file_watcher()
     yield
     if file_watcher:
         file_watcher.stop()
+    if agent_client:
+        await agent_client.__aexit__(None, None, None)
+        agent_client = None
 
 
 app = FastAPI(title="CAD Editor", lifespan=lifespan)
@@ -132,6 +193,134 @@ async def init_test():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ##################################################################
+# pydantic model for file save request
+class FileSaveRequest(BaseModel):
+    content: str
+
+
+# ##################################################################
+# pydantic model for chat message request
+class ChatMessageRequest(BaseModel):
+    message: str
+    current_file: str
+    current_code: str
+
+
+# ##################################################################
+# get model file
+# loads a model file from the models directory
+@app.get("/api/models/{filename}")
+async def get_model(filename: str):
+    if not filename.endswith(".js"):
+        raise HTTPException(status_code=400, detail="Only .js files allowed")
+
+    safe_name = Path(filename).name
+    file_path = MODELS_DIR / safe_name
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    content = file_path.read_text()
+    return {"filename": safe_name, "content": content}
+
+
+# ##################################################################
+# save model file
+# saves content to a model file in the models directory
+@app.post("/api/models/{filename}")
+async def save_model(filename: str, request: FileSaveRequest):
+    if not filename.endswith(".js"):
+        raise HTTPException(status_code=400, detail="Only .js files allowed")
+
+    safe_name = Path(filename).name
+    file_path = MODELS_DIR / safe_name
+
+    file_path.write_text(request.content)
+    return {"filename": safe_name, "saved": True}
+
+
+# ##################################################################
+# list model files
+# returns list of available model files
+@app.get("/api/models")
+async def list_models():
+    files = sorted([f.name for f in MODELS_DIR.glob("*.js")])
+    return {"files": files, "default": DEFAULT_FILE}
+
+
+# ##################################################################
+# get or create agent client
+# initializes the claude agent client on first use
+async def get_or_create_agent() -> ClaudeSDKClient:
+    global agent_client
+    if agent_client is None:
+        options = ClaudeAgentOptions(
+            system_prompt=get_system_prompt(),
+            allowed_tools=["Read", "Write", "Edit"],
+            cwd=str(MODELS_DIR),
+            permission_mode="acceptEdits"
+        )
+        agent_client = ClaudeSDKClient(options=options)
+        await agent_client.__aenter__()
+    return agent_client
+
+
+# ##################################################################
+# chat message endpoint
+# sends a message to the cad assistant agent and returns the response
+@app.post("/api/chat/message")
+async def chat_message(request: ChatMessageRequest):
+    safe_name = Path(request.current_file).name
+    file_path = MODELS_DIR / safe_name
+
+    # save current code to file before agent processes (in case it needs to read it)
+    file_path.write_text(request.current_code)
+    original_content = request.current_code
+
+    # get or create the agent client
+    client = await get_or_create_agent()
+
+    # build the prompt with context - include full path for agent to use
+    full_path = str(file_path.absolute())
+    prompt = f"""The user is editing the CAD model file at: {full_path}
+
+User's request: {request.message}
+
+Please help them modify the CAD model as requested. Use the Read tool to see the current file contents, then use Write or Edit to make changes."""
+
+    # send message and collect response
+    response_text = ""
+    try:
+        await client.query(prompt)
+        async for message in client.receive_response():
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        response_text += block.text
+    except Exception as e:
+        return {
+            "response": f"Error communicating with assistant: {str(e)}",
+            "file_changed": False,
+            "new_content": None
+        }
+
+    # check if file was changed by agent
+    file_changed = False
+    new_content = None
+    if file_path.exists():
+        current_content = file_path.read_text()
+        if current_content != original_content:
+            file_changed = True
+            new_content = current_content
+
+    return {
+        "response": response_text,
+        "file_changed": file_changed,
+        "new_content": new_content
+    }
 
 
 # ##################################################################
