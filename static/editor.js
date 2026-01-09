@@ -35,6 +35,14 @@ class CADEditor {
         this._chatSendBtn = null;
         this._chatMessages = null;
 
+        // File manager state
+        this._fileSelectorBtn = null;
+        this._fileDropdown = null;
+        this._fileList = null;
+        this._newFileInput = null;
+        this._createFileBtn = null;
+        this._availableFiles = [];
+
         this._init();
     }
 
@@ -52,6 +60,9 @@ class CADEditor {
 
         this._download3MFBtn = document.getElementById('download-3mf-btn');
         this._download3MFBtn.addEventListener('click', () => this._download3MF());
+
+        // Initialize file manager
+        this._initFileManager();
 
         // Initialize chat UI
         this._initChat();
@@ -194,6 +205,161 @@ class CADEditor {
         const el = document.getElementById('filename-display');
         if (el && this._currentFile) {
             el.textContent = this._currentFile;
+        }
+    }
+
+    _initFileManager() {
+        this._fileSelectorBtn = document.getElementById('file-selector-btn');
+        this._fileDropdown = document.getElementById('file-dropdown');
+        this._fileList = document.getElementById('file-list');
+        this._newFileInput = document.getElementById('new-file-input');
+        this._createFileBtn = document.getElementById('create-file-btn');
+
+        // Toggle dropdown on button click
+        this._fileSelectorBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._toggleFileDropdown();
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!this._fileDropdown.contains(e.target) && !this._fileSelectorBtn.contains(e.target)) {
+                this._closeFileDropdown();
+            }
+        });
+
+        // Create new file
+        this._createFileBtn.addEventListener('click', () => this._createNewFile());
+        this._newFileInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                this._createNewFile();
+            }
+        });
+    }
+
+    _toggleFileDropdown() {
+        const isOpen = this._fileDropdown.classList.contains('open');
+        if (isOpen) {
+            this._closeFileDropdown();
+        } else {
+            this._openFileDropdown();
+        }
+    }
+
+    async _openFileDropdown() {
+        this._fileSelectorBtn.classList.add('open');
+        this._fileDropdown.classList.add('open');
+        await this._loadFileList();
+    }
+
+    _closeFileDropdown() {
+        this._fileSelectorBtn.classList.remove('open');
+        this._fileDropdown.classList.remove('open');
+    }
+
+    async _loadFileList() {
+        try {
+            const response = await fetch('/api/models');
+            if (!response.ok) throw new Error('Failed to list models');
+
+            const data = await response.json();
+            this._availableFiles = data.files || [];
+
+            // Render file list
+            this._fileList.innerHTML = '';
+            for (const filename of this._availableFiles) {
+                const item = document.createElement('div');
+                item.className = 'file-item' + (filename === this._currentFile ? ' active' : '');
+                item.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                    <span>${filename}</span>
+                `;
+                item.addEventListener('click', () => this._selectFile(filename));
+                this._fileList.appendChild(item);
+            }
+        } catch (error) {
+            console.error('Failed to load file list:', error);
+            this._fileList.innerHTML = '<div class="file-item">Error loading files</div>';
+        }
+    }
+
+    async _selectFile(filename) {
+        if (filename === this._currentFile) {
+            this._closeFileDropdown();
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/models/${filename}`);
+            if (!response.ok) throw new Error(`Failed to load ${filename}`);
+
+            const data = await response.json();
+            this._currentFile = data.filename;
+            this.editor.setValue(data.content);
+            this._updateFilenameDisplay();
+            this._closeFileDropdown();
+
+            // Trigger re-render
+            this._render();
+        } catch (error) {
+            console.error('Failed to load file:', error);
+            this._showError(`Failed to load ${filename}: ${error.message}`);
+        }
+    }
+
+    async _createNewFile() {
+        let filename = this._newFileInput.value.trim();
+        if (!filename) return;
+
+        // Ensure .js extension
+        if (!filename.endsWith('.js')) {
+            filename += '.js';
+        }
+
+        // Check for invalid characters
+        if (!/^[a-zA-Z0-9_-]+\.js$/.test(filename)) {
+            this._showError('Invalid filename. Use only letters, numbers, dashes, and underscores.');
+            return;
+        }
+
+        // Check if file already exists
+        if (this._availableFiles.includes(filename)) {
+            this._selectFile(filename);
+            return;
+        }
+
+        try {
+            // Create new file with template content
+            const templateContent = `// ${filename.replace('.js', '')}
+// New CAD model - edit this code to create 3D shapes
+
+const result = new Workplane("XY").box(20, 20, 20);
+result;
+`;
+
+            const response = await fetch(`/api/models/${filename}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: templateContent })
+            });
+
+            if (!response.ok) throw new Error('Failed to create file');
+
+            // Load the new file
+            this._currentFile = filename;
+            this.editor.setValue(templateContent);
+            this._updateFilenameDisplay();
+            this._newFileInput.value = '';
+            this._closeFileDropdown();
+
+            // Trigger re-render
+            this._render();
+        } catch (error) {
+            console.error('Failed to create file:', error);
+            this._showError(`Failed to create ${filename}: ${error.message}`);
         }
     }
 

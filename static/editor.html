@@ -44,6 +44,143 @@
             align-items: center;
         }
 
+        .file-selector {
+            position: relative;
+        }
+
+        .file-selector-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: #c9d1d9;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .file-selector-btn:hover {
+            background: #21262d;
+            border-color: #30363d;
+        }
+
+        .file-selector-btn svg {
+            width: 12px;
+            height: 12px;
+            transition: transform 0.2s;
+        }
+
+        .file-selector-btn.open svg {
+            transform: rotate(180deg);
+        }
+
+        .file-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            min-width: 250px;
+            max-height: 400px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            z-index: 100;
+            display: none;
+            flex-direction: column;
+            margin-top: 4px;
+        }
+
+        .file-dropdown.open {
+            display: flex;
+        }
+
+        .file-list {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 300px;
+        }
+
+        .file-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #c9d1d9;
+            font-size: 13px;
+            transition: background 0.15s;
+        }
+
+        .file-item:hover {
+            background: #21262d;
+        }
+
+        .file-item.active {
+            background: #238636;
+            color: white;
+        }
+
+        .file-item svg {
+            width: 14px;
+            height: 14px;
+            color: #8b949e;
+        }
+
+        .file-item.active svg {
+            color: white;
+        }
+
+        .file-create {
+            border-top: 1px solid #30363d;
+            padding: 8px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .file-create input {
+            flex: 1;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            outline: none;
+        }
+
+        .file-create input:focus {
+            border-color: #58a6ff;
+        }
+
+        .file-create input::placeholder {
+            color: #6e7681;
+        }
+
+        .file-create button {
+            background: #238636;
+            border: none;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.2s;
+        }
+
+        .file-create button:hover {
+            background: #2ea043;
+        }
+
+        .file-create button:disabled {
+            background: #21262d;
+            color: #484f58;
+            cursor: not-allowed;
+        }
+
         .status-indicator {
             display: flex;
             align-items: center;
@@ -350,7 +487,21 @@
     <div class="container">
         <div class="editor-pane">
             <div class="editor-header">
-                <span id="filename-display">loading...</span>
+                <div class="file-selector">
+                    <button id="file-selector-btn" class="file-selector-btn">
+                        <span id="filename-display">loading...</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+                    <div id="file-dropdown" class="file-dropdown">
+                        <div id="file-list" class="file-list"></div>
+                        <div class="file-create">
+                            <input type="text" id="new-file-input" placeholder="new-model.js">
+                            <button id="create-file-btn">Create</button>
+                        </div>
+                    </div>
+                </div>
                 <div class="status-indicator">
                     <div id="status-dot" class="status-dot loading"></div>
                     <span id="status-text">Initializing...</span>
