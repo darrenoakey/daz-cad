@@ -26,6 +26,231 @@ function initCAD(openCascadeInstance) {
 }
 
 /**
+ * Helper class for generating Bambu-compatible 3MF files
+ */
+class ThreeMFExporter {
+    /**
+     * Generate 3MF file from parts array using Bambu template
+     * @param {Array} parts - Array of {mesh, color, name} objects
+     * @returns {Promise<Blob>} - The 3MF file as a Blob
+     */
+    static async generate(parts) {
+        // Load the Bambu template
+        const response = await fetch('/static/template.3mf');
+        const templateData = await response.arrayBuffer();
+        const zip = await JSZip.loadAsync(templateData);
+
+        // Update the files we need to change:
+        // 1. 3D/3dmodel.model - inject our geometry
+        // 2. Metadata/model_settings.config - add our objects with extruder assignments
+        // 3. Metadata/slice_info.config - add filaments with our colors
+        // 4. Metadata/project_settings.config - update filament colors
+
+        zip.file('3D/3dmodel.model', this._model(parts));
+        zip.file('Metadata/model_settings.config', this._modelSettings(parts));
+        zip.file('Metadata/slice_info.config', this._sliceInfo(parts));
+
+        // Update filament colors in project_settings.config
+        const projectSettingsStr = await zip.file('Metadata/project_settings.config').async('string');
+        const projectSettings = JSON.parse(projectSettingsStr);
+
+        // Set filament colors for our parts (slots 1, 2, 3, etc.)
+        for (let i = 0; i < parts.length; i++) {
+            const color = parts[i].color || '#808080';
+            const hexColor = color.startsWith('#') ? color.toUpperCase() : `#${color.toUpperCase()}`;
+            if (projectSettings.filament_colour && i < projectSettings.filament_colour.length) {
+                projectSettings.filament_colour[i] = hexColor;
+            }
+        }
+
+        zip.file('Metadata/project_settings.config', JSON.stringify(projectSettings, null, 4));
+
+        return await zip.generateAsync({ type: 'blob' });
+    }
+
+    // Weld vertices to create manifold mesh (merge duplicate vertices)
+    static _weldMesh(mesh, tolerance = 1e-5) {
+        const vertices = mesh.vertices;
+        const indices = mesh.indices;
+
+        const vertexMap = new Map();
+        const uniqueVertices = [];
+        const indexRemap = [];
+
+        const roundCoord = (v) => Math.round(v / tolerance) * tolerance;
+        const makeKey = (x, y, z) => `${roundCoord(x)},${roundCoord(y)},${roundCoord(z)}`;
+
+        for (let i = 0; i < vertices.length; i += 3) {
+            const x = vertices[i];
+            const y = vertices[i + 1];
+            const z = vertices[i + 2];
+            const key = makeKey(x, y, z);
+            const oldIndex = i / 3;
+
+            if (vertexMap.has(key)) {
+                indexRemap[oldIndex] = vertexMap.get(key);
+            } else {
+                const newIndex = uniqueVertices.length / 3;
+                vertexMap.set(key, newIndex);
+                indexRemap[oldIndex] = newIndex;
+                uniqueVertices.push(x, y, z);
+            }
+        }
+
+        const newIndices = [];
+        for (let i = 0; i < indices.length; i++) {
+            newIndices.push(indexRemap[indices[i]]);
+        }
+
+        return {
+            vertices: new Float32Array(uniqueVertices),
+            indices: new Uint32Array(newIndices),
+            color: mesh.color
+        };
+    }
+
+    static _model(parts) {
+        let resources = '';
+        let buildItems = '';
+
+        // First pass: weld meshes and calculate global assembly bounding box
+        const weldedMeshes = [];
+        let globalMinX = Infinity, globalMinY = Infinity, globalMinZ = Infinity;
+        let globalMaxX = -Infinity, globalMaxY = -Infinity, globalMaxZ = -Infinity;
+
+        for (let i = 0; i < parts.length; i++) {
+            const mesh = this._weldMesh(parts[i].mesh);
+            weldedMeshes.push(mesh);
+
+            for (let v = 0; v < mesh.vertices.length; v += 3) {
+                const x = mesh.vertices[v];
+                const y = mesh.vertices[v + 1];
+                const z = mesh.vertices[v + 2];
+                globalMinX = Math.min(globalMinX, x);
+                globalMinY = Math.min(globalMinY, y);
+                globalMinZ = Math.min(globalMinZ, z);
+                globalMaxX = Math.max(globalMaxX, x);
+                globalMaxY = Math.max(globalMaxY, y);
+                globalMaxZ = Math.max(globalMaxZ, z);
+            }
+        }
+
+        // Calculate transform to center assembly on plate (128, 128) and put bottom at Z=0
+        const assemblyCenterX = (globalMinX + globalMaxX) / 2;
+        const assemblyCenterY = (globalMinY + globalMaxY) / 2;
+        const plateCenter = 128; // Bambu plate center
+
+        const offsetX = plateCenter - assemblyCenterX;
+        const offsetY = plateCenter - assemblyCenterY;
+        const offsetZ = -globalMinZ; // Move bottom to Z=0
+
+        // Second pass: generate XML with transforms
+        for (let i = 0; i < parts.length; i++) {
+            const id = i + 1;
+            const mesh = weldedMeshes[i];
+
+            let verticesXml = '';
+            for (let v = 0; v < mesh.vertices.length; v += 3) {
+                verticesXml += `   <vertex x="${mesh.vertices[v].toFixed(6)}" y="${mesh.vertices[v + 1].toFixed(6)}" z="${mesh.vertices[v + 2].toFixed(6)}"/>\n`;
+            }
+
+            let trianglesXml = '';
+            for (let t = 0; t < mesh.indices.length; t += 3) {
+                trianglesXml += `   <triangle v1="${mesh.indices[t]}" v2="${mesh.indices[t + 1]}" v3="${mesh.indices[t + 2]}"/>\n`;
+            }
+
+            resources += `  <object id="${id}" type="model">
+   <mesh>
+    <vertices>
+${verticesXml}    </vertices>
+    <triangles>
+${trianglesXml}    </triangles>
+   </mesh>
+  </object>\n`;
+
+            // Add transform to center on plate: identity rotation + translation
+            const transform = `1 0 0 0 1 0 0 0 1 ${offsetX.toFixed(6)} ${offsetY.toFixed(6)} ${offsetZ.toFixed(6)}`;
+            buildItems += `  <item objectid="${id}" transform="${transform}"/>\n`;
+        }
+
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+
+        // Use exact format from template, just inject geometry
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">
+ <metadata name="Application">BambuStudio-02.04.00.70</metadata>
+ <metadata name="BambuStudio:3mfVersion">1</metadata>
+ <metadata name="Copyright"></metadata>
+ <metadata name="CreationDate">${dateStr}</metadata>
+ <metadata name="Description"></metadata>
+ <metadata name="Designer"></metadata>
+ <metadata name="DesignerCover"></metadata>
+ <metadata name="DesignerUserId"></metadata>
+ <metadata name="License"></metadata>
+ <metadata name="ModificationDate">${dateStr}</metadata>
+ <metadata name="Origin"></metadata>
+ <metadata name="ProfileCover"></metadata>
+ <metadata name="ProfileDescription"></metadata>
+ <metadata name="ProfileTitle"></metadata>
+ <metadata name="Title"></metadata>
+ <resources>
+${resources} </resources>
+ <build>
+${buildItems} </build>
+</model>`;
+    }
+
+    static _modelSettings(parts) {
+        // Build objects list for extruder assignment
+        let objects = '';
+        for (let i = 0; i < parts.length; i++) {
+            const id = i + 1;
+            const extruder = i + 1;
+            const name = parts[i].name || `Part_${id}`;
+            objects += `  <object id="${id}">
+   <metadata key="name" value="${name}"/>
+   <metadata key="extruder" value="${extruder}"/>
+  </object>\n`;
+        }
+
+        // Keep plate structure from template, add our objects
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <plate>
+    <metadata key="plater_id" value="1"/>
+    <metadata key="plater_name" value=""/>
+    <metadata key="locked" value="false"/>
+  </plate>
+${objects}  <assemble>
+  </assemble>
+</config>`;
+    }
+
+    static _sliceInfo(parts) {
+        // Build filament definitions with colors
+        let filaments = '';
+        for (let i = 0; i < parts.length; i++) {
+            const id = i + 1;
+            const color = parts[i].color || '#808080';
+            const hexColor = color.startsWith('#') ? color.toUpperCase() : `#${color.toUpperCase()}`;
+            filaments += `  <filament id="${id}">
+   <metadata key="type" value="PLA"/>
+   <metadata key="color" value="${hexColor}"/>
+  </filament>\n`;
+        }
+
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <header>
+    <header_item key="X-BBL-Client-Type" value="slicer"/>
+    <header_item key="X-BBL-Client-Version" value="02.04.00.70"/>
+  </header>
+${filaments}</config>`;
+    }
+}
+
+/**
  * Workplane - The main entry point for creating CAD geometry
  * Similar to CadQuery's Workplane class
  */
@@ -681,6 +906,25 @@ class Workplane {
         // Return as Blob
         return new Blob([stlContent], { type: 'application/sla' });
     }
+
+    /**
+     * Export shape to Bambu-compatible 3MF format
+     * Returns a Promise<Blob> containing the 3MF file
+     */
+    async to3MF(linearDeflection = 0.1, angularDeflection = 0.5) {
+        if (!this._shape) return null;
+
+        const mesh = this.toMesh(linearDeflection, angularDeflection);
+        if (!mesh) return null;
+
+        const parts = [{
+            mesh: mesh,
+            color: this._color || '#FF1493', // default pink
+            name: 'Part_1'
+        }];
+
+        return await ThreeMFExporter.generate(parts);
+    }
 }
 
 /**
@@ -767,6 +1011,32 @@ class Assembly {
 
         // Return as Blob
         return new Blob([stlContent], { type: 'application/sla' });
+    }
+
+    /**
+     * Export assembly to Bambu-compatible 3MF format
+     * Each part gets its own filament slot with its assigned color
+     * Returns a Promise<Blob> containing the 3MF file
+     */
+    async to3MF(linearDeflection = 0.1, angularDeflection = 0.5) {
+        if (this._parts.length === 0) return null;
+
+        const parts = [];
+        for (let i = 0; i < this._parts.length; i++) {
+            const part = this._parts[i];
+            const mesh = part.toMesh(linearDeflection, angularDeflection);
+            if (mesh) {
+                parts.push({
+                    mesh: mesh,
+                    color: part._color || '#808080', // default grey
+                    name: `Part_${i + 1}`
+                });
+            }
+        }
+
+        if (parts.length === 0) return null;
+
+        return await ThreeMFExporter.generate(parts);
     }
 }
 

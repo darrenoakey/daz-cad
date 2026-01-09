@@ -878,3 +878,58 @@ def test_stl_export(server):
 
         page.close()
         browser.close()
+
+
+# ##################################################################
+# test 3mf export functionality
+# verifies that shapes can be exported to Bambu-compatible 3MF format
+def test_3mf_export(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(f"{server}/")
+
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready';
+            }""",
+            timeout=90000
+        )
+
+        # test 3MF export for single shape and assembly
+        result = page.evaluate("""async () => {
+            try {
+                // test single shape 3MF export
+                const box = new Workplane('XY').box(10, 10, 10).color('#FF0000');
+                const box3MF = await box.to3MF(0.1, 0.3);
+                if (!box3MF) return { success: false, error: 'Box 3MF is null' };
+
+                // test assembly 3MF export with multiple colors
+                const cube = new Workplane('XY').box(20, 20, 20).color('#e74c3c');
+                const cylinder = new Workplane('XY').cylinder(8, 25).translate(30, 0, 0).color('#2ecc71');
+                const smallCube = new Workplane('XY').box(12, 12, 15).translate(-25, 0, 0).color('#3498db');
+                const assembly = new Assembly().add(cube).add(cylinder).add(smallCube);
+                const assembly3MF = await assembly.to3MF(0.1, 0.3);
+                if (!assembly3MF) return { success: false, error: 'Assembly 3MF is null' };
+
+                return {
+                    success: true,
+                    box3MFSize: box3MF.size,
+                    assembly3MFSize: assembly3MF.size
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        assert result["success"], f"3MF export test failed: {result.get('error', 'unknown')}"
+        assert result.get("box3MFSize", 0) > 100, f"Box 3MF too small: {result.get('box3MFSize')}"
+        assert result.get("assembly3MFSize", 0) > 100, f"Assembly 3MF too small: {result.get('assembly3MFSize')}"
+
+        print(f"Box 3MF size: {result.get('box3MFSize')} bytes")
+        print(f"Assembly 3MF size: {result.get('assembly3MFSize')} bytes")
+
+        page.close()
+        browser.close()

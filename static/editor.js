@@ -50,6 +50,7 @@ class CADEditor {
         this.isReady = false;
         this._currentResult = null; // Store current Workplane or Assembly for export
         this._downloadSTLBtn = null;
+        this._download3MFBtn = null;
 
         this._init();
     }
@@ -62,9 +63,12 @@ class CADEditor {
         // Expose viewer for testing
         window.cadViewer = this.viewer;
 
-        // Set up download button
+        // Set up download buttons
         this._downloadSTLBtn = document.getElementById('download-stl-btn');
         this._downloadSTLBtn.addEventListener('click', () => this._downloadSTL());
+
+        this._download3MFBtn = document.getElementById('download-3mf-btn');
+        this._download3MFBtn.addEventListener('click', () => this._download3MF());
 
         // Load Monaco editor
         await this._loadMonaco();
@@ -192,6 +196,7 @@ class CADEditor {
         this._hideError();
         this._currentResult = null;
         this._downloadSTLBtn.disabled = true;
+        this._download3MFBtn.disabled = true;
 
         try {
             // Create a sandboxed execution context
@@ -205,6 +210,7 @@ class CADEditor {
                     this._setStatus('ready', 'Ready');
                     this._currentResult = result;
                     this._downloadSTLBtn.disabled = false;
+                    this._download3MFBtn.disabled = false;
                 } else {
                     throw new Error('Assembly has no valid parts');
                 }
@@ -216,6 +222,7 @@ class CADEditor {
                     this._setStatus('ready', 'Ready');
                     this._currentResult = result;
                     this._downloadSTLBtn.disabled = false;
+                    this._download3MFBtn.disabled = false;
                 } else {
                     throw new Error('Failed to generate mesh from shape');
                 }
@@ -234,6 +241,7 @@ class CADEditor {
             this._highlightError(error);
             this._currentResult = null;
             this._downloadSTLBtn.disabled = true;
+            this._download3MFBtn.disabled = true;
         }
     }
 
@@ -337,6 +345,39 @@ class CADEditor {
             console.error('STL export failed:', error);
             this._setStatus('error', 'Export failed');
             this._showError('STL export failed: ' + error.message);
+        }
+    }
+
+    async _download3MF() {
+        if (!this._currentResult) {
+            console.warn('No shape to export');
+            return;
+        }
+
+        try {
+            this._setStatus('loading', 'Exporting 3MF...');
+
+            // Generate 3MF blob (async because of JSZip)
+            const blob = await this._currentResult.to3MF(0.1, 0.3);
+            if (!blob) {
+                throw new Error('Failed to generate 3MF');
+            }
+
+            // Create download link
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'model.3mf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            this._setStatus('ready', 'Ready');
+        } catch (error) {
+            console.error('3MF export failed:', error);
+            this._setStatus('error', 'Export failed');
+            this._showError('3MF export failed: ' + error.message);
         }
     }
 }
