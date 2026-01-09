@@ -16,6 +16,7 @@ class CADViewer {
         this.renderer = null;
         this.controls = null;
         this.meshGroup = null;
+        this._userHasInteracted = false; // Track if user has moved/zoomed the view
 
         this._init();
         this._animate();
@@ -43,6 +44,11 @@ class CADViewer {
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
+
+        // Track when user manually interacts with the view
+        this.controls.addEventListener('start', () => {
+            this._userHasInteracted = true;
+        });
 
         // Lighting - positioned for Z-up view
         const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
@@ -95,18 +101,14 @@ class CADViewer {
      * Clear all meshes from the viewer
      */
     clear() {
-        while (this.meshGroup.children.length > 0) {
-            const mesh = this.meshGroup.children[0];
-            if (mesh.geometry) mesh.geometry.dispose();
-            if (mesh.material) {
-                if (Array.isArray(mesh.material)) {
-                    mesh.material.forEach(m => m.dispose());
-                } else {
-                    mesh.material.dispose();
-                }
-            }
-            this.meshGroup.remove(mesh);
-        }
+        this._disposeGroup(this.meshGroup);
+    }
+
+    /**
+     * Reset the view flag so next render will fit camera
+     */
+    resetView() {
+        this._userHasInteracted = false;
     }
 
     /**
@@ -114,7 +116,8 @@ class CADViewer {
      * @param {Object|Array} meshData - Object with vertices/indices/color, or array of such objects
      */
     displayMesh(meshData) {
-        this.clear();
+        // Create new meshes first (before removing old ones to reduce flicker)
+        const newMeshGroup = new THREE.Group();
 
         // Handle array of meshes (assembly)
         const meshes = Array.isArray(meshData) ? meshData : [meshData];
@@ -146,7 +149,7 @@ class CADViewer {
 
             // Create mesh
             const mesh = new THREE.Mesh(geometry, solidMaterial);
-            this.meshGroup.add(mesh);
+            newMeshGroup.add(mesh);
 
             // Add wireframe overlay
             const wireframeMaterial = new THREE.MeshBasicMaterial({
@@ -156,12 +159,36 @@ class CADViewer {
                 opacity: 0.1
             });
             const wireframe = new THREE.Mesh(geometry.clone(), wireframeMaterial);
-            this.meshGroup.add(wireframe);
+            newMeshGroup.add(wireframe);
         }
 
-        // Fit camera to all objects
-        if (this.meshGroup.children.length > 0) {
+        // Swap: add new group, then remove old one (minimizes flicker)
+        this.scene.add(newMeshGroup);
+        this._disposeGroup(this.meshGroup);
+        this.scene.remove(this.meshGroup);
+        this.meshGroup = newMeshGroup;
+
+        // Fit camera unless user has manually moved/zoomed the view
+        if (!this._userHasInteracted && this.meshGroup.children.length > 0) {
             this._fitCameraToObject(this.meshGroup);
+        }
+    }
+
+    /**
+     * Dispose of all meshes in a group (cleanup GPU resources)
+     */
+    _disposeGroup(group) {
+        while (group.children.length > 0) {
+            const mesh = group.children[0];
+            if (mesh.geometry) mesh.geometry.dispose();
+            if (mesh.material) {
+                if (Array.isArray(mesh.material)) {
+                    mesh.material.forEach(m => m.dispose());
+                } else {
+                    mesh.material.dispose();
+                }
+            }
+            group.remove(mesh);
         }
     }
 
@@ -312,10 +339,11 @@ class CADViewer {
     }
 
     /**
-     * Show error state
+     * Show error state - clears meshes and resets view for next successful render
      */
     showError() {
         this.clear();
+        this.resetView(); // Next successful render will fit camera
     }
 
     /**
