@@ -321,15 +321,28 @@ ${buildItems} </build>
     }
 
     static _modelSettings(parts) {
-        // Build objects list for extruder assignment
+        // Build objects list for extruder assignment and part type
         let objects = '';
         for (let i = 0; i < parts.length; i++) {
             const id = i + 1;
             const extruder = i + 1;
             const name = parts[i].name || `Part_${id}`;
+            const isModifier = parts[i].isModifier || false;
+            // ParameterModifier for modifiers, ModelPart for regular parts
+            const partType = isModifier ? 'ParameterModifier' : 'ModelPart';
             objects += `  <object id="${id}">
    <metadata key="name" value="${name}"/>
    <metadata key="extruder" value="${extruder}"/>
+   <part id="${id}" subtype="${partType}">
+    <metadata key="name" value="${name}"/>
+    <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>
+    <metadata key="source_file" value=""/>
+    <metadata key="source_object_id" value="0"/>
+    <metadata key="source_volume_id" value="0"/>
+    <metadata key="source_offset_x" value="0"/>
+    <metadata key="source_offset_y" value="0"/>
+    <metadata key="source_offset_z" value="0"/>
+   </part>
   </object>\n`;
         }
 
@@ -381,6 +394,7 @@ class Workplane {
         this._selectedEdges = [];
         this._selectionMode = null; // 'faces', 'edges', or null
         this._color = null; // hex color string like "#ff0000"
+        this._isModifier = false; // true if this is a modifier volume (for 3MF export)
     }
 
     /**
@@ -394,6 +408,23 @@ class Workplane {
         result._selectedEdges = this._selectedEdges;
         result._selectionMode = this._selectionMode;
         result._color = hexColor;
+        result._isModifier = this._isModifier;
+        return result;
+    }
+
+    /**
+     * Mark this workplane object as a modifier volume
+     * Modifier volumes don't add geometry in 3MF, they just change settings/color
+     * in the region where they overlap another part
+     */
+    asModifier() {
+        const result = new Workplane(this._plane);
+        result._shape = this._shape;
+        result._selectedFaces = this._selectedFaces;
+        result._selectedEdges = this._selectedEdges;
+        result._selectionMode = this._selectionMode;
+        result._color = this._color;
+        result._isModifier = true;
         return result;
     }
 
@@ -1565,7 +1596,8 @@ class Workplane {
         return {
             vertices: new Float32Array(vertices),
             indices: new Uint32Array(indices),
-            color: this._color
+            color: this._color,
+            isModifier: this._isModifier
         };
     }
 
@@ -1623,7 +1655,8 @@ class Workplane {
         const parts = [{
             mesh: mesh,
             color: this._color || '#FF1493', // default pink
-            name: 'Part_1'
+            name: 'Part_1',
+            isModifier: this._isModifier
         }];
 
         return await ThreeMFExporter.generate(parts);
@@ -1732,7 +1765,8 @@ class Assembly {
                 parts.push({
                     mesh: mesh,
                     color: part._color || '#808080', // default grey
-                    name: `Part_${i + 1}`
+                    name: `Part_${i + 1}`,
+                    isModifier: part._isModifier || false
                 });
             }
         }
