@@ -5,11 +5,55 @@
  * The main thread only handles UI and Three.js rendering.
  */
 
-import { initCAD, Workplane, Assembly } from './cad.js';
+import { initCAD, Workplane, Assembly, Profiler } from './cad.js';
 
 let oc = null;
 let isInitialized = false;
 let isRendering = false;
+
+// Intercept console to forward to main thread
+const originalConsole = {
+    log: console.log.bind(console),
+    error: console.error.bind(console),
+    warn: console.warn.bind(console),
+    info: console.info.bind(console)
+};
+
+function forwardConsole(level, args) {
+    // Convert args to strings
+    const message = args.map(arg => {
+        if (typeof arg === 'object') {
+            try {
+                return JSON.stringify(arg, null, 2);
+            } catch {
+                return String(arg);
+            }
+        }
+        return String(arg);
+    }).join(' ');
+
+    self.postMessage({ type: 'console', level, message });
+}
+
+console.log = (...args) => {
+    originalConsole.log(...args);
+    forwardConsole('log', args);
+};
+
+console.error = (...args) => {
+    originalConsole.error(...args);
+    forwardConsole('error', args);
+};
+
+console.warn = (...args) => {
+    originalConsole.warn(...args);
+    forwardConsole('warn', args);
+};
+
+console.info = (...args) => {
+    originalConsole.info(...args);
+    forwardConsole('info', args);
+};
 
 // Post message helpers
 function postStatus(status, message) {
@@ -65,9 +109,9 @@ function executeCode(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    // Execute the code with Workplane and Assembly available
-    const fn = new Function('Workplane', 'Assembly', code + '\nreturn result;');
-    const result = fn(Workplane, Assembly);
+    // Execute the code with Workplane, Assembly, and Profiler available
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', code + '\nreturn result;');
+    const result = fn(Workplane, Assembly, Profiler);
 
     if (!result) {
         throw new Error('Code did not produce a result');
@@ -89,8 +133,8 @@ function executeForExport(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    const fn = new Function('Workplane', 'Assembly', code + '\nreturn result;');
-    return fn(Workplane, Assembly);
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', code + '\nreturn result;');
+    return fn(Workplane, Assembly, Profiler);
 }
 
 // Handle messages from main thread

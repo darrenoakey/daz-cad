@@ -19,6 +19,88 @@ let oc = null;
 let lastError = null;
 
 /**
+ * Profiler - Simple timing profiler for CAD operations
+ * Create an instance, call checkpoint() at each step, then finished() to log results
+ */
+class Profiler {
+    constructor(name = 'Profile') {
+        this._name = name;
+        this._startTime = performance.now();
+        this._checkpoints = [];
+        this._lastTime = this._startTime;
+    }
+
+    /**
+     * Record a checkpoint with a label
+     */
+    checkpoint(label) {
+        const now = performance.now();
+        this._checkpoints.push({
+            label,
+            time: now,
+            sinceStart: now - this._startTime,
+            sinceLast: now - this._lastTime
+        });
+        this._lastTime = now;
+        return this;
+    }
+
+    /**
+     * Finish profiling and log the results table
+     */
+    finished() {
+        this.checkpoint('end');
+
+        // Format number with commas
+        const fmt = (n) => Math.round(n).toLocaleString();
+
+        // Find max label length for alignment
+        const maxLabelLen = Math.max(...this._checkpoints.map(c => c.label.length), 10);
+        const colWidth = 12;
+
+        // Build header
+        const header = [
+            'Step'.padEnd(maxLabelLen),
+            'Since Start'.padStart(colWidth),
+            'Delta'.padStart(colWidth)
+        ].join(' │ ');
+
+        const separator = [
+            '─'.repeat(maxLabelLen),
+            '─'.repeat(colWidth),
+            '─'.repeat(colWidth)
+        ].join('─┼─');
+
+        // Build rows
+        const rows = this._checkpoints.map(c => [
+            c.label.padEnd(maxLabelLen),
+            (fmt(c.sinceStart) + ' ms').padStart(colWidth),
+            (fmt(c.sinceLast) + ' ms').padStart(colWidth)
+        ].join(' │ '));
+
+        // Log the table
+        console.log(`\n┌${'─'.repeat(header.length + 2)}┐`);
+        console.log(`│ ${this._name.padEnd(header.length)} │`);
+        console.log(`├${'─'.repeat(header.length + 2)}┤`);
+        console.log(`│ ${header} │`);
+        console.log(`│ ${separator} │`);
+        for (const row of rows) {
+            console.log(`│ ${row} │`);
+        }
+        console.log(`└${'─'.repeat(header.length + 2)}┘\n`);
+
+        return this;
+    }
+
+    /**
+     * Get total elapsed time in ms
+     */
+    elapsed() {
+        return performance.now() - this._startTime;
+    }
+}
+
+/**
  * Log and track CAD errors
  */
 function cadError(operation, message, originalError = null) {
@@ -57,7 +139,8 @@ function initCAD(openCascadeInstance) {
     if (typeof window !== 'undefined') {
         window.Workplane = Workplane;
         window.Assembly = Assembly;
-        window.CAD = { oc, Workplane, Assembly, getLastError, clearLastError };
+        window.Profiler = Profiler;
+        window.CAD = { oc, Workplane, Assembly, Profiler, getLastError, clearLastError };
     }
 }
 
@@ -501,6 +584,7 @@ class Workplane {
      *   - wallThickness: thickness between shapes in mm - default 0.6
      *   - border: solid border width around edges - default 2
      *   - depth: cut depth (null = through-cut) - default null
+     *   - cutFromZ: Z position to cut from (null = auto from top) - for cutting base from below
      */
     cutPattern(options = {}) {
         const {
@@ -508,7 +592,8 @@ class Workplane {
             wallThickness = 0.6,
             border = 2,
             depth = null,
-            size = null  // Polygon size (flat-to-flat). null = auto-calculate
+            size = null,  // Polygon size (flat-to-flat). null = auto-calculate
+            cutFromZ = null  // Z position for top of cut (null = zMax + 1)
         } = options;
 
         if (!this._shape) {
@@ -594,7 +679,7 @@ class Workplane {
             const yStart = centerY - totalSpanY / 2;
 
             const cutDepth = depth || (thickness + 2);
-            const cutZ = zMax.current + 1;
+            const cutZ = cutFromZ !== null ? cutFromZ : (zMax.current + 1);
             const effectiveBorder = border + circumRadius;
 
             // TILE-BASED APPROACH: Create template once, clone with Moved()
@@ -1658,4 +1743,4 @@ class Assembly {
     }
 }
 
-export { initCAD, Workplane, Assembly };
+export { initCAD, Workplane, Assembly, Profiler };

@@ -409,6 +409,94 @@
         }
 
         // ============================================================
+        // TECHNIQUE 9: Tile-Based (create tile unit, clone it)
+        // Creates a 2-hex tile, clones it across grid, unions tiles
+        // ============================================================
+        function technique9_TileBased(basePlate, positions, hexSize, cutDepth) {
+            if (positions.length === 0) return basePlate;
+
+            const sqrt3 = Math.sqrt(3);
+            const r = hexSize / 2;
+            const R = r / Math.cos(Math.PI / 6);
+            const wallThickness = 0.8;
+            const d = 2 * R + wallThickness;  // horizontal spacing
+            const h = d * sqrt3 / 2;          // vertical spacing
+            const rowOffset = d / 2;
+
+            // Create ONE template prism
+            const templatePrism = createHexPrism(hexSize, cutDepth);
+
+            // Create a "tile unit" = 2 hexagons that form the minimal repeating pattern
+            // Position 1: (0, 0) - even row
+            // Position 2: (rowOffset, h) - odd row offset
+            const trsf1 = new oc.gp_Trsf_1();
+            trsf1.SetTranslation_1(new oc.gp_Vec_4(0, 0, 0));
+            const loc1 = new oc.TopLoc_Location_2(trsf1);
+            const hex1 = templatePrism.Moved(loc1, false);
+
+            const trsf2 = new oc.gp_Trsf_1();
+            trsf2.SetTranslation_1(new oc.gp_Vec_4(rowOffset, h, 0));
+            const loc2 = new oc.TopLoc_Location_2(trsf2);
+            const hex2 = templatePrism.Moved(loc2, false);
+
+            // Fuse the two hexes into one tile unit
+            const fuseTile = new oc.BRepAlgoAPI_Fuse_3(hex1, hex2, new oc.Message_ProgressRange_1());
+            fuseTile.Build(new oc.Message_ProgressRange_1());
+            const tileUnit = fuseTile.Shape();
+            fuseTile.delete();
+
+            // Tile dimensions
+            const tileWidth = d;
+            const tileHeight = 2 * h;
+
+            // Calculate grid bounds from positions
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            for (const pos of positions) {
+                minX = Math.min(minX, pos.x);
+                maxX = Math.max(maxX, pos.x);
+                minY = Math.min(minY, pos.y);
+                maxY = Math.max(maxY, pos.y);
+            }
+
+            // Calculate tile grid
+            const nTileCols = Math.ceil((maxX - minX) / tileWidth) + 1;
+            const nTileRows = Math.ceil((maxY - minY) / tileHeight) + 1;
+            const startX = minX;
+            const startY = minY;
+
+            log(`<div style="color:#888">T9: Creating ${nTileCols}x${nTileRows} = ${nTileCols * nTileRows} tiles (2 hexes each)</div>`);
+
+            // Clone tile units across grid
+            const allTiles = [];
+            for (let row = 0; row < nTileRows; row++) {
+                for (let col = 0; col < nTileCols; col++) {
+                    const tx = startX + col * tileWidth;
+                    const ty = startY + row * tileHeight;
+                    const trsf = new oc.gp_Trsf_1();
+                    trsf.SetTranslation_1(new oc.gp_Vec_4(tx, ty, -1));
+                    const loc = new oc.TopLoc_Location_2(trsf);
+                    allTiles.push(tileUnit.Moved(loc, false));
+                    trsf.delete();
+                }
+            }
+
+            // Use ListOfShape to cut with all tiles at once
+            const toolList = new oc.TopTools_ListOfShape_1();
+            for (const tile of allTiles) {
+                toolList.Append_1(tile);
+            }
+
+            const argList = new oc.TopTools_ListOfShape_1();
+            argList.Append_1(basePlate);
+
+            const cut = new oc.BRepAlgoAPI_Cut_1();
+            cut.SetArguments(argList);
+            cut.SetTools(toolList);
+            cut.Build(new oc.Message_ProgressRange_1());
+            return cut.Shape();
+        }
+
+        // ============================================================
         // RUN FULL BENCHMARK
         // ============================================================
         async function runBenchmark() {
@@ -443,6 +531,7 @@
                 { name: 'T6: Single Prism + Transforms', fn: technique6_SinglePrismTransforms },
                 { name: 'T7: Fuse Cutters First (sequential)', fn: technique7_FuseThenCut, skip: holeCount > 20 },
                 { name: 'T8: Hierarchical Union (pairwise tree)', fn: technique8_HierarchicalUnion },
+                { name: 'T9: Tile-Based (2-hex tiles cloned)', fn: technique9_TileBased },
             ];
 
             const timings = [];

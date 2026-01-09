@@ -6,7 +6,7 @@
  */
 
 import { CADViewer } from './viewer.js';
-import { initCAD, Workplane, Assembly } from './cad.js';
+import { initCAD, Workplane, Assembly, Profiler } from './cad.js';
 
 // Fallback code in case server load fails
 const FALLBACK_CODE = `// CAD Example - Create a simple box
@@ -45,6 +45,10 @@ class CADEditor {
         this._chatSendBtn = null;
         this._chatMessages = null;
 
+        // Console output state
+        this._consoleOutput = null;
+        this._consoleClearBtn = null;
+
         // File manager state
         this._fileSelectorBtn = null;
         this._fileDropdown = null;
@@ -78,6 +82,9 @@ class CADEditor {
 
         // Initialize file manager
         this._initFileManager();
+
+        // Initialize console output
+        this._initConsole();
 
         // Initialize chat UI
         this._initChat();
@@ -312,6 +319,10 @@ class CADEditor {
 
                 case 'export3MFError':
                     this._handleExportError('3MF', error);
+                    break;
+
+                case 'console':
+                    this._appendConsole(e.data.level, e.data.message);
                     break;
             }
         };
@@ -837,6 +848,7 @@ result;
 
         this._isRendering = true;
         this._renderRequestId++;
+        this._clearConsole(); // Clear console for new render
         this._setStatus('loading', 'Compiling...');
 
         // Send code to worker for rendering
@@ -954,6 +966,35 @@ result;
         console.error(`${format} export failed:`, error);
         this._setStatus('error', 'Export failed');
         this._showError(`${format} export failed: ${error}`);
+    }
+
+    _initConsole() {
+        this._consoleOutput = document.getElementById('console-output');
+        this._consoleClearBtn = document.getElementById('console-clear-btn');
+
+        if (this._consoleClearBtn) {
+            this._consoleClearBtn.addEventListener('click', () => {
+                this._clearConsole();
+            });
+        }
+    }
+
+    _appendConsole(level, message) {
+        if (!this._consoleOutput) return;
+
+        const line = document.createElement('div');
+        line.className = `console-line ${level}`;
+        line.textContent = message;
+        this._consoleOutput.appendChild(line);
+
+        // Auto-scroll to bottom
+        this._consoleOutput.scrollTop = this._consoleOutput.scrollHeight;
+    }
+
+    _clearConsole() {
+        if (this._consoleOutput) {
+            this._consoleOutput.innerHTML = '';
+        }
     }
 
     _initChat() {
