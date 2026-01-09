@@ -7,6 +7,8 @@
 
 import { CADViewer } from './viewer.js';
 import { initCAD, Workplane, Assembly, Profiler } from './cad.js';
+import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
+import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
 
 // Fallback code in case server load fails
 const FALLBACK_CODE = `// CAD Example - Create a simple box
@@ -48,6 +50,11 @@ class CADEditor {
         // Console output state
         this._consoleOutput = null;
         this._consoleClearBtn = null;
+
+        // Properties panel state
+        this._propertiesList = null;
+        this._properties = []; // Array of {name, value, start, end} for numeric variables
+        this._sliderTriggeredChange = false; // True when slider caused code change
 
         // File manager state
         this._fileSelectorBtn = null;
@@ -92,6 +99,9 @@ class CADEditor {
         // Initialize chat UI
         this._initChat();
 
+        // Initialize properties panel
+        this._initProperties();
+
         // Load Monaco editor
         await this._loadMonaco();
 
@@ -108,6 +118,11 @@ class CADEditor {
         // Set up editor change listener
         this.editor.onDidChangeModelContent(() => {
             this._onCodeChange();
+            // Re-parse properties when code changes (unless slider caused the change)
+            if (!this._sliderTriggeredChange) {
+                this._parseAndRenderProperties();
+            }
+            this._sliderTriggeredChange = false;
         });
 
         // Enable chat now that everything is ready
@@ -115,6 +130,9 @@ class CADEditor {
 
         // Start file watcher for hot reload
         this._startFileWatcher();
+
+        // Initial property parsing
+        this._parseAndRenderProperties();
 
         // Initial render
         this._render();
@@ -1154,6 +1172,162 @@ result;
             this._enableChat();
             this._unlockEditor();
             this._chatInput.focus();
+        }
+    }
+
+    _initProperties() {
+        this._propertiesList = document.getElementById('properties-list');
+    }
+
+    _parseAndRenderProperties() {
+        const code = this.editor ? this.editor.getValue() : '';
+        this._properties = this._parseNumericVariables(code);
+        this._renderProperties();
+    }
+
+    _parseNumericVariables(code) {
+        const properties = [];
+
+        try {
+            const ast = acorn.parse(code, {
+                ecmaVersion: 2022,
+                sourceType: 'module',
+                locations: true,
+                ranges: true
+            });
+
+            // Walk the AST to find numeric variable declarations
+            for (const node of ast.body) {
+                if (node.type === 'VariableDeclaration') {
+                    for (const declarator of node.declarations) {
+                        if (declarator.id.type === 'Identifier' &&
+                            declarator.init &&
+                            declarator.init.type === 'Literal' &&
+                            typeof declarator.init.value === 'number') {
+
+                            properties.push({
+                                name: declarator.id.name,
+                                value: declarator.init.value,
+                                start: declarator.init.start,
+                                end: declarator.init.end
+                            });
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // Parsing failed - code may be invalid, just return empty
+            console.log('Property parsing skipped (invalid code):', e.message);
+        }
+
+        return properties;
+    }
+
+    _renderProperties() {
+        if (!this._propertiesList) return;
+
+        if (this._properties.length === 0) {
+            this._propertiesList.innerHTML = '<div class="properties-empty">No numeric properties found</div>';
+            return;
+        }
+
+        this._propertiesList.innerHTML = '';
+
+        for (const prop of this._properties) {
+            const item = document.createElement('div');
+            item.className = 'property-item';
+
+            // Determine slider range based on current value
+            const absValue = Math.abs(prop.value);
+            let min, max, step;
+            if (absValue === 0) {
+                min = -100;
+                max = 100;
+                step = 1;
+            } else if (Number.isInteger(prop.value) && absValue < 1000) {
+                min = Math.floor(prop.value - absValue * 2);
+                max = Math.ceil(prop.value + absValue * 2);
+                step = 1;
+            } else {
+                min = prop.value - absValue * 2;
+                max = prop.value + absValue * 2;
+                step = absValue / 100;
+            }
+
+            item.innerHTML = `
+                <span class="property-name">${prop.name}</span>
+                <input type="range" class="property-slider"
+                       min="${min}" max="${max}" step="${step}"
+                       value="${prop.value}"
+                       data-prop-name="${prop.name}">
+                <input type="number" class="property-value"
+                       value="${prop.value}" step="${step}"
+                       data-prop-name="${prop.name}">
+            `;
+
+            const slider = item.querySelector('.property-slider');
+            const numberInput = item.querySelector('.property-value');
+
+            // Sync slider and number input
+            slider.addEventListener('input', () => {
+                const newValue = parseFloat(slider.value);
+                numberInput.value = newValue;
+                this._updatePropertyInCode(prop.name, newValue);
+            });
+
+            numberInput.addEventListener('input', () => {
+                const newValue = parseFloat(numberInput.value);
+                if (!isNaN(newValue)) {
+                    slider.value = newValue;
+                    this._updatePropertyInCode(prop.name, newValue);
+                }
+            });
+
+            this._propertiesList.appendChild(item);
+        }
+    }
+
+    _updatePropertyInCode(propName, newValue) {
+        const code = this.editor.getValue();
+
+        try {
+            const ast = acorn.parse(code, {
+                ecmaVersion: 2022,
+                sourceType: 'module',
+                locations: true,
+                ranges: true
+            });
+
+            // Find the property in the AST
+            let targetNode = null;
+            for (const node of ast.body) {
+                if (node.type === 'VariableDeclaration') {
+                    for (const declarator of node.declarations) {
+                        if (declarator.id.type === 'Identifier' &&
+                            declarator.id.name === propName &&
+                            declarator.init &&
+                            declarator.init.type === 'Literal' &&
+                            typeof declarator.init.value === 'number') {
+                            targetNode = declarator.init;
+                            break;
+                        }
+                    }
+                }
+                if (targetNode) break;
+            }
+
+            if (targetNode) {
+                // Replace the value in the code string directly
+                // This preserves formatting better than regenerating entire AST
+                const before = code.substring(0, targetNode.start);
+                const after = code.substring(targetNode.end);
+                const newCode = before + String(newValue) + after;
+
+                this._sliderTriggeredChange = true;
+                this.editor.setValue(newCode);
+            }
+        } catch (e) {
+            console.error('Failed to update property:', e);
         }
     }
 }

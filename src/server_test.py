@@ -1032,6 +1032,101 @@ const result = x + y;`;
 
 
 # ##################################################################
+# test properties panel
+# verifies properties panel parses numeric variables and sliders update code
+def test_properties_panel(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(f"{server}/")
+
+        # wait for editor to be ready
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' &&
+                       window.cadEditor && window.cadEditor.editor;
+            }""",
+            timeout=90000
+        )
+
+        # test properties panel in a single atomic evaluate to avoid race conditions
+        result = page.evaluate("""() => {
+            // stop file watcher and debounce timer
+            if (window.cadEditor._fileWatchInterval) {
+                clearInterval(window.cadEditor._fileWatchInterval);
+                window.cadEditor._fileWatchInterval = null;
+            }
+            if (window.cadEditor.debounceTimer) {
+                clearTimeout(window.cadEditor.debounceTimer);
+                window.cadEditor.debounceTimer = null;
+            }
+
+            // set test code
+            const testCode = `const WIDTH = 30;
+const HEIGHT = 20;
+const DEPTH = 10;
+const result = new Workplane("XY").box(WIDTH, HEIGHT, DEPTH);
+result;`;
+            window.cadEditor.editor.setValue(testCode);
+
+            // parse properties immediately
+            window.cadEditor._parseAndRenderProperties();
+
+            // check parsing worked
+            const propsCount = window.cadEditor._properties ? window.cadEditor._properties.length : 0;
+            const propsNames = window.cadEditor._properties ? window.cadEditor._properties.map(p => p.name) : [];
+
+            // check DOM was updated
+            const list = document.getElementById('properties-list');
+            const items = list ? list.querySelectorAll('.property-item') : [];
+            const domNames = [];
+            items.forEach(item => {
+                const name = item.querySelector('.property-name');
+                if (name) domNames.push(name.textContent);
+            });
+
+            // test slider interaction
+            const widthSlider = document.querySelector('.property-slider[data-prop-name="WIDTH"]');
+            if (!widthSlider) {
+                return {
+                    success: false,
+                    error: 'WIDTH slider not found',
+                    propsCount,
+                    propsNames,
+                    domNames
+                };
+            }
+
+            // trigger slider change
+            widthSlider.value = 50;
+            widthSlider.dispatchEvent(new Event('input', { bubbles: true }));
+
+            // check code was updated
+            const codeAfter = window.cadEditor.editor.getValue();
+            const has50 = codeAfter.includes('50');
+
+            return {
+                success: has50 && propsCount === 3,
+                propsCount,
+                propsNames,
+                domNames,
+                has50,
+                codeAfter: codeAfter.substring(0, 100),
+                error: !has50 ? 'Code does not contain 50 after slider change' :
+                       propsCount !== 3 ? `Expected 3 props, got ${propsCount}` : null
+            };
+        }""")
+
+        print(f"Result: {result}")
+        assert result["success"], f"Properties panel test failed: {result.get('error')}. Props: {result.get('propsNames')}, DOM: {result.get('domNames')}, code: {result.get('codeAfter')}"
+
+        page.close()
+        browser.close()
+
+
+# ##################################################################
 # test cad library operations
 # verifies all cad library functions work correctly
 def test_cad_library_operations(server):
