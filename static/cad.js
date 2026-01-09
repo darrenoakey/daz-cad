@@ -853,21 +853,21 @@ class Workplane {
             }
 
             if (combinedShape) {
-                // Center the text around the origin
+                // Center text in X/Y but place bottom at Z=0
                 const bbox = new oc.Bnd_Box_1();
                 oc.BRepBndLib.Add(combinedShape, bbox, false);
                 const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
                 const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
                 bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
 
-                // Calculate center offset
+                // Center in X and Y, but move bottom to Z=0 (text sits on the plane)
                 const centerX = (xMin.current + xMax.current) / 2;
                 const centerY = (yMin.current + yMax.current) / 2;
-                const centerZ = (zMin.current + zMax.current) / 2;
+                const offsetZ = zMin.current; // Move bottom to Z=0
 
-                // Translate to center
+                // Translate
                 const trsf = new oc.gp_Trsf_1();
-                trsf.SetTranslation_1(new oc.gp_Vec_4(-centerX, -centerY, -centerZ));
+                trsf.SetTranslation_1(new oc.gp_Vec_4(-centerX, -centerY, -offsetZ));
                 const transform = new oc.BRepBuilderAPI_Transform_2(combinedShape, trsf, true);
                 transform.Build(new oc.Message_ProgressRange_1());
 
