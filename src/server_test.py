@@ -936,6 +936,58 @@ def test_3mf_export(server):
 
 
 # ##################################################################
+# test cad library operations
+# verifies all cad library functions work correctly
+def test_cad_library_operations(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"]
+        )
+        page = browser.new_page()
+
+        # capture console output
+        console_messages = []
+        page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
+
+        page.goto(f"{server}/")
+
+        # wait for OpenCascade to load
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready';
+            }""",
+            timeout=90000
+        )
+
+        # run the CAD test suite
+        results = page.evaluate("""() => {
+            if (typeof CADTests === 'undefined') {
+                return { error: 'CADTests not loaded' };
+            }
+            return CADTests.runAll();
+        }""")
+
+        page.close()
+        browser.close()
+
+        # print console output for debugging
+        if console_messages:
+            print("\n--- Browser console output ---")
+            for msg in console_messages:
+                print(msg)
+            print("--- End console output ---\n")
+
+        assert "error" not in results, f"CADTests failed to load: {results.get('error')}"
+        assert results["failed"] == 0, (
+            f"CAD library tests failed: {results['failed']} failures. "
+            f"Failed: {[r['name'] for r in results['results'] if not r['passed']]}"
+        )
+        print(f"CAD library tests: {results['passed']} passed, {results['failed']} failed")
+
+
+# ##################################################################
 # test chat message endpoint
 # verifies the chat endpoint responds with agent output
 def test_chat_message_endpoint(server):

@@ -15,6 +15,38 @@
 // Ensure OpenCascade is loaded
 let oc = null;
 
+// Error tracking for the current operation
+let lastError = null;
+
+/**
+ * Log and track CAD errors
+ */
+function cadError(operation, message, originalError = null) {
+    const errorInfo = {
+        operation,
+        message,
+        originalError: originalError?.message || originalError,
+        timestamp: new Date().toISOString()
+    };
+    lastError = errorInfo;
+    console.error(`[CAD Error] ${operation}: ${message}`, originalError || '');
+    return errorInfo;
+}
+
+/**
+ * Get the last CAD error (useful for debugging)
+ */
+function getLastError() {
+    return lastError;
+}
+
+/**
+ * Clear the last CAD error
+ */
+function clearLastError() {
+    lastError = null;
+}
+
 /**
  * Initialize the CAD library with an OpenCascade instance
  */
@@ -22,7 +54,7 @@ function initCAD(openCascadeInstance) {
     oc = openCascadeInstance;
     window.Workplane = Workplane;
     window.Assembly = Assembly;
-    window.CAD = { oc, Workplane, Assembly };
+    window.CAD = { oc, Workplane, Assembly, getLastError, clearLastError };
 }
 
 /**
@@ -285,19 +317,41 @@ class Workplane {
     box(length, width, height, centered = true) {
         const result = new Workplane(this._plane);
 
-        if (centered) {
-            // center on X/Y, but bottom at Z=0 (good for 3D printing)
-            const box = new oc.BRepPrimAPI_MakeBox_3(
-                new oc.gp_Pnt_3(-length/2, -width/2, 0),
-                length, width, height
-            );
-            result._shape = box.Shape();
-            box.delete();
-        } else {
-            // corner at origin
-            const box = new oc.BRepPrimAPI_MakeBox_2(length, width, height);
-            result._shape = box.Shape();
-            box.delete();
+        // Validate inputs
+        if (typeof length !== 'number' || length <= 0) {
+            cadError('box', `Invalid length: ${length} (must be positive number)`);
+            return result;
+        }
+        if (typeof width !== 'number' || width <= 0) {
+            cadError('box', `Invalid width: ${width} (must be positive number)`);
+            return result;
+        }
+        if (typeof height !== 'number' || height <= 0) {
+            cadError('box', `Invalid height: ${height} (must be positive number)`);
+            return result;
+        }
+
+        try {
+            if (centered) {
+                // center on X/Y, but bottom at Z=0 (good for 3D printing)
+                const box = new oc.BRepPrimAPI_MakeBox_3(
+                    new oc.gp_Pnt_3(-length/2, -width/2, 0),
+                    length, width, height
+                );
+                result._shape = box.Shape();
+                box.delete();
+            } else {
+                // corner at origin
+                const box = new oc.BRepPrimAPI_MakeBox_2(length, width, height);
+                result._shape = box.Shape();
+                box.delete();
+            }
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('box', 'Failed to create box shape (result is null)');
+            }
+        } catch (e) {
+            cadError('box', 'Exception creating box', e);
         }
 
         return result;
@@ -309,10 +363,28 @@ class Workplane {
     cylinder(radius, height, centered = true) {
         const result = new Workplane(this._plane);
 
-        // Use simple constructor - creates cylinder at origin along Z axis
-        const cyl = new oc.BRepPrimAPI_MakeCylinder_1(radius, height);
-        result._shape = cyl.Shape();
-        cyl.delete();
+        // Validate inputs
+        if (typeof radius !== 'number' || radius <= 0) {
+            cadError('cylinder', `Invalid radius: ${radius} (must be positive number)`);
+            return result;
+        }
+        if (typeof height !== 'number' || height <= 0) {
+            cadError('cylinder', `Invalid height: ${height} (must be positive number)`);
+            return result;
+        }
+
+        try {
+            // Use simple constructor - creates cylinder at origin along Z axis
+            const cyl = new oc.BRepPrimAPI_MakeCylinder_1(radius, height);
+            result._shape = cyl.Shape();
+            cyl.delete();
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('cylinder', 'Failed to create cylinder shape (result is null)');
+            }
+        } catch (e) {
+            cadError('cylinder', 'Exception creating cylinder', e);
+        }
 
         return result;
     }
@@ -322,9 +394,25 @@ class Workplane {
      */
     sphere(radius) {
         const result = new Workplane(this._plane);
-        const sphere = new oc.BRepPrimAPI_MakeSphere_1(radius);
-        result._shape = sphere.Shape();
-        sphere.delete();
+
+        // Validate inputs
+        if (typeof radius !== 'number' || radius <= 0) {
+            cadError('sphere', `Invalid radius: ${radius} (must be positive number)`);
+            return result;
+        }
+
+        try {
+            const sphere = new oc.BRepPrimAPI_MakeSphere_1(radius);
+            result._shape = sphere.Shape();
+            sphere.delete();
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('sphere', 'Failed to create sphere shape (result is null)');
+            }
+        } catch (e) {
+            cadError('sphere', 'Exception creating sphere', e);
+        }
+
         return result;
     }
 
@@ -461,48 +549,69 @@ class Workplane {
      * Create a hole through the shape along Z axis at XY center
      */
     hole(diameter, depth = null) {
-        if (!this._shape) return this;
+        if (!this._shape) {
+            cadError('hole', 'Cannot create hole: no shape exists');
+            return this;
+        }
 
         const result = new Workplane(this._plane);
+
+        // Validate inputs
+        if (typeof diameter !== 'number' || diameter <= 0) {
+            cadError('hole', `Invalid diameter: ${diameter} (must be positive number)`);
+            result._shape = this._shape;
+            return result;
+        }
+
         const radius = diameter / 2;
 
-        // Get bounding box to determine hole depth
-        const bbox = new oc.Bnd_Box_1();
-        oc.BRepBndLib.Add(this._shape, bbox, false);
-        const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
-        const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
-        bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
-        bbox.delete();
+        try {
+            // Get bounding box to determine hole depth
+            const bbox = new oc.Bnd_Box_1();
+            oc.BRepBndLib.Add(this._shape, bbox, false);
+            const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+            const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+            bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+            bbox.delete();
 
-        const zHeight = (zMax.current - zMin.current) + 2;  // slightly taller than shape
+            const zHeight = (zMax.current - zMin.current) + 2;  // slightly taller than shape
 
-        // Create cylinder at origin using simple constructor
-        const cylinder = new oc.BRepPrimAPI_MakeCylinder_1(radius, zHeight);
-        let cylShape = cylinder.Shape();
-        cylinder.delete();
+            // Create cylinder at origin using simple constructor
+            const cylinder = new oc.BRepPrimAPI_MakeCylinder_1(radius, zHeight);
+            let cylShape = cylinder.Shape();
+            cylinder.delete();
 
-        // Translate cylinder to correct position (center XY, start below zMin)
-        const centerX = (xMin.current + xMax.current) / 2;
-        const centerY = (yMin.current + yMax.current) / 2;
-        const zBottom = zMin.current - 1;
+            // Translate cylinder to correct position (center XY, start below zMin)
+            const centerX = (xMin.current + xMax.current) / 2;
+            const centerY = (yMin.current + yMax.current) / 2;
+            const zBottom = zMin.current - 1;
 
-        const transform = new oc.gp_Trsf_1();
-        transform.SetTranslation_1(new oc.gp_Vec_4(centerX, centerY, zBottom));
-        const transformer = new oc.BRepBuilderAPI_Transform_2(cylShape, transform, true);
-        cylShape = transformer.Shape();
-        transformer.delete();
-        transform.delete();
+            const transform = new oc.gp_Trsf_1();
+            transform.SetTranslation_1(new oc.gp_Vec_4(centerX, centerY, zBottom));
+            const transformer = new oc.BRepBuilderAPI_Transform_2(cylShape, transform, true);
+            cylShape = transformer.Shape();
+            transformer.delete();
+            transform.delete();
 
-        // Boolean cut
-        const cut = new oc.BRepAlgoAPI_Cut_3(this._shape, cylShape, new oc.Message_ProgressRange_1());
-        cut.Build(new oc.Message_ProgressRange_1());
+            // Boolean cut
+            const cut = new oc.BRepAlgoAPI_Cut_3(this._shape, cylShape, new oc.Message_ProgressRange_1());
+            cut.Build(new oc.Message_ProgressRange_1());
 
-        if (cut.IsDone()) {
-            result._shape = cut.Shape();
-        } else {
+            if (cut.IsDone()) {
+                result._shape = cut.Shape();
+                if (!result._shape || result._shape.IsNull()) {
+                    cadError('hole', 'Boolean cut succeeded but result shape is null');
+                    result._shape = this._shape;
+                }
+            } else {
+                cadError('hole', 'Boolean cut operation failed (IsDone=false)');
+                result._shape = this._shape;
+            }
+            cut.delete();
+        } catch (e) {
+            cadError('hole', 'Exception creating hole', e);
             result._shape = this._shape;
         }
-        cut.delete();
 
         return result;
     }
@@ -512,70 +621,112 @@ class Workplane {
      * Uses BRepFilletAPI_MakeChamfer
      */
     chamfer(distance) {
-        if (!this._shape) return this;
+        if (!this._shape) {
+            cadError('chamfer', 'Cannot chamfer: no shape exists');
+            return this;
+        }
+
+        // Validate inputs
+        if (typeof distance !== 'number' || distance <= 0) {
+            cadError('chamfer', `Invalid distance: ${distance} (must be positive number)`);
+            return this;
+        }
 
         const result = new Workplane(this._plane);
 
         // Try different constructor patterns
-        let chamferBuilder;
-        if (typeof oc.BRepFilletAPI_MakeChamfer === 'function') {
-            chamferBuilder = new oc.BRepFilletAPI_MakeChamfer(this._shape);
-        } else if (typeof oc.BRepFilletAPI_MakeChamfer_1 === 'function') {
-            chamferBuilder = new oc.BRepFilletAPI_MakeChamfer_1(this._shape);
-        } else {
-            // Fallback to fillet if chamfer not available
-            console.warn('Chamfer not available, using fillet instead');
+        let chamferBuilder = null;
+        const constructors = ['BRepFilletAPI_MakeChamfer_1', 'BRepFilletAPI_MakeChamfer'];
+
+        for (const ctorName of constructors) {
+            if (typeof oc[ctorName] === 'function') {
+                try {
+                    chamferBuilder = new oc[ctorName](this._shape);
+                    break;
+                } catch (e) {
+                    console.warn(`Chamfer constructor ${ctorName} failed:`, e.message);
+                }
+            }
+        }
+
+        if (!chamferBuilder) {
+            cadError('chamfer', 'No working chamfer constructor found, falling back to fillet');
             return this.fillet(distance);
         }
 
-        let edges = this._selectedEdges;
-        if (edges.length === 0) {
-            // Chamfer all edges
-            const explorer = new oc.TopExp_Explorer_2(
-                this._shape,
-                oc.TopAbs_ShapeEnum.TopAbs_EDGE,
-                oc.TopAbs_ShapeEnum.TopAbs_SHAPE
-            );
-            while (explorer.More()) {
-                const edge = oc.TopoDS.Edge_1(explorer.Current());
-                try {
-                    if (typeof chamferBuilder.Add_2 === 'function') {
-                        chamferBuilder.Add_2(distance, edge);
-                    } else if (typeof chamferBuilder.Add === 'function') {
-                        chamferBuilder.Add(distance, edge);
-                    }
-                } catch (e) {
-                    // Skip edges that can't be chamfered
-                }
-                explorer.Next();
-            }
-            explorer.delete();
-        } else {
-            for (const edge of edges) {
-                try {
-                    if (typeof chamferBuilder.Add_2 === 'function') {
-                        chamferBuilder.Add_2(distance, edge);
-                    } else if (typeof chamferBuilder.Add === 'function') {
-                        chamferBuilder.Add(distance, edge);
-                    }
-                } catch (e) {
-                    // Skip edges that can't be chamfered
-                }
+        // Find the Add method
+        let addMethod = null;
+        for (const methodName of ['Add_2', 'Add_1', 'Add']) {
+            if (typeof chamferBuilder[methodName] === 'function') {
+                addMethod = methodName;
+                break;
             }
         }
 
+        if (!addMethod) {
+            cadError('chamfer', 'No Add method found on chamfer builder');
+            chamferBuilder.delete();
+            result._shape = this._shape;
+            return result;
+        }
+
+        let edges = this._selectedEdges;
+        let edgesAdded = 0;
+
         try {
+            if (edges.length === 0) {
+                // Chamfer all edges
+                const explorer = new oc.TopExp_Explorer_2(
+                    this._shape,
+                    oc.TopAbs_ShapeEnum.TopAbs_EDGE,
+                    oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+                );
+                while (explorer.More()) {
+                    const edge = oc.TopoDS.Edge_1(explorer.Current());
+                    try {
+                        chamferBuilder[addMethod](distance, edge);
+                        edgesAdded++;
+                    } catch (e) {
+                        // Some edges may not be chamferable
+                    }
+                    explorer.Next();
+                }
+                explorer.delete();
+            } else {
+                for (const edge of edges) {
+                    try {
+                        chamferBuilder[addMethod](distance, edge);
+                        edgesAdded++;
+                    } catch (e) {
+                        // Some edges may not be chamferable
+                    }
+                }
+            }
+
+            if (edgesAdded === 0) {
+                cadError('chamfer', 'No edges were added to chamfer builder');
+                chamferBuilder.delete();
+                result._shape = this._shape;
+                return result;
+            }
+
             chamferBuilder.Build(new oc.Message_ProgressRange_1());
             if (chamferBuilder.IsDone()) {
                 result._shape = chamferBuilder.Shape();
+                if (!result._shape || result._shape.IsNull()) {
+                    cadError('chamfer', 'Chamfer succeeded but result shape is null');
+                    result._shape = this._shape;
+                }
             } else {
+                cadError('chamfer', 'Chamfer build failed (IsDone=false)');
                 result._shape = this._shape;
             }
         } catch (e) {
+            cadError('chamfer', 'Exception during chamfer', e);
             result._shape = this._shape;
         }
-        chamferBuilder.delete();
 
+        chamferBuilder.delete();
         return result;
     }
 
@@ -583,36 +734,77 @@ class Workplane {
      * Apply fillet to selected edges
      */
     fillet(radius) {
-        if (!this._shape) return this;
+        if (!this._shape) {
+            cadError('fillet', 'Cannot fillet: no shape exists');
+            return this;
+        }
+
+        // Validate inputs
+        if (typeof radius !== 'number' || radius <= 0) {
+            cadError('fillet', `Invalid radius: ${radius} (must be positive number)`);
+            return this;
+        }
 
         const result = new Workplane(this._plane);
 
-        // Try different constructor patterns
-        let filletBuilder;
-        try {
-            if (typeof oc.BRepFilletAPI_MakeFillet === 'function') {
-                filletBuilder = new oc.BRepFilletAPI_MakeFillet(this._shape);
-            } else if (typeof oc.BRepFilletAPI_MakeFillet_1 === 'function') {
-                // Try with just shape first
-                filletBuilder = new oc.BRepFilletAPI_MakeFillet_1(this._shape);
-            } else if (typeof oc.BRepFilletAPI_MakeFillet_2 === 'function') {
-                filletBuilder = new oc.BRepFilletAPI_MakeFillet_2(
-                    this._shape,
-                    oc.ChFi3d_FilletShape.ChFi3d_Rational
-                );
+        // Try different constructor patterns for BRepFilletAPI_MakeFillet
+        // The constructor requires (shape, ChFi3d_FilletShape) - both parameters
+        let filletBuilder = null;
+
+        // Get the fillet shape enum - default to Rational which is the most common
+        const filletShape = oc.ChFi3d_FilletShape?.ChFi3d_Rational;
+
+        // Try constructors in order of preference
+        const constructors = [
+            'BRepFilletAPI_MakeFillet_1',  // requires 2 params: (shape, filletShape)
+            'BRepFilletAPI_MakeFillet_2',
+            'BRepFilletAPI_MakeFillet'
+        ];
+
+        for (const ctorName of constructors) {
+            if (typeof oc[ctorName] === 'function') {
+                try {
+                    // Always try with both parameters since that's what OpenCascade.js expects
+                    if (filletShape !== undefined) {
+                        filletBuilder = new oc[ctorName](this._shape, filletShape);
+                    } else {
+                        // Fallback to trying with just shape (might not work)
+                        filletBuilder = new oc[ctorName](this._shape);
+                    }
+                    break;
+                } catch (e) {
+                    console.warn(`Fillet constructor ${ctorName} failed:`, e.message);
+                }
             }
-        } catch (e) {
-            // If construction fails, return unchanged shape
+        }
+
+        if (!filletBuilder) {
+            cadError('fillet', 'No working fillet constructor found. Available: ' +
+                Object.keys(oc).filter(k => k.includes('MakeFillet')).join(', '));
             result._shape = this._shape;
             return result;
         }
 
-        if (!filletBuilder) {
+        // Find the Add method - try different variants
+        let addMethod = null;
+        const addMethodNames = ['Add_2', 'Add_1', 'Add'];
+        for (const methodName of addMethodNames) {
+            if (typeof filletBuilder[methodName] === 'function') {
+                addMethod = methodName;
+                break;
+            }
+        }
+
+        if (!addMethod) {
+            cadError('fillet', 'No Add method found on fillet builder');
+            filletBuilder.delete();
             result._shape = this._shape;
             return result;
         }
 
         let edges = this._selectedEdges;
+        let edgesAdded = 0;
+
         if (edges.length === 0) {
             // Fillet all edges
             const explorer = new oc.TopExp_Explorer_2(
@@ -623,13 +815,10 @@ class Workplane {
             while (explorer.More()) {
                 const edge = oc.TopoDS.Edge_1(explorer.Current());
                 try {
-                    if (typeof filletBuilder.Add_2 === 'function') {
-                        filletBuilder.Add_2(radius, edge);
-                    } else if (typeof filletBuilder.Add === 'function') {
-                        filletBuilder.Add(radius, edge);
-                    }
+                    filletBuilder[addMethod](radius, edge);
+                    edgesAdded++;
                 } catch (e) {
-                    // Skip edges that can't be filleted
+                    // Some edges may not be fillettable - that's ok
                 }
                 explorer.Next();
             }
@@ -637,25 +826,35 @@ class Workplane {
         } else {
             for (const edge of edges) {
                 try {
-                    if (typeof filletBuilder.Add_2 === 'function') {
-                        filletBuilder.Add_2(radius, edge);
-                    } else if (typeof filletBuilder.Add === 'function') {
-                        filletBuilder.Add(radius, edge);
-                    }
+                    filletBuilder[addMethod](radius, edge);
+                    edgesAdded++;
                 } catch (e) {
                     // Skip edges that can't be filleted
                 }
             }
         }
 
+        if (edgesAdded === 0) {
+            cadError('fillet', 'No edges were added to fillet builder');
+            filletBuilder.delete();
+            result._shape = this._shape;
+            return result;
+        }
+
         try {
             filletBuilder.Build(new oc.Message_ProgressRange_1());
             if (filletBuilder.IsDone()) {
                 result._shape = filletBuilder.Shape();
+                if (!result._shape || result._shape.IsNull()) {
+                    cadError('fillet', 'Fillet succeeded but result shape is null');
+                    result._shape = this._shape;
+                }
             } else {
+                cadError('fillet', 'Fillet build failed (IsDone=false)');
                 result._shape = this._shape;
             }
         } catch (e) {
+            cadError('fillet', 'Exception during fillet', e);
             result._shape = this._shape;
         }
         filletBuilder.delete();
@@ -667,17 +866,41 @@ class Workplane {
      * Boolean union with another shape
      */
     union(other) {
-        if (!this._shape || !other._shape) return this;
+        if (!this._shape) {
+            cadError('union', 'Cannot union: this shape is null');
+            return this;
+        }
+        if (!other || !other._shape) {
+            cadError('union', 'Cannot union: other shape is null');
+            return this;
+        }
 
         const result = new Workplane(this._plane);
-        const fuse = new oc.BRepAlgoAPI_Fuse_3(
-            this._shape,
-            other._shape,
-            new oc.Message_ProgressRange_1()
-        );
-        fuse.Build(new oc.Message_ProgressRange_1());
-        result._shape = fuse.Shape();
-        fuse.delete();
+
+        try {
+            const fuse = new oc.BRepAlgoAPI_Fuse_3(
+                this._shape,
+                other._shape,
+                new oc.Message_ProgressRange_1()
+            );
+            fuse.Build(new oc.Message_ProgressRange_1());
+
+            if (fuse.IsDone()) {
+                result._shape = fuse.Shape();
+                if (!result._shape || result._shape.IsNull()) {
+                    cadError('union', 'Fuse succeeded but result shape is null');
+                    result._shape = this._shape;
+                }
+            } else {
+                cadError('union', 'Fuse operation failed (IsDone=false)');
+                result._shape = this._shape;
+            }
+            fuse.delete();
+        } catch (e) {
+            cadError('union', 'Exception during union', e);
+            result._shape = this._shape;
+        }
+
         return result;
     }
 
@@ -685,17 +908,41 @@ class Workplane {
      * Boolean cut (subtract another shape)
      */
     cut(other) {
-        if (!this._shape || !other._shape) return this;
+        if (!this._shape) {
+            cadError('cut', 'Cannot cut: this shape is null');
+            return this;
+        }
+        if (!other || !other._shape) {
+            cadError('cut', 'Cannot cut: other shape is null');
+            return this;
+        }
 
         const result = new Workplane(this._plane);
-        const cut = new oc.BRepAlgoAPI_Cut_3(
-            this._shape,
-            other._shape,
-            new oc.Message_ProgressRange_1()
-        );
-        cut.Build(new oc.Message_ProgressRange_1());
-        result._shape = cut.Shape();
-        cut.delete();
+
+        try {
+            const cut = new oc.BRepAlgoAPI_Cut_3(
+                this._shape,
+                other._shape,
+                new oc.Message_ProgressRange_1()
+            );
+            cut.Build(new oc.Message_ProgressRange_1());
+
+            if (cut.IsDone()) {
+                result._shape = cut.Shape();
+                if (!result._shape || result._shape.IsNull()) {
+                    cadError('cut', 'Cut succeeded but result shape is null');
+                    result._shape = this._shape;
+                }
+            } else {
+                cadError('cut', 'Cut operation failed (IsDone=false)');
+                result._shape = this._shape;
+            }
+            cut.delete();
+        } catch (e) {
+            cadError('cut', 'Exception during cut', e);
+            result._shape = this._shape;
+        }
+
         return result;
     }
 
@@ -703,17 +950,41 @@ class Workplane {
      * Boolean intersection
      */
     intersect(other) {
-        if (!this._shape || !other._shape) return this;
+        if (!this._shape) {
+            cadError('intersect', 'Cannot intersect: this shape is null');
+            return this;
+        }
+        if (!other || !other._shape) {
+            cadError('intersect', 'Cannot intersect: other shape is null');
+            return this;
+        }
 
         const result = new Workplane(this._plane);
-        const common = new oc.BRepAlgoAPI_Common_3(
-            this._shape,
-            other._shape,
-            new oc.Message_ProgressRange_1()
-        );
-        common.Build(new oc.Message_ProgressRange_1());
-        result._shape = common.Shape();
-        common.delete();
+
+        try {
+            const common = new oc.BRepAlgoAPI_Common_3(
+                this._shape,
+                other._shape,
+                new oc.Message_ProgressRange_1()
+            );
+            common.Build(new oc.Message_ProgressRange_1());
+
+            if (common.IsDone()) {
+                result._shape = common.Shape();
+                if (!result._shape || result._shape.IsNull()) {
+                    cadError('intersect', 'Intersection succeeded but result shape is null');
+                    result._shape = this._shape;
+                }
+            } else {
+                cadError('intersect', 'Intersection operation failed (IsDone=false)');
+                result._shape = this._shape;
+            }
+            common.delete();
+        } catch (e) {
+            cadError('intersect', 'Exception during intersection', e);
+            result._shape = this._shape;
+        }
+
         return result;
     }
 
@@ -721,17 +992,38 @@ class Workplane {
      * Translate the shape
      */
     translate(x, y, z) {
-        if (!this._shape) return this;
+        if (!this._shape) {
+            cadError('translate', 'Cannot translate: no shape exists');
+            return this;
+        }
+
+        // Validate inputs
+        if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') {
+            cadError('translate', `Invalid translation values: (${x}, ${y}, ${z})`);
+            return this;
+        }
 
         const result = new Workplane(this._plane);
-        const transform = new oc.gp_Trsf_1();
-        transform.SetTranslation_1(new oc.gp_Vec_4(x, y, z));
 
-        const builder = new oc.BRepBuilderAPI_Transform_2(this._shape, transform, true);
-        result._shape = builder.Shape();
+        try {
+            const transform = new oc.gp_Trsf_1();
+            transform.SetTranslation_1(new oc.gp_Vec_4(x, y, z));
 
-        builder.delete();
-        transform.delete();
+            const builder = new oc.BRepBuilderAPI_Transform_2(this._shape, transform, true);
+            result._shape = builder.Shape();
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('translate', 'Transform succeeded but result shape is null');
+                result._shape = this._shape;
+            }
+
+            builder.delete();
+            transform.delete();
+        } catch (e) {
+            cadError('translate', 'Exception during translation', e);
+            result._shape = this._shape;
+        }
+
         return result;
     }
 
@@ -739,22 +1031,54 @@ class Workplane {
      * Rotate the shape around an axis
      */
     rotate(axisX, axisY, axisZ, angleDegrees) {
-        if (!this._shape) return this;
+        if (!this._shape) {
+            cadError('rotate', 'Cannot rotate: no shape exists');
+            return this;
+        }
+
+        // Validate inputs
+        if (typeof axisX !== 'number' || typeof axisY !== 'number' || typeof axisZ !== 'number') {
+            cadError('rotate', `Invalid axis values: (${axisX}, ${axisY}, ${axisZ})`);
+            return this;
+        }
+        if (typeof angleDegrees !== 'number') {
+            cadError('rotate', `Invalid angle: ${angleDegrees}`);
+            return this;
+        }
+
+        // Check for zero-length axis
+        const axisLength = Math.sqrt(axisX*axisX + axisY*axisY + axisZ*axisZ);
+        if (axisLength < 1e-10) {
+            cadError('rotate', 'Axis cannot be zero-length');
+            return this;
+        }
 
         const result = new Workplane(this._plane);
-        const axis = new oc.gp_Ax1_2(
-            new oc.gp_Pnt_1(),
-            new oc.gp_Dir_4(axisX, axisY, axisZ)
-        );
-        const transform = new oc.gp_Trsf_1();
-        transform.SetRotation_1(axis, angleDegrees * Math.PI / 180);
 
-        const builder = new oc.BRepBuilderAPI_Transform_2(this._shape, transform, true);
-        result._shape = builder.Shape();
+        try {
+            const axis = new oc.gp_Ax1_2(
+                new oc.gp_Pnt_1(),
+                new oc.gp_Dir_4(axisX, axisY, axisZ)
+            );
+            const transform = new oc.gp_Trsf_1();
+            transform.SetRotation_1(axis, angleDegrees * Math.PI / 180);
 
-        builder.delete();
-        transform.delete();
-        axis.delete();
+            const builder = new oc.BRepBuilderAPI_Transform_2(this._shape, transform, true);
+            result._shape = builder.Shape();
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('rotate', 'Transform succeeded but result shape is null');
+                result._shape = this._shape;
+            }
+
+            builder.delete();
+            transform.delete();
+            axis.delete();
+        } catch (e) {
+            cadError('rotate', 'Exception during rotation', e);
+            result._shape = this._shape;
+        }
+
         return result;
     }
 
