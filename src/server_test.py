@@ -951,6 +951,87 @@ def test_3mf_export(server):
 
 
 # ##################################################################
+# test javascript ast parser
+# verifies acorn and astring work in browser for code parsing/generation
+def test_javascript_ast_parser(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(f"{server}/")
+
+        # Test acorn (parser) and astring (code generator) in browser
+        result = page.evaluate("""async () => {
+            try {
+                // Load acorn and astring from CDN as ES modules
+                const acorn = await import('https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm');
+                const astring = await import('https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm');
+
+                // Test code to parse
+                const testCode = `const x = 10;
+const y = 20;
+const result = x + y;`;
+
+                // Parse code to AST
+                const ast = acorn.parse(testCode, { ecmaVersion: 2022 });
+
+                if (!ast || !ast.body) {
+                    return { success: false, error: 'Failed to parse AST' };
+                }
+
+                // Verify AST structure
+                const nodeCount = ast.body.length;
+                if (nodeCount !== 3) {
+                    return { success: false, error: `Expected 3 statements, got ${nodeCount}` };
+                }
+
+                // Modify AST: change x = 10 to x = 42
+                if (ast.body[0].declarations[0].init.value !== 10) {
+                    return { success: false, error: 'First value not 10' };
+                }
+                ast.body[0].declarations[0].init.value = 42;
+                ast.body[0].declarations[0].init.raw = '42';
+
+                // Generate code back from modified AST
+                const generatedCode = astring.generate(ast);
+
+                if (!generatedCode.includes('42')) {
+                    return { success: false, error: 'Generated code does not contain modified value' };
+                }
+
+                // Parse the generated code again to verify it's valid
+                const reparsedAst = acorn.parse(generatedCode, { ecmaVersion: 2022 });
+                if (!reparsedAst || reparsedAst.body.length !== 3) {
+                    return { success: false, error: 'Regenerated code failed to parse' };
+                }
+
+                return {
+                    success: true,
+                    originalCode: testCode,
+                    modifiedCode: generatedCode,
+                    nodeCount: nodeCount,
+                    acornVersion: acorn.version || 'loaded',
+                    astringVersion: astring.version || 'loaded'
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        assert result["success"], f"AST parser test failed: {result.get('error', 'unknown')}"
+        assert '42' in result.get("modifiedCode", ""), "Modified code should contain 42"
+
+        print(f"Acorn version: {result.get('acornVersion')}")
+        print(f"Astring version: {result.get('astringVersion')}")
+        print(f"Node count: {result.get('nodeCount')}")
+        print(f"Original: {result.get('originalCode')[:30]}...")
+        print(f"Modified: {result.get('modifiedCode')[:30]}...")
+
+        page.close()
+        browser.close()
+
+
+# ##################################################################
 # test cad library operations
 # verifies all cad library functions work correctly
 def test_cad_library_operations(server):
