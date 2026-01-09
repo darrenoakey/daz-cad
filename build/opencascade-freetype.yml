@@ -1,0 +1,107 @@
+# Custom opencascade.js build with FreeType support for text rendering
+# Run with: docker run --rm -v "$(pwd):/src" -u "$(id -u):$(id -g)" donalffons/opencascade.js opencascade-freetype.yml
+
+mainBuild:
+  name: opencascade.custom.js
+  bindings:
+    # Core geometry
+    - symbol: gp_Pnt
+    - symbol: gp_Vec
+    - symbol: gp_Dir
+    - symbol: gp_Ax1
+    - symbol: gp_Ax2
+    - symbol: gp_Trsf
+    - symbol: gp_XYZ
+
+    # Topology
+    - symbol: TopoDS
+    - symbol: TopoDS_Shape
+    - symbol: TopoDS_Solid
+    - symbol: TopoDS_Face
+    - symbol: TopoDS_Edge
+    - symbol: TopoDS_Wire
+    - symbol: TopoDS_Compound
+    - symbol: TopoDS_Iterator
+    - symbol: TopExp_Explorer
+    - symbol: TopAbs_ShapeEnum
+    - symbol: TopAbs_Orientation
+    - symbol: TopLoc_Location
+
+    # BRep building
+    - symbol: BRep_Builder
+    - symbol: BRep_Tool
+    - symbol: BRepBuilderAPI_MakeEdge
+    - symbol: BRepBuilderAPI_MakeFace
+    - symbol: BRepBuilderAPI_MakeWire
+    - symbol: BRepBuilderAPI_Transform
+
+    # Primitives
+    - symbol: BRepPrimAPI_MakeBox
+    - symbol: BRepPrimAPI_MakeCylinder
+    - symbol: BRepPrimAPI_MakeSphere
+    - symbol: BRepPrimAPI_MakeCone
+    - symbol: BRepPrimAPI_MakePrism
+
+    # Boolean operations
+    - symbol: BRepAlgoAPI_Cut
+    - symbol: BRepAlgoAPI_Fuse
+    - symbol: BRepAlgoAPI_Common
+
+    # Chamfer and fillet
+    - symbol: BRepFilletAPI_MakeChamfer
+    - symbol: BRepFilletAPI_MakeFillet
+    - symbol: ChFi3d_FilletShape
+
+    # Bounding box
+    - symbol: Bnd_Box
+    - symbol: BRepBndLib
+
+    # Meshing
+    - symbol: BRepMesh_IncrementalMesh
+    - symbol: TopLoc_Location
+    - symbol: Poly_Triangulation
+
+    # Mass properties
+    - symbol: BRepGProp
+    - symbol: GProp_GProps
+
+    # Shape upgrade
+    - symbol: ShapeUpgrade_UnifySameDomain
+
+    # Export
+    - symbol: StlAPI_Writer
+
+    # Collections
+    - symbol: TopTools_ListOfShape
+    - symbol: TopTools_IndexedMapOfShape
+    - symbol: TColgp_Array1OfPnt
+    - symbol: TColStd_Array1OfReal
+
+    # Message/Progress
+    - symbol: Message_ProgressRange
+
+    # Font/Text (FreeType required)
+    - symbol: Font_BRepFont
+    - symbol: Font_BRepTextBuilder
+    - symbol: Font_FontAspect
+    - symbol: Font_FontMgr
+    - symbol: Font_FTFont
+    - symbol: Font_FTLibrary
+    - symbol: Font_TextFormatter
+    - symbol: StdPrs_BRepFont
+    - symbol: StdPrs_BRepTextBuilder
+
+    # String types for font paths
+    - symbol: TCollection_AsciiString
+    - symbol: NCollection_String
+    - symbol: NCollection_Utf8String
+
+  emccFlags:
+    - -O3
+    - -sEXPORT_ES6=1
+    - -sUSE_ES6_IMPORT_META=0
+    - -sEXPORTED_RUNTIME_METHODS=['FS']
+    - -sINITIAL_MEMORY=100MB
+    - -sMAXIMUM_MEMORY=4GB
+    - -sALLOW_MEMORY_GROWTH=1
+    - -sUSE_FREETYPE=1

@@ -17,6 +17,8 @@ class CADViewer {
         this.controls = null;
         this.meshGroup = null;
         this._userHasInteracted = false; // Track if user has moved/zoomed the view
+        this._opacity = 0.9; // Global opacity for all parts (default 90%)
+        this._materials = []; // Track materials for opacity updates
 
         this._init();
         this._animate();
@@ -102,6 +104,30 @@ class CADViewer {
      */
     clear() {
         this._disposeGroup(this.meshGroup);
+        this._materials = [];
+    }
+
+    /**
+     * Set global opacity for all parts
+     * @param {number} opacity - Value from 0 to 1
+     */
+    setOpacity(opacity) {
+        this._opacity = Math.max(0.1, Math.min(1.0, opacity));
+        const isTransparent = this._opacity < 1.0;
+
+        for (const material of this._materials) {
+            material.opacity = this._opacity;
+            material.transparent = isTransparent;
+            material.depthWrite = !isTransparent;
+            material.needsUpdate = true;
+        }
+    }
+
+    /**
+     * Get current opacity value
+     */
+    getOpacity() {
+        return this._opacity;
     }
 
     /**
@@ -116,6 +142,9 @@ class CADViewer {
      * @param {Object|Array} meshData - Object with vertices/indices/color, or array of such objects
      */
     displayMesh(meshData) {
+        // Clear tracked materials before adding new ones
+        this._materials = [];
+
         // Create new meshes first (before removing old ones to reduce flicker)
         const newMeshGroup = new THREE.Group();
 
@@ -140,12 +169,21 @@ class CADViewer {
                 color = this._parseColor(data.color);
             }
 
+            // Use global opacity setting
+            const isTransparent = this._opacity < 1.0;
+
             // Material for solid
             const solidMaterial = new THREE.MeshPhongMaterial({
                 color: color,
                 shininess: 30,
-                side: THREE.DoubleSide
+                side: THREE.DoubleSide,
+                transparent: isTransparent,
+                opacity: this._opacity,
+                depthWrite: !isTransparent  // Disable depth write for transparent objects
             });
+
+            // Track material for opacity updates
+            this._materials.push(solidMaterial);
 
             // Create mesh
             const mesh = new THREE.Mesh(geometry, solidMaterial);

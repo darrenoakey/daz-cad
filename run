@@ -134,6 +134,60 @@ def command_install(_: argparse.Namespace) -> int:
 
 
 # ##################################################################
+# command build-opencascade
+# builds custom opencascade.js with FreeType using Docker
+def command_build_opencascade(_: argparse.Namespace) -> int:
+    import shutil
+    build_dir = PROJECT_ROOT / "build"
+    config_file = build_dir / "opencascade-freetype.yml"
+
+    if not config_file.exists():
+        print(f"Error: Build config not found at {config_file}")
+        return 1
+
+    # Check if Docker is available
+    if shutil.which("docker") is None:
+        print("Error: Docker is not installed or not in PATH")
+        return 1
+
+    # Check if Docker daemon is running
+    result = subprocess.run(["docker", "info"], capture_output=True)
+    if result.returncode != 0:
+        print("Error: Docker daemon is not running. Start Docker Desktop and try again.")
+        return 1
+
+    print("Building custom opencascade.js with FreeType support...")
+    print("This may take several minutes...")
+
+    # Run the Docker build
+    result = subprocess.run(
+        [
+            "docker", "run", "--rm",
+            "-v", f"{build_dir}:/src",
+            "-u", f"{subprocess.getoutput('id -u')}:{subprocess.getoutput('id -g')}",
+            "--platform", "linux/amd64",
+            "donalffons/opencascade.js",
+            "opencascade-freetype.yml"
+        ],
+        cwd=build_dir
+    )
+
+    if result.returncode == 0:
+        # Copy output to static folder
+        output_js = build_dir / "opencascade.custom.js"
+        output_wasm = build_dir / "opencascade.custom.wasm"
+        if output_js.exists():
+            shutil.copy(output_js, PROJECT_ROOT / "static" / "opencascade.custom.js")
+        if output_wasm.exists():
+            shutil.copy(output_wasm, PROJECT_ROOT / "static" / "opencascade.custom.wasm")
+        print("Build complete! Files copied to static/")
+    else:
+        print("Build failed.")
+
+    return result.returncode
+
+
+# ##################################################################
 # main
 # parses arguments and dispatches to appropriate command handler
 def main(argv: list[str]) -> int:
@@ -155,6 +209,9 @@ def main(argv: list[str]) -> int:
 
     p_install = sub.add_parser("install", help="Install dependencies")
     p_install.set_defaults(func=command_install)
+
+    p_build_oc = sub.add_parser("build-opencascade", help="Build custom opencascade.js with FreeType")
+    p_build_oc.set_defaults(func=command_build_opencascade)
 
     args = parser.parse_args(argv)
     return args.func(args)

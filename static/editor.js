@@ -80,6 +80,9 @@ class CADEditor {
         this._download3MFBtn = document.getElementById('download-3mf-btn');
         this._download3MFBtn.addEventListener('click', () => this._download3MF());
 
+        // Set up opacity slider
+        this._initOpacitySlider();
+
         // Initialize file manager
         this._initFileManager();
 
@@ -966,6 +969,23 @@ result;
         console.error(`${format} export failed:`, error);
         this._setStatus('error', 'Export failed');
         this._showError(`${format} export failed: ${error}`);
+    }
+
+    _initOpacitySlider() {
+        const slider = document.getElementById('opacity-slider');
+        const valueDisplay = document.getElementById('opacity-value');
+
+        if (slider && valueDisplay) {
+            // Set initial value from viewer
+            slider.value = this.viewer.getOpacity() * 100;
+            valueDisplay.textContent = slider.value + '%';
+
+            slider.addEventListener('input', () => {
+                const opacity = parseInt(slider.value) / 100;
+                this.viewer.setOpacity(opacity);
+                valueDisplay.textContent = slider.value + '%';
+            });
+        }
     }
 
     _initConsole() {

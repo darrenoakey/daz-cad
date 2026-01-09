@@ -12,6 +12,12 @@
  *     .chamfer(1);
  */
 
+// Import opentype.js for font parsing
+import * as opentype from './opentype.module.js';
+
+// Import JSZip for 3MF export (using jsDelivr ESM conversion)
+import JSZip from 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm';
+
 // Ensure OpenCascade is loaded
 let oc = null;
 
@@ -129,6 +135,72 @@ function clearLastError() {
     lastError = null;
 }
 
+// Font cache for text rendering using opentype.js
+let loadedFonts = new Map(); // fontPath -> opentype.Font object
+let defaultFontPath = null;
+
+/**
+ * Load a font file and parse it with opentype.js
+ * @param {string} url - URL to fetch the font from
+ * @param {string} [fontName] - Name to cache the font under (defaults to filename)
+ * @returns {Promise<string>} - The font name/path
+ */
+async function loadFont(url, fontName = null) {
+    // Generate font name if not provided
+    if (!fontName) {
+        fontName = url.split('/').pop() || 'font.ttf';
+    }
+
+    // Check if already loaded
+    if (loadedFonts.has(fontName)) {
+        return fontName;
+    }
+
+    // Fetch the font file
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch font from ${url}: ${response.status}`);
+    }
+    const fontData = await response.arrayBuffer();
+
+    // Parse with opentype.js (imported as ES module)
+    const font = opentype.parse(fontData);
+    if (!font) {
+        throw new Error(`Failed to parse font from ${url}`);
+    }
+
+    loadedFonts.set(fontName, font);
+    console.log(`[CAD] Loaded font: ${fontName}`);
+
+    // Set as default if this is the first font loaded
+    if (!defaultFontPath) {
+        defaultFontPath = fontName;
+    }
+
+    return fontName;
+}
+
+/**
+ * Get a loaded font by name
+ * @param {string} fontName - The font name/path
+ * @returns {object|null} - The opentype.Font object or null
+ */
+function getFont(fontName) {
+    return loadedFonts.get(fontName) || null;
+}
+
+/**
+ * Get the default font, loading Overpass Bold if needed
+ */
+async function getDefaultFont() {
+    if (defaultFontPath && loadedFonts.has(defaultFontPath)) {
+        return defaultFontPath;
+    }
+
+    // Load Overpass Bold as default (good for CAD text - clear and readable)
+    return await loadFont('/static/fonts/Overpass-Bold.ttf', '/fonts/Overpass-Bold.ttf');
+}
+
 /**
  * Initialize the CAD library with an OpenCascade instance
  * Works in both main thread (sets window globals) and web worker (just sets oc)
@@ -140,7 +212,8 @@ function initCAD(openCascadeInstance) {
         window.Workplane = Workplane;
         window.Assembly = Assembly;
         window.Profiler = Profiler;
-        window.CAD = { oc, Workplane, Assembly, Profiler, getLastError, clearLastError };
+        window.loadFont = loadFont;
+        window.CAD = { oc, Workplane, Assembly, Profiler, loadFont, getLastError, clearLastError };
     }
 }
 
@@ -515,6 +588,7 @@ class Workplane {
         result._selectionMode = this._selectionMode;
         result._color = hexColor;
         result._isModifier = this._isModifier;
+        result._modifiers = this._modifiers;
         return result;
     }
 
@@ -531,6 +605,7 @@ class Workplane {
         result._selectionMode = this._selectionMode;
         result._color = this._color;
         result._isModifier = true;
+        result._modifiers = this._modifiers;
         return result;
     }
 
@@ -658,6 +733,407 @@ class Workplane {
         }
 
         return result;
+    }
+
+    /**
+     * Create 3D text using opentype.js for font parsing
+     * @param {string} textString - The text to render
+     * @param {number} fontSize - Height of the text (font size in model units)
+     * @param {number} [depth=null] - Depth to extrude (if null, defaults to fontSize/5)
+     * @param {string} [fontName=null] - Font name (uses default Overpass Bold if null)
+     * @returns {Workplane} - New Workplane with text shape
+     */
+    text(textString, fontSize, depth = null, fontName = null) {
+        const result = new Workplane(this._plane);
+
+        // Get the font
+        const font = fontName ? getFont(fontName) : getFont(defaultFontPath);
+        if (!font) {
+            cadError('text', `Font not loaded: ${fontName || defaultFontPath}. Call loadFont() first.`);
+            return result;
+        }
+
+        // Default depth
+        if (depth === null) {
+            depth = fontSize / 5;
+        }
+
+        try {
+            // Get path commands from opentype.js (font units are typically 1000 or 2048 per em)
+            const unitsPerEm = font.unitsPerEm || 1000;
+            const scale = fontSize / unitsPerEm;
+
+            // Get the path at origin
+            const path = font.getPath(textString, 0, 0, unitsPerEm);
+
+            // Parse path commands into contours
+            const contours = [];
+            let currentContour = [];
+
+            for (const cmd of path.commands) {
+                if (cmd.type === 'M') {
+                    // Start new contour
+                    if (currentContour.length > 0) {
+                        contours.push(currentContour);
+                    }
+                    currentContour = [{ type: 'M', x: cmd.x * scale, y: cmd.y * scale }];
+                } else if (cmd.type === 'L') {
+                    currentContour.push({ type: 'L', x: cmd.x * scale, y: cmd.y * scale });
+                } else if (cmd.type === 'Q') {
+                    currentContour.push({
+                        type: 'Q',
+                        x1: cmd.x1 * scale, y1: cmd.y1 * scale,
+                        x: cmd.x * scale, y: cmd.y * scale
+                    });
+                } else if (cmd.type === 'C') {
+                    currentContour.push({
+                        type: 'C',
+                        x1: cmd.x1 * scale, y1: cmd.y1 * scale,
+                        x2: cmd.x2 * scale, y2: cmd.y2 * scale,
+                        x: cmd.x * scale, y: cmd.y * scale
+                    });
+                } else if (cmd.type === 'Z') {
+                    currentContour.push({ type: 'Z' });
+                    contours.push(currentContour);
+                    currentContour = [];
+                }
+            }
+            if (currentContour.length > 0) {
+                contours.push(currentContour);
+            }
+
+            if (contours.length === 0) {
+                cadError('text', 'No contours found in text path');
+                return result;
+            }
+
+            // Convert contours to OpenCascade wires
+            const wires = [];
+            for (const contour of contours) {
+                const wire = this._contourToWire(contour);
+                if (wire) {
+                    wires.push(wire);
+                }
+            }
+
+            if (wires.length === 0) {
+                cadError('text', 'Failed to create wires from text path');
+                return result;
+            }
+
+            // Build faces from wires (outer contours with holes)
+            // Determine which wires are outer contours vs holes by checking orientation
+            const faces = this._wiresToFaces(wires);
+
+            if (faces.length === 0) {
+                cadError('text', 'Failed to create faces from wires');
+                return result;
+            }
+
+            // Extrude all faces and fuse them together
+            const extrusionVec = new oc.gp_Vec_4(0, 0, depth);
+            let combinedShape = null;
+
+            for (const face of faces) {
+                const prism = new oc.BRepPrimAPI_MakePrism_1(face, extrusionVec, false, true);
+                prism.Build(new oc.Message_ProgressRange_1());
+
+                if (prism.IsDone()) {
+                    const solidShape = prism.Shape();
+                    if (combinedShape === null) {
+                        combinedShape = solidShape;
+                    } else {
+                        // Fuse with existing shape
+                        const fuse = new oc.BRepAlgoAPI_Fuse_3(combinedShape, solidShape, new oc.Message_ProgressRange_1());
+                        if (fuse.IsDone()) {
+                            combinedShape = fuse.Shape();
+                        }
+                    }
+                }
+            }
+
+            if (combinedShape) {
+                // Center the text around the origin
+                const bbox = new oc.Bnd_Box_1();
+                oc.BRepBndLib.Add(combinedShape, bbox, false);
+                const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+                const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+                bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+
+                // Calculate center offset
+                const centerX = (xMin.current + xMax.current) / 2;
+                const centerY = (yMin.current + yMax.current) / 2;
+                const centerZ = (zMin.current + zMax.current) / 2;
+
+                // Translate to center
+                const trsf = new oc.gp_Trsf_1();
+                trsf.SetTranslation_1(new oc.gp_Vec_4(-centerX, -centerY, -centerZ));
+                const transform = new oc.BRepBuilderAPI_Transform_2(combinedShape, trsf, true);
+                transform.Build(new oc.Message_ProgressRange_1());
+
+                if (transform.IsDone()) {
+                    result._shape = transform.Shape();
+                } else {
+                    result._shape = combinedShape;
+                }
+            } else {
+                cadError('text', 'Failed to extrude text');
+            }
+
+        } catch (e) {
+            cadError('text', 'Exception creating text', e);
+        }
+
+        return result;
+    }
+
+    /**
+     * Convert a contour (array of path commands) to an OpenCascade wire
+     * @private
+     */
+    _contourToWire(contour) {
+        if (contour.length < 2) return null;
+
+        try {
+            const wireBuilder = new oc.BRepBuilderAPI_MakeWire_1();
+            let startX = 0, startY = 0;
+            let currentX = 0, currentY = 0;
+
+            for (let i = 0; i < contour.length; i++) {
+                const cmd = contour[i];
+
+                if (cmd.type === 'M') {
+                    startX = cmd.x;
+                    startY = cmd.y;
+                    currentX = cmd.x;
+                    currentY = cmd.y;
+                } else if (cmd.type === 'L') {
+                    const p1 = new oc.gp_Pnt_3(currentX, currentY, 0);
+                    const p2 = new oc.gp_Pnt_3(cmd.x, cmd.y, 0);
+                    const edge = new oc.BRepBuilderAPI_MakeEdge_3(p1, p2);
+                    if (edge.IsDone()) {
+                        wireBuilder.Add_1(edge.Edge());
+                    }
+                    currentX = cmd.x;
+                    currentY = cmd.y;
+                } else if (cmd.type === 'Q') {
+                    // Quadratic bezier - convert to cubic for OpenCascade
+                    // Cubic control points from quadratic: P0, P0 + 2/3*(P1-P0), P2 + 2/3*(P1-P2), P2
+                    const p0x = currentX, p0y = currentY;
+                    const p1x = cmd.x1, p1y = cmd.y1;
+                    const p2x = cmd.x, p2y = cmd.y;
+
+                    const cp1x = p0x + 2/3 * (p1x - p0x);
+                    const cp1y = p0y + 2/3 * (p1y - p0y);
+                    const cp2x = p2x + 2/3 * (p1x - p2x);
+                    const cp2y = p2y + 2/3 * (p1y - p2y);
+
+                    const edge = this._makeBezierEdge(p0x, p0y, cp1x, cp1y, cp2x, cp2y, p2x, p2y);
+                    if (edge) {
+                        wireBuilder.Add_1(edge);
+                    }
+                    currentX = cmd.x;
+                    currentY = cmd.y;
+                } else if (cmd.type === 'C') {
+                    // Cubic bezier
+                    const edge = this._makeBezierEdge(
+                        currentX, currentY,
+                        cmd.x1, cmd.y1,
+                        cmd.x2, cmd.y2,
+                        cmd.x, cmd.y
+                    );
+                    if (edge) {
+                        wireBuilder.Add_1(edge);
+                    }
+                    currentX = cmd.x;
+                    currentY = cmd.y;
+                } else if (cmd.type === 'Z') {
+                    // Close path - add edge back to start if needed
+                    if (Math.abs(currentX - startX) > 1e-6 || Math.abs(currentY - startY) > 1e-6) {
+                        const p1 = new oc.gp_Pnt_3(currentX, currentY, 0);
+                        const p2 = new oc.gp_Pnt_3(startX, startY, 0);
+                        const edge = new oc.BRepBuilderAPI_MakeEdge_3(p1, p2);
+                        if (edge.IsDone()) {
+                            wireBuilder.Add_1(edge.Edge());
+                        }
+                    }
+                }
+            }
+
+            if (wireBuilder.IsDone()) {
+                return wireBuilder.Wire();
+            }
+        } catch (e) {
+            console.warn('[CAD] Failed to create wire from contour:', e);
+        }
+
+        return null;
+    }
+
+    /**
+     * Create a cubic bezier edge
+     * @private
+     */
+    _makeBezierEdge(x0, y0, x1, y1, x2, y2, x3, y3) {
+        try {
+            // Create control points array
+            const poles = new oc.TColgp_Array1OfPnt_2(1, 4);
+            poles.SetValue(1, new oc.gp_Pnt_3(x0, y0, 0));
+            poles.SetValue(2, new oc.gp_Pnt_3(x1, y1, 0));
+            poles.SetValue(3, new oc.gp_Pnt_3(x2, y2, 0));
+            poles.SetValue(4, new oc.gp_Pnt_3(x3, y3, 0));
+
+            // Create bezier curve
+            const bezier = new oc.Geom_BezierCurve_1(poles);
+            const handleBezier = new oc.Handle_Geom_Curve_2(bezier);
+
+            // Create edge from curve
+            const edgeMaker = new oc.BRepBuilderAPI_MakeEdge_24(handleBezier);
+            if (edgeMaker.IsDone()) {
+                return edgeMaker.Edge();
+            }
+        } catch (e) {
+            console.warn('[CAD] Failed to create bezier edge:', e);
+        }
+        return null;
+    }
+
+    /**
+     * Calculate signed area of a wire (positive = CCW, negative = CW)
+     * @private
+     */
+    _wireSignedArea(wire) {
+        // Get vertices from the wire edges
+        const points = [];
+        const explorer = new oc.TopExp_Explorer_2(wire, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+
+        while (explorer.More()) {
+            const edge = oc.TopoDS.Edge_1(explorer.Current());
+            const curve = oc.BRep_Tool.Curve_2(edge, { current: 0 }, { current: 0 });
+            if (curve && !curve.IsNull()) {
+                // Sample start point of each edge
+                const startParam = curve.get().FirstParameter();
+                const pt = curve.get().Value(startParam);
+                points.push({ x: pt.X(), y: pt.Y() });
+            }
+            explorer.Next();
+        }
+
+        if (points.length < 3) return 0;
+
+        // Shoelace formula for signed area
+        let area = 0;
+        for (let i = 0; i < points.length; i++) {
+            const j = (i + 1) % points.length;
+            area += points[i].x * points[j].y;
+            area -= points[j].x * points[i].y;
+        }
+        return area / 2;
+    }
+
+    /**
+     * Get bounding box of a wire
+     * @private
+     */
+    _wireBoundingBox(wire) {
+        const bbox = new oc.Bnd_Box_1();
+        oc.BRepBndLib.Add(wire, bbox, false);
+        const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+        const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+        bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+        return {
+            minX: xMin.current, minY: yMin.current,
+            maxX: xMax.current, maxY: yMax.current,
+            width: xMax.current - xMin.current,
+            height: yMax.current - yMin.current
+        };
+    }
+
+    /**
+     * Check if bbox1 is inside bbox2
+     * @private
+     */
+    _bboxInside(inner, outer) {
+        return inner.minX >= outer.minX && inner.maxX <= outer.maxX &&
+               inner.minY >= outer.minY && inner.maxY <= outer.maxY;
+    }
+
+    /**
+     * Convert wires to faces, handling outer contours and holes
+     * Uses signed area to determine winding and bounding boxes to match holes to outers
+     * @private
+     */
+    _wiresToFaces(wires) {
+        if (wires.length === 0) return [];
+
+        // Calculate properties for each wire
+        const wireData = wires.map((wire, idx) => ({
+            wire,
+            idx,
+            area: this._wireSignedArea(wire),
+            bbox: this._wireBoundingBox(wire)
+        }));
+
+        // Separate into outer contours (positive area) and holes (negative area)
+        // Note: convention may vary, so we use absolute area to find outer contours
+        // Outer contours typically have larger absolute area
+        const sortedByArea = [...wireData].sort((a, b) => Math.abs(b.area) - Math.abs(a.area));
+
+        // Group wires: outer contours contain holes
+        const groups = []; // Each group: { outer: wireData, holes: [wireData] }
+        const assigned = new Set();
+
+        for (const wd of sortedByArea) {
+            if (assigned.has(wd.idx)) continue;
+
+            // Check if this wire is inside any existing outer
+            let foundOuter = null;
+            for (const group of groups) {
+                if (this._bboxInside(wd.bbox, group.outer.bbox)) {
+                    // Sign should be opposite for hole
+                    if ((wd.area > 0) !== (group.outer.area > 0)) {
+                        foundOuter = group;
+                        break;
+                    }
+                }
+            }
+
+            if (foundOuter) {
+                // This is a hole inside an existing outer
+                foundOuter.holes.push(wd);
+                assigned.add(wd.idx);
+            } else {
+                // This is a new outer contour
+                groups.push({ outer: wd, holes: [] });
+                assigned.add(wd.idx);
+            }
+        }
+
+        // Create faces with holes
+        const faces = [];
+        for (const group of groups) {
+            try {
+                // Create face from outer wire
+                const faceMaker = new oc.BRepBuilderAPI_MakeFace_15(group.outer.wire, true);
+                if (!faceMaker.IsDone()) continue;
+
+                let face = faceMaker.Face();
+
+                // Add holes
+                for (const hole of group.holes) {
+                    const faceWithHole = new oc.BRepBuilderAPI_MakeFace_22(face, hole.wire);
+                    if (faceWithHole.IsDone()) {
+                        face = faceWithHole.Face();
+                    }
+                }
+
+                faces.push(face);
+            } catch (e) {
+                console.warn('[CAD] Failed to create face from wire:', e);
+            }
+        }
+
+        return faces;
     }
 
     /**
@@ -1647,14 +2123,12 @@ class Workplane {
     }
 
     /**
-     * Convert shape to mesh for Three.js rendering
+     * Convert a shape to mesh data (internal helper)
      */
-    toMesh(linearDeflection = 0.1, angularDeflection = 0.5) {
-        if (!this._shape) return null;
-
+    _shapeToMeshData(shape, color, isModifier, linearDeflection, angularDeflection) {
         // Mesh the shape
         new oc.BRepMesh_IncrementalMesh_2(
-            this._shape,
+            shape,
             linearDeflection,
             false,
             angularDeflection,
@@ -1663,13 +2137,12 @@ class Workplane {
 
         const vertices = [];
         const indices = [];
-        const normals = [];
 
         let indexOffset = 0;
 
         // Iterate over faces
         const faceExplorer = new oc.TopExp_Explorer_2(
-            this._shape,
+            shape,
             oc.TopAbs_ShapeEnum.TopAbs_FACE,
             oc.TopAbs_ShapeEnum.TopAbs_SHAPE
         );
@@ -1678,8 +2151,6 @@ class Workplane {
             const face = oc.TopoDS.Face_1(faceExplorer.Current());
             const location = new oc.TopLoc_Location_1();
 
-            // Get triangulation - BRep_Tool.Triangulation takes (face, location, meshPurpose)
-            // Third arg is Poly_MeshPurpose, use 0 for default (Poly_MeshPurpose_NONE)
             const triangulation = oc.BRep_Tool.Triangulation(face, location, 0);
 
             if (triangulation && !triangulation.IsNull()) {
@@ -1688,21 +2159,18 @@ class Workplane {
                 const nbNodes = tri.NbNodes();
                 const nbTriangles = tri.NbTriangles();
 
-                // Get vertices
                 for (let i = 1; i <= nbNodes; i++) {
                     const node = tri.Node(i);
                     const transformed = node.Transformed(transform);
                     vertices.push(transformed.X(), transformed.Y(), transformed.Z());
                 }
 
-                // Get triangles
                 for (let i = 1; i <= nbTriangles; i++) {
                     const triangle = tri.Triangle(i);
                     let n1 = triangle.Value(1) - 1 + indexOffset;
                     let n2 = triangle.Value(2) - 1 + indexOffset;
                     let n3 = triangle.Value(3) - 1 + indexOffset;
 
-                    // Check face orientation
                     if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) {
                         [n2, n3] = [n3, n2];
                     }
@@ -1722,9 +2190,66 @@ class Workplane {
         return {
             vertices: new Float32Array(vertices),
             indices: new Uint32Array(indices),
-            color: this._color,
-            isModifier: this._isModifier
+            color: color,
+            isModifier: isModifier
         };
+    }
+
+    /**
+     * Convert shape to mesh for Three.js rendering
+     * If this part has modifiers, returns an array of meshes:
+     * - The main part with modifier volumes subtracted (for visibility)
+     * - Each modifier as a separate mesh
+     */
+    toMesh(linearDeflection = 0.1, angularDeflection = 0.5) {
+        if (!this._shape) return null;
+
+        // If no modifiers, just return the simple mesh
+        if (!this._modifiers || this._modifiers.length === 0) {
+            return this._shapeToMeshData(this._shape, this._color, this._isModifier, linearDeflection, angularDeflection);
+        }
+
+        // We have modifiers - need to:
+        // 1. Subtract modifier volumes from main shape for display
+        // 2. Also render modifier volumes separately
+
+        const meshes = [];
+
+        // Create a cut shape: main minus all modifiers
+        let displayShape = this._shape;
+        for (const modifier of this._modifiers) {
+            if (modifier._shape) {
+                const cutOp = new oc.BRepAlgoAPI_Cut_3(displayShape, modifier._shape, new oc.Message_ProgressRange_1());
+                cutOp.Build(new oc.Message_ProgressRange_1());
+                if (cutOp.IsDone()) {
+                    displayShape = cutOp.Shape();
+                }
+            }
+        }
+
+        // Mesh the cut main shape
+        const mainMesh = this._shapeToMeshData(displayShape, this._color, false, linearDeflection, angularDeflection);
+        if (mainMesh && mainMesh.vertices.length > 0) {
+            meshes.push(mainMesh);
+        }
+
+        // Mesh each modifier separately
+        for (const modifier of this._modifiers) {
+            if (modifier._shape) {
+                const modMesh = this._shapeToMeshData(
+                    modifier._shape,
+                    modifier._color || '#FFFFFF',
+                    true,
+                    linearDeflection,
+                    angularDeflection
+                );
+                if (modMesh && modMesh.vertices.length > 0) {
+                    meshes.push(modMesh);
+                }
+            }
+        }
+
+        return meshes;
     }
 
     /**
@@ -1775,22 +2300,33 @@ class Workplane {
     async to3MF(linearDeflection = 0.1, angularDeflection = 0.5) {
         if (!this._shape) return null;
 
-        const mesh = this.toMesh(linearDeflection, angularDeflection);
-        if (!mesh) return null;
+        // For 3MF export, we need the ORIGINAL shape mesh (not with modifiers cut out)
+        // Use the internal _shapeToMeshData method to get the original shape
+        const mainMesh = this._shapeToMeshData(this._shape, this._color, false, linearDeflection, angularDeflection);
+        if (!mainMesh || !mainMesh.vertices || mainMesh.vertices.length === 0) return null;
 
         const partData = {
-            mesh: mesh,
+            mesh: mainMesh,
             color: this._color || '#FF1493',
             name: 'Part_1'
         };
 
         // Add modifiers if present
         if (this._modifiers && this._modifiers.length > 0) {
-            partData.modifiers = this._modifiers.map((mod, idx) => ({
-                mesh: mod.toMesh(linearDeflection, angularDeflection),
-                color: mod._color || '#FFFFFF',
-                name: `Modifier_${idx + 1}`
-            }));
+            partData.modifiers = [];
+            for (let idx = 0; idx < this._modifiers.length; idx++) {
+                const mod = this._modifiers[idx];
+                if (mod._shape) {
+                    const modMesh = this._shapeToMeshData(mod._shape, mod._color, true, linearDeflection, angularDeflection);
+                    if (modMesh && modMesh.vertices && modMesh.vertices.length > 0) {
+                        partData.modifiers.push({
+                            mesh: modMesh,
+                            color: mod._color || '#FFFFFF',
+                            name: `Modifier_${idx + 1}`
+                        });
+                    }
+                }
+            }
         }
 
         return await ThreeMFExporter.generate([partData]);
@@ -1820,9 +2356,20 @@ class Assembly {
     /**
      * Convert all parts to mesh data for rendering
      * Returns array of mesh objects with vertices, indices, and color
+     * Flattens arrays when parts have modifiers (which return multiple meshes)
      */
     toMesh(linearDeflection = 0.1, angularDeflection = 0.5) {
-        return this._parts.map(part => part.toMesh(linearDeflection, angularDeflection));
+        const result = [];
+        for (const part of this._parts) {
+            const mesh = part.toMesh(linearDeflection, angularDeflection);
+            if (Array.isArray(mesh)) {
+                // Part has modifiers - flatten the array
+                result.push(...mesh.filter(m => m != null));
+            } else if (mesh) {
+                result.push(mesh);
+            }
+        }
+        return result;
     }
 
     /**
@@ -1895,25 +2442,37 @@ class Assembly {
         const parts = [];
         for (let i = 0; i < this._parts.length; i++) {
             const part = this._parts[i];
-            const mesh = part.toMesh(linearDeflection, angularDeflection);
-            if (mesh) {
-                const partData = {
-                    mesh: mesh,
-                    color: part._color || '#808080',
-                    name: `Part_${i + 1}`
-                };
+            if (!part._shape) continue;
 
-                // Add modifiers if present
-                if (part._modifiers && part._modifiers.length > 0) {
-                    partData.modifiers = part._modifiers.map((mod, idx) => ({
-                        mesh: mod.toMesh(linearDeflection, angularDeflection),
-                        color: mod._color || '#FFFFFF',
-                        name: `Modifier_${idx + 1}`
-                    }));
+            // Get the ORIGINAL shape mesh (not with modifiers cut out)
+            const mainMesh = part._shapeToMeshData(part._shape, part._color, false, linearDeflection, angularDeflection);
+            if (!mainMesh || !mainMesh.vertices || mainMesh.vertices.length === 0) continue;
+
+            const partData = {
+                mesh: mainMesh,
+                color: part._color || '#808080',
+                name: `Part_${i + 1}`
+            };
+
+            // Add modifiers if present
+            if (part._modifiers && part._modifiers.length > 0) {
+                partData.modifiers = [];
+                for (let idx = 0; idx < part._modifiers.length; idx++) {
+                    const mod = part._modifiers[idx];
+                    if (mod._shape) {
+                        const modMesh = part._shapeToMeshData(mod._shape, mod._color, true, linearDeflection, angularDeflection);
+                        if (modMesh && modMesh.vertices && modMesh.vertices.length > 0) {
+                            partData.modifiers.push({
+                                mesh: modMesh,
+                                color: mod._color || '#FFFFFF',
+                                name: `Modifier_${idx + 1}`
+                            });
+                        }
+                    }
                 }
-
-                parts.push(partData);
             }
+
+            parts.push(partData);
         }
 
         if (parts.length === 0) return null;
@@ -1922,4 +2481,4 @@ class Assembly {
     }
 }
 
-export { initCAD, Workplane, Assembly, Profiler };
+export { initCAD, Workplane, Assembly, Profiler, loadFont, getDefaultFont };

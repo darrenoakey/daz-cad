@@ -901,7 +901,7 @@ def test_3mf_export(server):
             timeout=90000
         )
 
-        # test 3MF export for single shape and assembly
+        # test 3MF export for single shape, assembly, and text with modifier
         result = page.evaluate("""async () => {
             try {
                 // test single shape 3MF export
@@ -917,10 +917,20 @@ def test_3mf_export(server):
                 const assembly3MF = await assembly.to3MF(0.1, 0.3);
                 if (!assembly3MF) return { success: false, error: 'Assembly 3MF is null' };
 
+                // test 3MF export with text as modifier (like text-example.js)
+                await loadFont('/static/fonts/Overpass-Bold.ttf', '/fonts/Overpass-Bold.ttf');
+                const textShape = new Workplane('XY').text('Hi', 8, 0.3).color('#FFFFFF');
+                const baseBox = new Workplane('XY').box(40, 15, 1).color('#00FF00');
+                const withModifier = baseBox.withModifier(textShape);
+                const textAssembly = new Assembly().add(withModifier);
+                const textModifier3MF = await textAssembly.to3MF(0.1, 0.3);
+                if (!textModifier3MF) return { success: false, error: 'Text modifier 3MF is null' };
+
                 return {
                     success: true,
                     box3MFSize: box3MF.size,
-                    assembly3MFSize: assembly3MF.size
+                    assembly3MFSize: assembly3MF.size,
+                    textModifier3MFSize: textModifier3MF.size
                 };
             } catch (e) {
                 return { success: false, error: e.message, stack: e.stack };
@@ -930,9 +940,11 @@ def test_3mf_export(server):
         assert result["success"], f"3MF export test failed: {result.get('error', 'unknown')}"
         assert result.get("box3MFSize", 0) > 100, f"Box 3MF too small: {result.get('box3MFSize')}"
         assert result.get("assembly3MFSize", 0) > 100, f"Assembly 3MF too small: {result.get('assembly3MFSize')}"
+        assert result.get("textModifier3MFSize", 0) > 100, f"Text modifier 3MF too small: {result.get('textModifier3MFSize')}"
 
         print(f"Box 3MF size: {result.get('box3MFSize')} bytes")
         print(f"Assembly 3MF size: {result.get('assembly3MFSize')} bytes")
+        print(f"Text modifier 3MF size: {result.get('textModifier3MFSize')} bytes")
 
         page.close()
         browser.close()

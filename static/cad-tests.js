@@ -350,8 +350,26 @@ class CADTests {
         return changed;
     }
 
+    // Test: 3D text creates geometry using opentype.js
+    static async testText() {
+        // Load font first
+        await loadFont('/static/fonts/Overpass-Bold.ttf', '/fonts/Overpass-Bold.ttf');
+
+        // Create text
+        const textShape = new Workplane("XY").text("Hi", 10, 2);
+        const stats = this.getMeshStats(textShape);
+        const bbox = this.getBoundingBox(textShape);
+
+        const hasGeometry = stats && stats.vertexCount > 0 && stats.triangleCount > 0;
+        const hasReasonableSize = bbox && bbox.sizeX > 0 && bbox.sizeY > 0 && bbox.sizeZ > 0;
+
+        this.log('text', hasGeometry && hasReasonableSize,
+            `vertices: ${stats?.vertexCount}, triangles: ${stats?.triangleCount}, height: ${bbox?.sizeZ?.toFixed(1)}`);
+        return hasGeometry && hasReasonableSize;
+    }
+
     // Run all tests
-    static runAll() {
+    static async runAll() {
         console.log('=== CAD Library Test Suite ===\n');
         this.results = [];
 
@@ -384,6 +402,15 @@ class CADTests {
                 console.error(`Test threw error: ${e.message}`);
                 this.results.push({ name: 'unknown', passed: false, details: e.message });
             }
+        }
+
+        // Run async tests (text requires font loading)
+        console.log('\n--- Async Tests ---');
+        try {
+            await this.testText();
+        } catch (e) {
+            console.error(`Text test threw error: ${e.message}`);
+            this.results.push({ name: 'text', passed: false, details: e.message });
         }
 
         const passed = this.results.filter(r => r.passed).length;

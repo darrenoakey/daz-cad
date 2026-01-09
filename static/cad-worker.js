@@ -5,7 +5,7 @@
  * The main thread only handles UI and Three.js rendering.
  */
 
-import { initCAD, Workplane, Assembly, Profiler } from './cad.js';
+import { initCAD, Workplane, Assembly, Profiler, loadFont, getDefaultFont } from './cad.js';
 
 let oc = null;
 let isInitialized = false;
@@ -94,6 +94,17 @@ async function initOpenCascade() {
         // Initialize CAD library with this OpenCascade instance
         initCAD(oc);
 
+        // Pre-load default font for text rendering
+        postStatus('loading', 'Loading default font...');
+        try {
+            // Use Overpass Bold as default (more reliable than external CDN)
+            await loadFont('/static/fonts/Overpass-Bold.ttf', '/fonts/Overpass-Bold.ttf');
+            console.log('[CAD] Default font loaded');
+        } catch (fontError) {
+            console.warn('[CAD] Could not load default font:', fontError.message);
+            // Continue without font - text() will error if used
+        }
+
         isInitialized = true;
         postStatus('ready', 'Ready');
 
@@ -109,9 +120,9 @@ function executeCode(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    // Execute the code with Workplane, Assembly, and Profiler available
-    const fn = new Function('Workplane', 'Assembly', 'Profiler', code + '\nreturn result;');
-    const result = fn(Workplane, Assembly, Profiler);
+    // Execute the code with Workplane, Assembly, Profiler, and font functions available
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', code + '\nreturn result;');
+    const result = fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont);
 
     if (!result) {
         throw new Error('Code did not produce a result');
@@ -133,8 +144,8 @@ function executeForExport(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    const fn = new Function('Workplane', 'Assembly', 'Profiler', code + '\nreturn result;');
-    return fn(Workplane, Assembly, Profiler);
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', code + '\nreturn result;');
+    return fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont);
 }
 
 // Handle messages from main thread

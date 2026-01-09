@@ -538,6 +538,56 @@
             width: 14px;
             height: 14px;
         }
+
+        .opacity-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #8b949e;
+            font-size: 11px;
+            margin-right: 12px;
+            padding-right: 12px;
+            border-right: 1px solid #30363d;
+        }
+
+        .opacity-control label {
+            white-space: nowrap;
+        }
+
+        #opacity-slider {
+            width: 80px;
+            height: 4px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: #30363d;
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        #opacity-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #58a6ff;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        #opacity-slider::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            background: #58a6ff;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+
+        #opacity-value {
+            min-width: 32px;
+            text-align: right;
+        }
     </style>
     <script type="importmap">
     {
@@ -588,6 +638,11 @@
                 <div class="viewer-header">
                     <span>3D Preview</span>
                     <div class="toolbar">
+                        <div class="opacity-control">
+                            <label for="opacity-slider">Opacity:</label>
+                            <input type="range" id="opacity-slider" min="10" max="100" value="90">
+                            <span id="opacity-value">90%</span>
+                        </div>
                         <button id="download-stl-btn" class="toolbar-btn" disabled title="Download STL">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
