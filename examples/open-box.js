@@ -16,8 +16,12 @@ const inner = new Workplane("XY")
 // Cut out the interior to create the shell
 const shell = outer.cut(inner);
 
-// Apply fillet to all edges for a smooth look
-// Using 0.4mm radius (small enough for complex shell geometry)
-const result = shell.fillet(0.4).color("#3498db");
+// Chamfer the outside bottom edges (crisp base edge for printing)
+// Select bottom face, then its edges, then apply chamfer
+const chamfered = shell.faces("<Z").edges().chamfer(1);
+
+// Fillet all other edges (inside corners, top edges)
+// The chamfered edges will be skipped automatically
+const result = chamfered.fillet(0.4).color("#3498db");
 
 result;
