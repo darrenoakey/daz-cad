@@ -9,7 +9,7 @@ import { CADViewer } from './viewer.js';
 import { initCAD, Workplane, Assembly } from './cad.js';
 
 // Fallback code in case server load fails
-const FALLBACK_CODE = `// CAD Example
+const FALLBACK_CODE = `// CAD Example - Create a simple box
 const result = new Workplane("XY").box(20, 20, 20);
 result;
 `;
@@ -18,18 +18,28 @@ class CADEditor {
     constructor() {
         this.editor = null;
         this.viewer = null;
-        this.oc = null;
+        this.oc = null; // Main thread OpenCascade (for testing/direct API)
         this.debounceTimer = null;
-        this.debounceDelay = 800; // ms
+        this.debounceDelay = 2000; // ms - longer delay for complex operations
         this.isReady = false;
-        this._currentResult = null; // Store current Workplane or Assembly for export
         this._currentFile = null; // Current file being edited
         this._downloadSTLBtn = null;
         this._download3MFBtn = null;
 
+        // Web Worker for background rendering
+        this._worker = null;
+        this._workerReady = false;
+        this._isRendering = false; // True when worker is rendering
+        this._isDirty = false; // True if code changed during render
+        this._pendingCode = null; // Code to render after current render completes
+        this._renderRequestId = 0; // Incremented for each render request
+
+        // Spare worker for instant swap when cancelling renders
+        this._spareWorker = null;
+        this._spareWorkerReady = false;
+
         // Chat state
         this._isProcessing = false; // True when waiting for agent response
-        this._isRendering = false; // True during render cycle
         this._skipSave = false; // True when file update came from agent
         this._chatInput = null;
         this._chatSendBtn = null;
@@ -42,6 +52,11 @@ class CADEditor {
         this._newFileInput = null;
         this._createFileBtn = null;
         this._availableFiles = [];
+
+        // Hot reload state
+        this._fileMtime = null; // Last known modification time
+        this._lastSaveTime = 0; // Timestamp of last save (to avoid reload loop)
+        this._fileWatchInterval = null;
 
         this._init();
     }
@@ -70,7 +85,11 @@ class CADEditor {
         // Load Monaco editor
         await this._loadMonaco();
 
-        // Initialize OpenCascade
+        // Initialize CAD Worker (background thread for OpenCascade)
+        // The worker handles rendering; main thread OC is for tests/direct API use
+        await this._initWorker();
+
+        // Initialize main-thread OpenCascade for testing and direct API calls
         await this._initOpenCascade();
 
         // Load default file from server
@@ -83,6 +102,9 @@ class CADEditor {
 
         // Enable chat now that everything is ready
         this._enableChat();
+
+        // Start file watcher for hot reload
+        this._startFileWatcher();
 
         // Initial render
         this._render();
@@ -144,8 +166,232 @@ class CADEditor {
         });
     }
 
+    // Create a worker instance and return promise when initialized
+    _createWorkerInstance(isMainWorker = true) {
+        return new Promise((resolve, reject) => {
+            const worker = new Worker('/static/cad-worker.js', { type: 'module' });
+
+            worker.onmessage = (e) => {
+                const { type, status, message, error, meshData, id } = e.data;
+
+                switch (type) {
+                    case 'loaded':
+                        worker.postMessage({ type: 'init', id: 0 });
+                        break;
+
+                    case 'initialized':
+                        resolve(worker);
+                        break;
+
+                    case 'status':
+                        if (isMainWorker) {
+                            this._setStatus(status === 'ready' ? 'ready' : 'loading', message);
+                        }
+                        break;
+
+                    case 'error':
+                        console.error('[Worker Error]', error);
+                        if (isMainWorker) {
+                            this._setStatus('error', 'Error');
+                            this._showError(error);
+                            this.viewer.showError();
+                            this._isRendering = false;
+                            this._checkPendingRender();
+                        }
+                        break;
+
+                    case 'renderComplete':
+                        if (isMainWorker) {
+                            this._handleRenderComplete(meshData, id);
+                        }
+                        break;
+
+                    case 'renderError':
+                        if (isMainWorker) {
+                            this._setStatus('error', 'Error');
+                            this._showError(error);
+                            this.viewer.showError();
+                            this._isRendering = false;
+                            this._checkPendingRender();
+                        }
+                        break;
+
+                    case 'busy':
+                        if (isMainWorker) {
+                            this._isDirty = true;
+                        }
+                        break;
+
+                    case 'exportSTLComplete':
+                        if (isMainWorker) {
+                            this._handleExportSTLComplete(e.data.buffer);
+                        }
+                        break;
+
+                    case 'exportSTLError':
+                        if (isMainWorker) {
+                            this._handleExportError('STL', error);
+                        }
+                        break;
+
+                    case 'export3MFComplete':
+                        if (isMainWorker) {
+                            this._handleExport3MFComplete(e.data.buffer);
+                        }
+                        break;
+
+                    case 'export3MFError':
+                        if (isMainWorker) {
+                            this._handleExportError('3MF', error);
+                        }
+                        break;
+                }
+            };
+
+            worker.onerror = (e) => {
+                console.error('[Worker Fatal Error]', e);
+                reject(new Error('Worker failed to load: ' + e.message));
+            };
+        });
+    }
+
+    // Attach the main worker message handlers to a worker
+    _attachWorkerHandlers(worker) {
+        worker.onmessage = (e) => {
+            const { type, status, message, error, meshData, id } = e.data;
+
+            switch (type) {
+                case 'loaded':
+                    worker.postMessage({ type: 'init', id: 0 });
+                    break;
+
+                case 'initialized':
+                    this._workerReady = true;
+                    break;
+
+                case 'status':
+                    this._setStatus(status === 'ready' ? 'ready' : 'loading', message);
+                    break;
+
+                case 'error':
+                    console.error('[Worker Error]', error);
+                    this._setStatus('error', 'Error');
+                    this._showError(error);
+                    this.viewer.showError();
+                    this._isRendering = false;
+                    this._checkPendingRender();
+                    break;
+
+                case 'renderComplete':
+                    this._handleRenderComplete(meshData, id);
+                    break;
+
+                case 'renderError':
+                    this._setStatus('error', 'Error');
+                    this._showError(error);
+                    this.viewer.showError();
+                    this._isRendering = false;
+                    this._checkPendingRender();
+                    break;
+
+                case 'busy':
+                    this._isDirty = true;
+                    break;
+
+                case 'exportSTLComplete':
+                    this._handleExportSTLComplete(e.data.buffer);
+                    break;
+
+                case 'exportSTLError':
+                    this._handleExportError('STL', error);
+                    break;
+
+                case 'export3MFComplete':
+                    this._handleExport3MFComplete(e.data.buffer);
+                    break;
+
+                case 'export3MFError':
+                    this._handleExportError('3MF', error);
+                    break;
+            }
+        };
+    }
+
+    async _initWorker() {
+        this._setStatus('loading', 'Starting CAD engine...');
+
+        // Initialize both main and spare workers in parallel
+        const [mainWorker, spareWorker] = await Promise.all([
+            this._createWorkerInstance(true),
+            this._createWorkerInstance(false)
+        ]);
+
+        this._worker = mainWorker;
+        this._workerReady = true;
+        this._attachWorkerHandlers(this._worker);
+
+        this._spareWorker = spareWorker;
+        this._spareWorkerReady = true;
+        console.log('[CAD] Both main and spare workers initialized');
+    }
+
+    _handleRenderComplete(meshData, requestId) {
+        // Ignore stale render results
+        if (requestId !== this._renderRequestId) {
+            console.log('Ignoring stale render result');
+            return;
+        }
+
+        this._isRendering = false;
+        this._hideError();
+
+        try {
+            if (meshData.isAssembly) {
+                // Assembly - display all meshes
+                if (meshData.meshes && meshData.meshes.length > 0) {
+                    this.viewer.displayMesh(meshData.meshes);
+                    this._setStatus('ready', 'Ready');
+                    this._downloadSTLBtn.disabled = false;
+                    this._download3MFBtn.disabled = false;
+                    this._saveFile();
+                } else {
+                    throw new Error('Assembly has no valid parts');
+                }
+            } else {
+                // Single shape
+                if (meshData.mesh) {
+                    this.viewer.displayMesh(meshData.mesh);
+                    this._setStatus('ready', 'Ready');
+                    this._downloadSTLBtn.disabled = false;
+                    this._download3MFBtn.disabled = false;
+                    this._saveFile();
+                } else {
+                    throw new Error('Failed to generate mesh');
+                }
+            }
+        } catch (error) {
+            this._setStatus('error', 'Error');
+            this._showError(error.message);
+            this.viewer.showError();
+        }
+
+        // Check if there's a pending render
+        this._checkPendingRender();
+    }
+
+    _checkPendingRender() {
+        if (this._isDirty && this._pendingCode !== null) {
+            this._isDirty = false;
+            const code = this._pendingCode;
+            this._pendingCode = null;
+            this._startRender(code);
+        }
+    }
+
     async _initOpenCascade() {
-        this._setStatus('loading', 'Loading OpenCascade...');
+        // Main thread OpenCascade for testing and direct API calls
+        // Worker handles the actual rendering for better performance
+        this._setStatus('loading', 'Loading CAD engine...');
 
         try {
             const cdnBase = 'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist';
@@ -171,14 +417,39 @@ class CADEditor {
             this._hideLoading();
 
         } catch (error) {
-            this._setStatus('error', 'Failed to load');
-            this._showError('Failed to initialize OpenCascade: ' + error.message);
-            throw error;
+            console.warn('Failed to initialize main-thread OpenCascade (worker will still handle rendering):', error);
+            // Still set ready if worker is available
+            if (this._workerReady) {
+                this.isReady = true;
+                this._setStatus('ready', 'Ready');
+                this._hideLoading();
+            }
         }
     }
 
     async _loadDefaultFile() {
         try {
+            // Check localStorage for last edited file
+            const lastFile = localStorage.getItem('cad-editor-last-file');
+
+            // If we have a remembered file, try to load it first
+            if (lastFile) {
+                try {
+                    const fileResponse = await fetch(`/api/models/${lastFile}`);
+                    if (fileResponse.ok) {
+                        const fileData = await fileResponse.json();
+                        this._currentFile = fileData.filename;
+                        this._fileMtime = fileData.mtime;
+                        this.editor.setValue(fileData.content);
+                        this._updateFilenameDisplay();
+                        return; // Successfully loaded remembered file
+                    }
+                } catch (e) {
+                    console.warn(`Could not load remembered file ${lastFile}, falling back to default`);
+                }
+            }
+
+            // Fall back to default file
             const response = await fetch('/api/models');
             if (!response.ok) throw new Error('Failed to list models');
 
@@ -190,13 +461,16 @@ class CADEditor {
 
             const fileData = await fileResponse.json();
             this._currentFile = fileData.filename;
+            this._fileMtime = fileData.mtime;
             this.editor.setValue(fileData.content);
             this._updateFilenameDisplay();
+            localStorage.setItem('cad-editor-last-file', this._currentFile);
 
         } catch (error) {
             console.warn('Failed to load default file from server:', error);
             this.editor.setValue(FALLBACK_CODE);
             this._currentFile = 'default.js';
+            this._fileMtime = null;
             this._updateFilenameDisplay();
         }
     }
@@ -205,6 +479,63 @@ class CADEditor {
         const el = document.getElementById('filename-display');
         if (el && this._currentFile) {
             el.textContent = this._currentFile;
+        }
+    }
+
+    _startFileWatcher() {
+        // Poll for file changes every 2 seconds
+        this._fileWatchInterval = setInterval(() => {
+            this._checkFileChanged();
+        }, 2000);
+    }
+
+    async _checkFileChanged() {
+        if (!this._currentFile || this._fileMtime === null) return;
+
+        // Don't check if we just saved (within last 3 seconds)
+        if (Date.now() - this._lastSaveTime < 3000) return;
+
+        // Don't check if currently rendering or processing chat
+        if (this._isRendering || this._isProcessing) return;
+
+        try {
+            const response = await fetch(`/api/models/${this._currentFile}/mtime`);
+            if (!response.ok) return;
+
+            const data = await response.json();
+            if (data.mtime !== this._fileMtime) {
+                console.log(`File ${this._currentFile} changed externally, reloading...`);
+                await this._reloadCurrentFile();
+            }
+        } catch (error) {
+            // Ignore errors during polling
+        }
+    }
+
+    async _reloadCurrentFile() {
+        if (!this._currentFile) return;
+
+        try {
+            const response = await fetch(`/api/models/${this._currentFile}`);
+            if (!response.ok) return;
+
+            const data = await response.json();
+            this._fileMtime = data.mtime;
+
+            // Update editor without triggering save
+            this._skipSave = true;
+            this.editor.setValue(data.content);
+
+            // Clear any pending debounce and render immediately
+            if (this.debounceTimer) {
+                clearTimeout(this.debounceTimer);
+                this.debounceTimer = null;
+            }
+            this._render();
+
+            console.log(`Reloaded ${this._currentFile}`);
+        } catch (error) {
+            console.warn('Failed to reload file:', error);
         }
     }
 
@@ -298,9 +629,13 @@ class CADEditor {
 
             const data = await response.json();
             this._currentFile = data.filename;
+            this._fileMtime = data.mtime;
             this.editor.setValue(data.content);
             this._updateFilenameDisplay();
             this._closeFileDropdown();
+
+            // Save to localStorage for persistence
+            localStorage.setItem('cad-editor-last-file', this._currentFile);
 
             // Trigger re-render
             this._render();
@@ -355,6 +690,9 @@ result;
             this._newFileInput.value = '';
             this._closeFileDropdown();
 
+            // Save to localStorage for persistence
+            localStorage.setItem('cad-editor-last-file', this._currentFile);
+
             // Trigger re-render
             this._render();
         } catch (error) {
@@ -374,13 +712,21 @@ result;
 
         try {
             const content = this.editor.getValue();
+            this._lastSaveTime = Date.now();
             const response = await fetch(`/api/models/${this._currentFile}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content })
             });
 
-            if (!response.ok) {
+            if (response.ok) {
+                // Update our known mtime to avoid triggering hot reload
+                const mtimeResponse = await fetch(`/api/models/${this._currentFile}/mtime`);
+                if (mtimeResponse.ok) {
+                    const data = await mtimeResponse.json();
+                    this._fileMtime = data.mtime;
+                }
+            } else {
                 console.warn('Failed to save file:', response.statusText);
             }
         } catch (error) {
@@ -394,90 +740,111 @@ result;
             clearTimeout(this.debounceTimer);
         }
 
-        // Show loading state
-        this._setStatus('loading', 'Compiling...');
+        // If currently rendering, cancel immediately
+        if (this._isRendering) {
+            this._cancelRender();
+        }
 
-        // Set new timer
+        // Set new timer - don't show "Compiling" until we actually start
         this.debounceTimer = setTimeout(() => {
             this._render();
         }, this.debounceDelay);
     }
 
-    _render() {
-        if (!this.isReady) return;
-
-        this._isRendering = true;
-        const code = this.editor.getValue();
-        this._hideError();
-        this._currentResult = null;
-        this._downloadSTLBtn.disabled = true;
-        this._download3MFBtn.disabled = true;
-
-        try {
-            // Create a sandboxed execution context
-            const result = this._executeCode(code);
-
-            if (result && result.isAssembly) {
-                // Assembly - convert all parts to mesh and display
-                const meshData = result.toMesh(0.1, 0.3);
-                if (meshData && meshData.length > 0) {
-                    this.viewer.displayMesh(meshData);
-                    this._setStatus('ready', 'Ready');
-                    this._currentResult = result;
-                    this._downloadSTLBtn.disabled = false;
-                    this._download3MFBtn.disabled = false;
-                    this._saveFile();
-                } else {
-                    throw new Error('Assembly has no valid parts');
-                }
-            } else if (result && result._shape) {
-                // Single Workplane - convert to mesh and display
-                const meshData = result.toMesh(0.1, 0.3);
-                if (meshData) {
-                    this.viewer.displayMesh(meshData);
-                    this._setStatus('ready', 'Ready');
-                    this._currentResult = result;
-                    this._downloadSTLBtn.disabled = false;
-                    this._download3MFBtn.disabled = false;
-                    this._saveFile();
-                } else {
-                    throw new Error('Failed to generate mesh from shape');
-                }
-            } else if (result && typeof result === 'object' && result.vertices) {
-                // Already mesh data - can't export to STL
-                this.viewer.displayMesh(result);
-                this._setStatus('ready', 'Ready');
-                this._saveFile();
-            } else {
-                throw new Error('Code must return a Workplane, Assembly, or mesh data');
-            }
-
-        } catch (error) {
-            this._setStatus('error', 'Error');
-            this._showError(error.message);
-            this.viewer.showError();
-            this._highlightError(error);
-            this._currentResult = null;
-            this._downloadSTLBtn.disabled = true;
-            this._download3MFBtn.disabled = true;
-        } finally {
+    _cancelRender() {
+        // Terminate the worker to cancel any in-progress render
+        if (this._worker) {
+            console.log('Cancelling render - terminating worker');
+            this._worker.terminate();
             this._isRendering = false;
+            this._isDirty = false;
+            this._pendingCode = null;
+
+            // Swap to spare worker if available (instant)
+            if (this._spareWorker && this._spareWorkerReady) {
+                console.log('[CAD] Swapping to spare worker (instant)');
+                this._worker = this._spareWorker;
+                this._workerReady = true;
+                this._attachWorkerHandlers(this._worker);
+                this._spareWorker = null;
+                this._spareWorkerReady = false;
+
+                // Start creating a new spare in the background
+                this._initSpareWorker();
+            } else {
+                // No spare available, need to wait for new worker
+                console.log('[CAD] No spare worker available, creating new one');
+                this._worker = null;
+                this._workerReady = false;
+                this._setStatus('loading', 'Restarting...');
+                this._recreateWorker();
+            }
         }
     }
 
-    _executeCode(code) {
-        // Create function with CAD globals available
-        // We wrap the code to capture the 'result' variable if defined
-        // The code should define a 'result' variable with the final shape
-        const wrappedCode = `
-            "use strict";
-            ${code}
-            return (typeof result !== 'undefined') ? result : undefined;
-        `;
+    // Create a new spare worker in the background
+    async _initSpareWorker() {
+        try {
+            console.log('[CAD] Starting spare worker initialization in background');
+            this._spareWorker = await this._createWorkerInstance(false);
+            this._spareWorkerReady = true;
+            console.log('[CAD] Spare worker ready');
+        } catch (error) {
+            console.error('[CAD] Failed to create spare worker:', error);
+            this._spareWorker = null;
+            this._spareWorkerReady = false;
+        }
+    }
 
-        // Execute in context with Workplane and Assembly available
-        const fn = new Function('Workplane', 'Assembly', 'oc', wrappedCode);
-        return fn(Workplane, Assembly, this.oc);
+    // Fallback: create new main worker when no spare available
+    async _recreateWorker() {
+        try {
+            console.log('[CAD] Creating new main worker');
+            const worker = await this._createWorkerInstance(true);
+            this._worker = worker;
+            this._workerReady = true;
+            this._attachWorkerHandlers(this._worker);
+            this.isReady = true;
+            this._setStatus('ready', 'Ready');
+
+            // Also create a spare now
+            this._initSpareWorker();
+        } catch (error) {
+            console.error('Failed to recreate worker:', error);
+        }
+    }
+
+    _render() {
+        if (!this._workerReady) return;
+
+        const code = this.editor.getValue();
+        this._hideError();
+        this._downloadSTLBtn.disabled = true;
+        this._download3MFBtn.disabled = true;
+
+        // If already rendering, mark dirty and save the pending code
+        if (this._isRendering) {
+            this._isDirty = true;
+            this._pendingCode = code;
+            return;
+        }
+
+        this._startRender(code);
+    }
+
+    _startRender(code) {
+        if (!this._workerReady || this._isRendering) return;
+
+        this._isRendering = true;
+        this._renderRequestId++;
+        this._setStatus('loading', 'Compiling...');
+
+        // Send code to worker for rendering
+        this._worker.postMessage({
+            type: 'render',
+            code: code,
+            id: this._renderRequestId
+        });
     }
 
     _setStatus(state, text) {
@@ -536,69 +903,57 @@ result;
     }
 
     _downloadSTL() {
-        if (!this._currentResult) {
-            console.warn('No shape to export');
+        if (!this._workerReady) {
+            this._showError('CAD engine not ready');
             return;
         }
 
-        try {
-            this._setStatus('loading', 'Exporting STL...');
-
-            // Generate STL blob
-            const blob = this._currentResult.toSTL(0.1, 0.3);
-            if (!blob) {
-                throw new Error('Failed to generate STL');
-            }
-
-            // Create download link
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'model.stl';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            this._setStatus('ready', 'Ready');
-        } catch (error) {
-            console.error('STL export failed:', error);
-            this._setStatus('error', 'Export failed');
-            this._showError('STL export failed: ' + error.message);
-        }
+        this._setStatus('loading', 'Exporting STL...');
+        const code = this.editor.getValue();
+        this._worker.postMessage({ type: 'exportSTL', code, id: Date.now() });
     }
 
-    async _download3MF() {
-        if (!this._currentResult) {
-            console.warn('No shape to export');
+    _download3MF() {
+        if (!this._workerReady) {
+            this._showError('CAD engine not ready');
             return;
         }
 
-        try {
-            this._setStatus('loading', 'Exporting 3MF...');
+        this._setStatus('loading', 'Exporting 3MF...');
+        const code = this.editor.getValue();
+        this._worker.postMessage({ type: 'export3MF', code, id: Date.now() });
+    }
 
-            // Generate 3MF blob (async because of JSZip)
-            const blob = await this._currentResult.to3MF(0.1, 0.3);
-            if (!blob) {
-                throw new Error('Failed to generate 3MF');
-            }
+    _handleExportSTLComplete(buffer) {
+        const blob = new Blob([buffer], { type: 'application/sla' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (this._currentFile || 'model').replace('.js', '') + '.stl';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        this._setStatus('ready', 'Ready');
+    }
 
-            // Create download link
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'model.3mf';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+    _handleExport3MFComplete(buffer) {
+        const blob = new Blob([buffer], { type: 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (this._currentFile || 'model').replace('.js', '') + '.3mf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        this._setStatus('ready', 'Ready');
+    }
 
-            this._setStatus('ready', 'Ready');
-        } catch (error) {
-            console.error('3MF export failed:', error);
-            this._setStatus('error', 'Export failed');
-            this._showError('3MF export failed: ' + error.message);
-        }
+    _handleExportError(format, error) {
+        console.error(`${format} export failed:`, error);
+        this._setStatus('error', 'Export failed');
+        this._showError(`${format} export failed: ${error}`);
     }
 
     _initChat() {

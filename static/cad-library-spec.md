@@ -33,6 +33,13 @@ new Workplane(plane)
 **sphere(radius)**
 - Creates a sphere centered at origin
 
+**polygonPrism(sides, flatToFlat, height)**
+- Creates a regular polygon extruded to a prism
+- `sides`: Number of sides (3=triangle, 4=square, 6=hexagon, etc.)
+- `flatToFlat`: Flat-to-flat distance (diameter of inscribed circle)
+- `height`: Height of the prism
+- Oriented with a flat edge at the top
+
 ### Operations
 
 **hole(diameter, depth = null)**
@@ -44,6 +51,16 @@ new Workplane(plane)
 
 **fillet(radius)**
 - Applies fillet (rounded edge) to all edges (or selected edges)
+
+**cutPattern(options)**
+- Cuts a regular grid pattern of polygon holes through the shape
+- Options object:
+  - `sides`: 3 (triangles), 4 (squares), or 6 (hexagons) - default 6
+  - `wallThickness`: thickness between shapes in mm - default 0.6
+  - `border`: solid border width around edges - default 2
+  - `depth`: cut depth in mm, null for through-cut - default null
+  - `size`: polygon size in mm (flat-to-flat), null for auto-calculate - default null
+- Performance note: Larger `size` = fewer holes = faster rendering
 
 ### Boolean Operations
 
@@ -161,6 +178,44 @@ const upright = new Workplane("XY")
     .box(5, 30, 40)
     .translate(-22.5, 0, 20);
 const result = base.union(upright).fillet(2);
+result;
+```
+
+### Hexagonal Prism
+```javascript
+const result = new Workplane("XY")
+    .polygonPrism(6, 20, 15)
+    .color("#9b59b6");
+result;
+```
+
+### Honeycomb Panel
+```javascript
+const result = new Workplane("XY")
+    .box(60, 40, 4)
+    .cutPattern({
+        sides: 6,          // hexagons
+        wallThickness: 0.8,
+        border: 3
+    })
+    .color("#f39c12");
+result;
+```
+
+### Open Tray with Chamfered Base
+```javascript
+// Create shell by boolean subtraction
+const outer = new Workplane("XY").box(80, 40, 42);
+const inner = new Workplane("XY")
+    .box(76, 38, 40)
+    .translate(0, 1, 2);  // offset to leave walls
+const shell = outer.cut(inner);
+
+// Chamfer bottom edges, fillet the rest
+const result = shell
+    .faces("<Z").edges().chamfer(1)
+    .fillet(0.4)
+    .color("#3498db");
 result;
 ```
 

@@ -165,11 +165,11 @@ def test_editor_renders_pink_mesh_to_canvas(server):
 
         page.goto(f"{server}/")
 
-        # wait for status to show ready
+        # wait for status to show ready AND main thread OpenCascade to initialize
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready';
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
             }""",
             timeout=90000
         )
@@ -542,11 +542,11 @@ def test_editor_code_execution(server):
 
         page.goto(f"{server}/")
 
-        # wait for initial ready state
+        # wait for initial ready state AND main thread OpenCascade
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready';
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
             }""",
             timeout=90000
         )
@@ -612,11 +612,11 @@ def test_editor_full_render_pipeline(server):
 
         page.goto(f"{server}/")
 
-        # wait for ready state
+        # wait for ready state AND main thread OpenCascade
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready';
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
             }""",
             timeout=90000
         )
@@ -730,10 +730,11 @@ def test_cylinder_and_assembly(server):
 
         page.goto(f"{server}/")
 
+        # wait for Ready AND main thread OpenCascade to be available
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready';
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
             }""",
             timeout=90000
         )
@@ -835,10 +836,11 @@ def test_stl_export(server):
 
         page.goto(f"{server}/")
 
+        # wait for Ready AND main thread OpenCascade
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready';
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
             }""",
             timeout=90000
         )
@@ -890,10 +892,11 @@ def test_3mf_export(server):
 
         page.goto(f"{server}/")
 
+        # wait for Ready AND main thread OpenCascade
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready';
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
             }""",
             timeout=90000
         )
@@ -952,11 +955,11 @@ def test_cad_library_operations(server):
 
         page.goto(f"{server}/")
 
-        # wait for OpenCascade to load
+        # wait for OpenCascade to load AND main thread Workplane
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready';
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
             }""",
             timeout=90000
         )
@@ -1050,15 +1053,19 @@ def test_open_box_example_renders(server):
                 window.cadEditor.editor.setValue(data.content);
                 window.cadEditor._currentFile = 'open-box.js';
 
-                // Wait for render to complete
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                // Wait for debounce (2s) plus render time - poll for Ready status
+                let attempts = 0;
+                while (attempts < 30) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    const status = document.getElementById('status-text').textContent;
+                    if (status === 'Ready') break;
+                    attempts++;
+                }
 
-                // Check if we have a valid result
-                const hasResult = window.cadEditor._currentResult !== null;
                 const statusText = document.getElementById('status-text').textContent;
 
                 return {
-                    hasResult,
+                    hasResult: statusText === 'Ready',
                     status: statusText,
                     filename: data.filename
                 };
@@ -1076,3 +1083,84 @@ def test_open_box_example_renders(server):
         assert "error" not in result, f"Failed to load open-box.js: {result.get('error')}"
         assert result["hasResult"], f"open-box.js did not produce a valid result. Status: {result['status']}"
         assert result["status"] == "Ready", f"Render failed. Status: {result['status']}"
+
+
+# ##################################################################
+# test polygon prism and cut pattern
+# verifies the new polygonPrism and cutPattern CAD library methods
+def test_polygon_prism_and_cut_pattern(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(f"{server}/")
+
+        # wait for Ready AND main thread OpenCascade
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                // test polygonPrism - hexagon
+                const hex = new Workplane('XY').polygonPrism(6, 20, 30);
+                if (!hex._shape) return { success: false, error: 'Hexagon shape is null' };
+                const hexMesh = hex.toMesh(0.1, 0.3);
+                if (!hexMesh || hexMesh.vertices.length === 0) {
+                    return { success: false, error: 'Hexagon mesh has no vertices' };
+                }
+
+                // test polygonPrism - square
+                const square = new Workplane('XY').polygonPrism(4, 15, 25);
+                if (!square._shape) return { success: false, error: 'Square prism shape is null' };
+
+                // test polygonPrism - triangle
+                const tri = new Workplane('XY').polygonPrism(3, 10, 20);
+                if (!tri._shape) return { success: false, error: 'Triangle prism shape is null' };
+
+                // test cutPattern
+                const boxBefore = new Workplane('XY').box(50, 50, 5);
+                const meshBefore = boxBefore.toMesh(0.1, 0.3);
+                const vertsBefore = meshBefore.vertices.length / 3;
+
+                const boxWithPattern = boxBefore.cutPattern({
+                    sides: 6,
+                    wallThickness: 1,
+                    border: 5
+                });
+                if (!boxWithPattern._shape) return { success: false, error: 'Cut pattern result is null' };
+
+                const meshAfter = boxWithPattern.toMesh(0.1, 0.3);
+                const vertsAfter = meshAfter.vertices.length / 3;
+
+                // cutPattern should add more vertices (for the holes)
+                if (vertsAfter <= vertsBefore) {
+                    return {
+                        success: false,
+                        error: 'cutPattern did not modify geometry',
+                        vertsBefore: vertsBefore,
+                        vertsAfter: vertsAfter
+                    };
+                }
+
+                return {
+                    success: true,
+                    hexVertices: hexMesh.vertices.length / 3,
+                    patternVertsBefore: vertsBefore,
+                    patternVertsAfter: vertsAfter
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        assert result["success"], f"polygonPrism/cutPattern test failed: {result.get('error')}"
+        print(f"Hexagon vertices: {result.get('hexVertices')}")
+        print(f"Pattern vertices before: {result.get('patternVertsBefore')}, after: {result.get('patternVertsAfter')}")

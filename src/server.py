@@ -188,6 +188,14 @@ async def init_test():
 
 
 # ##################################################################
+# performance test endpoint
+# serves the performance testing page for benchmarking operations
+@app.get("/perf-test")
+async def perf_test():
+    return FileResponse(BASE_DIR / "static" / "perf-test.html")
+
+
+# ##################################################################
 # health endpoint
 # returns simple status for health checks and test fixtures
 @app.get("/health")
@@ -224,7 +232,26 @@ async def get_model(filename: str):
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
     content = file_path.read_text()
-    return {"filename": safe_name, "content": content}
+    mtime = file_path.stat().st_mtime
+    return {"filename": safe_name, "content": content, "mtime": mtime}
+
+
+# ##################################################################
+# get model file modification time
+# returns only the modification time for polling
+@app.get("/api/models/{filename}/mtime")
+async def get_model_mtime(filename: str):
+    if not filename.endswith(".js"):
+        raise HTTPException(status_code=400, detail="Only .js files allowed")
+
+    safe_name = Path(filename).name
+    file_path = MODELS_DIR / safe_name
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    mtime = file_path.stat().st_mtime
+    return {"filename": safe_name, "mtime": mtime}
 
 
 # ##################################################################

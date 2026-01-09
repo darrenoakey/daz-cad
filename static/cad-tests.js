@@ -284,6 +284,72 @@ class CADTests {
         return hasSelection;
     }
 
+    // Test: polygonPrism creates hexagonal prism
+    static testPolygonPrismHexagon() {
+        const hex = new Workplane("XY").polygonPrism(6, 20, 30);
+        const stats = this.getMeshStats(hex);
+        const bbox = this.getBoundingBox(hex);
+
+        const hasGeometry = stats && stats.vertexCount > 0 && stats.triangleCount > 0;
+        // Hexagon with flat-to-flat of 20mm should have circumradius ~11.5mm
+        // So bounding box should be ~23mm across
+        const correctHeight = bbox && Math.abs(bbox.sizeZ - 30) < 0.1;
+        const correctWidth = bbox && bbox.sizeX > 20 && bbox.sizeX < 25;
+
+        this.log('polygonPrism hexagon', hasGeometry && correctHeight && correctWidth,
+            `vertices: ${stats?.vertexCount}, height: ${bbox?.sizeZ?.toFixed(1)}, width: ${bbox?.sizeX?.toFixed(1)}`);
+        return hasGeometry && correctHeight && correctWidth;
+    }
+
+    // Test: polygonPrism creates square prism
+    static testPolygonPrismSquare() {
+        const square = new Workplane("XY").polygonPrism(4, 20, 25);
+        const stats = this.getMeshStats(square);
+        const bbox = this.getBoundingBox(square);
+
+        const hasGeometry = stats && stats.vertexCount > 0;
+        const correctHeight = bbox && Math.abs(bbox.sizeZ - 25) < 0.1;
+
+        this.log('polygonPrism square', hasGeometry && correctHeight,
+            `vertices: ${stats?.vertexCount}, height: ${bbox?.sizeZ?.toFixed(1)}`);
+        return hasGeometry && correctHeight;
+    }
+
+    // Test: polygonPrism creates triangle prism
+    static testPolygonPrismTriangle() {
+        const tri = new Workplane("XY").polygonPrism(3, 15, 20);
+        const stats = this.getMeshStats(tri);
+        const bbox = this.getBoundingBox(tri);
+
+        const hasGeometry = stats && stats.vertexCount > 0;
+        const correctHeight = bbox && Math.abs(bbox.sizeZ - 20) < 0.1;
+
+        this.log('polygonPrism triangle', hasGeometry && correctHeight,
+            `vertices: ${stats?.vertexCount}, height: ${bbox?.sizeZ?.toFixed(1)}`);
+        return hasGeometry && correctHeight;
+    }
+
+    // Test: cutPattern cuts hexagon pattern through shape
+    static testCutPattern() {
+        const boxBefore = new Workplane("XY").box(60, 60, 5);
+        const boxWithPattern = new Workplane("XY").box(60, 60, 5).cutPattern({
+            sides: 6,
+            wallThickness: 1,
+            border: 5
+        });
+
+        const statsBefore = this.getMeshStats(boxBefore);
+        const statsAfter = this.getMeshStats(boxWithPattern);
+
+        // Cut pattern should significantly increase vertex count (many holes)
+        const changed = statsAfter && statsBefore &&
+            statsAfter.vertexCount > statsBefore.vertexCount;
+
+        this.log('cutPattern', changed,
+            `vertices before: ${statsBefore?.vertexCount}, after: ${statsAfter?.vertexCount}`);
+        return changed;
+    }
+
     // Run all tests
     static runAll() {
         console.log('=== CAD Library Test Suite ===\n');
@@ -305,6 +371,10 @@ class CADTests {
             () => this.testAssembly(),
             () => this.testFacesSelection(),
             () => this.testEdgesSelection(),
+            () => this.testPolygonPrismHexagon(),
+            () => this.testPolygonPrismSquare(),
+            () => this.testPolygonPrismTriangle(),
+            () => this.testCutPattern(),
         ];
 
         for (const test of tests) {

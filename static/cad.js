@@ -49,12 +49,16 @@ function clearLastError() {
 
 /**
  * Initialize the CAD library with an OpenCascade instance
+ * Works in both main thread (sets window globals) and web worker (just sets oc)
  */
 function initCAD(openCascadeInstance) {
     oc = openCascadeInstance;
-    window.Workplane = Workplane;
-    window.Assembly = Assembly;
-    window.CAD = { oc, Workplane, Assembly, getLastError, clearLastError };
+    // Only set window globals if we're in a browser main thread
+    if (typeof window !== 'undefined') {
+        window.Workplane = Workplane;
+        window.Assembly = Assembly;
+        window.CAD = { oc, Workplane, Assembly, getLastError, clearLastError };
+    }
 }
 
 /**
@@ -411,6 +415,261 @@ class Workplane {
             }
         } catch (e) {
             cadError('sphere', 'Exception creating sphere', e);
+        }
+
+        return result;
+    }
+
+    /**
+     * Create a regular polygon prism (extruded polygon)
+     * @param sides - number of sides (3, 4, 5, 6, etc.)
+     * @param flatToFlat - flat-to-flat distance (diameter of inscribed circle)
+     * @param height - height of the prism
+     */
+    polygonPrism(sides, flatToFlat, height) {
+        const result = new Workplane(this._plane);
+
+        // Validate inputs
+        if (typeof sides !== 'number' || sides < 3) {
+            cadError('polygonPrism', `Invalid sides: ${sides} (must be >= 3)`);
+            return result;
+        }
+        if (typeof flatToFlat !== 'number' || flatToFlat <= 0) {
+            cadError('polygonPrism', `Invalid flatToFlat: ${flatToFlat} (must be positive)`);
+            return result;
+        }
+        if (typeof height !== 'number' || height <= 0) {
+            cadError('polygonPrism', `Invalid height: ${height} (must be positive)`);
+            return result;
+        }
+
+        try {
+            const r = flatToFlat / 2; // apothem (inradius)
+            const R = r / Math.cos(Math.PI / sides); // circumradius
+
+            // Create polygon wire - offset angle to make flat-topped
+            const angleOffset = Math.PI / 2 + Math.PI / sides;
+            const wireBuilder = new oc.BRepBuilderAPI_MakeWire_1();
+
+            for (let i = 0; i < sides; i++) {
+                const angle1 = (2 * Math.PI * i / sides) + angleOffset;
+                const angle2 = (2 * Math.PI * ((i + 1) % sides) / sides) + angleOffset;
+
+                const x1 = R * Math.cos(angle1);
+                const y1 = R * Math.sin(angle1);
+                const x2 = R * Math.cos(angle2);
+                const y2 = R * Math.sin(angle2);
+
+                const p1 = new oc.gp_Pnt_3(x1, y1, 0);
+                const p2 = new oc.gp_Pnt_3(x2, y2, 0);
+
+                const edgeMaker = new oc.BRepBuilderAPI_MakeEdge_3(p1, p2);
+                wireBuilder.Add_1(edgeMaker.Edge());
+                edgeMaker.delete();
+            }
+
+            const wire = wireBuilder.Wire();
+            wireBuilder.delete();
+
+            // Create face from wire
+            const faceMaker = new oc.BRepBuilderAPI_MakeFace_15(wire, true);
+            const face = faceMaker.Face();
+            faceMaker.delete();
+
+            // Extrude along Z axis
+            const vec = new oc.gp_Vec_4(0, 0, height);
+            const prism = new oc.BRepPrimAPI_MakePrism_1(face, vec, false, true);
+            result._shape = prism.Shape();
+            prism.delete();
+            vec.delete();
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('polygonPrism', 'Failed to create polygon prism (result is null)');
+            }
+        } catch (e) {
+            cadError('polygonPrism', 'Exception creating polygon prism', e);
+        }
+
+        return result;
+    }
+
+    /**
+     * Cut a regular pattern of polygons through the shape
+     * Creates a grid of hexagons, squares, or triangles and cuts them out
+     * @param options - Configuration object:
+     *   - sides: 3 (triangle), 4 (square), or 6 (hexagon) - default 6
+     *   - wallThickness: thickness between shapes in mm - default 0.6
+     *   - border: solid border width around edges - default 2
+     *   - depth: cut depth (null = through-cut) - default null
+     */
+    cutPattern(options = {}) {
+        const {
+            sides = 6,
+            wallThickness = 0.6,
+            border = 2,
+            depth = null,
+            size = null  // Polygon size (flat-to-flat). null = auto-calculate
+        } = options;
+
+        if (!this._shape) {
+            cadError('cutPattern', 'Cannot cut pattern: no shape exists');
+            return this;
+        }
+
+        // Validate sides
+        if (![3, 4, 6].includes(sides)) {
+            cadError('cutPattern', 'Only 3 (triangle), 4 (square), or 6 (hexagon) sides supported for tiling');
+            return this;
+        }
+
+        const result = new Workplane(this._plane);
+
+        try {
+            // Get bounding box
+            const bbox = new oc.Bnd_Box_1();
+            oc.BRepBndLib.Add(this._shape, bbox, false);
+            const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+            const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+            bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+            bbox.delete();
+
+            const length = xMax.current - xMin.current;
+            const width = yMax.current - yMin.current;
+            const thickness = zMax.current - zMin.current;
+
+            const centerX = (xMin.current + xMax.current) / 2;
+            const centerY = (yMin.current + yMax.current) / 2;
+
+            const innerLength = length - 2 * border;
+            const innerWidth = width - 2 * border;
+
+            if (innerLength <= 0 || innerWidth <= 0) {
+                result._shape = this._shape;
+                return result;
+            }
+
+            // Calculate polygon size from wall thickness
+            // For hexagons: we want the wall thickness to be the gap between shapes
+            // poly_size (flat-to-flat) is calculated to give desired wall thickness
+            const sqrt3 = Math.sqrt(3);
+
+            let polySize, d, h, rowOffset;
+            // Use provided size or auto-calculate
+            const autoSize = Math.min(innerLength, innerWidth) / 6;
+            polySize = size || autoSize;
+
+            if (sides === 6) {
+                // For hexagons: wall_thick = d - 2*R where d is center spacing
+                // R = r / cos(30) = r * 2/sqrt(3), and r = polySize/2
+                // So R = polySize / sqrt(3)
+                // d = 2*R + wall_thick = 2*polySize/sqrt(3) + wall_thick
+                const r = polySize / 2;
+                const R = r / Math.cos(Math.PI / 6);
+                d = 2 * R + wallThickness;
+                h = d * sqrt3 / 2;
+                rowOffset = d / 2;
+            } else if (sides === 4) {
+                const r = polySize / 2;
+                d = 2 * r + wallThickness;
+                h = d;
+                rowOffset = 0;
+            } else { // sides === 3
+                const r = polySize / 2;
+                const R = r / Math.cos(Math.PI / 3);
+                d = 2 * r + wallThickness;
+                h = d * sqrt3 / 2;
+                rowOffset = d / 2;
+            }
+
+            // Calculate polygon circumradius (distance from center to vertex)
+            // This determines how far the polygon extends from its center
+            let circumRadius;
+            if (sides === 6) {
+                // Hexagon: R = r / cos(30°) where r = polySize/2
+                circumRadius = (polySize / 2) / Math.cos(Math.PI / 6);
+            } else if (sides === 4) {
+                // Square: R = r * sqrt(2) where r = polySize/2
+                circumRadius = (polySize / 2) * Math.sqrt(2);
+            } else {
+                // Triangle: R = r / cos(60°) where r = polySize/2
+                circumRadius = (polySize / 2) / Math.cos(Math.PI / 3);
+            }
+
+            // Calculate grid
+            const nRows = Math.max(1, Math.ceil(innerWidth / h));
+            const nCols = Math.max(1, Math.ceil(innerLength / d));
+
+            const totalSpanX = (nCols - 1) * d;
+            const totalSpanY = (nRows - 1) * h;
+            const xStart = centerX - totalSpanX / 2;
+            const yStart = centerY - totalSpanY / 2;
+
+            // Cut depth
+            const cutDepth = depth || (thickness + 2);
+            const cutZ = zMax.current + 1;
+
+            // Effective border: the polygon edge must stay within the border
+            // So the center must be at least (border + circumRadius) from the edge
+            const effectiveBorder = border + circumRadius;
+
+            // FASTEST APPROACH: ListOfShape API with SetArguments/SetTools
+            // Benchmarked at 1913ms vs 4027ms for compound approach (2.1x faster)
+            const toolList = new oc.TopTools_ListOfShape_1();
+
+            let holeCount = 0;
+
+            for (let row = 0; row < nRows; row++) {
+                const y = yStart + row * h;
+                const xOffset = (row % 2 === 1) ? rowOffset : 0;
+
+                for (let col = 0; col < nCols; col++) {
+                    const x = xStart + col * d + xOffset;
+
+                    // Check if polygon EDGE (not center) is within the border
+                    if (x < xMin.current + effectiveBorder || x > xMax.current - effectiveBorder ||
+                        y < yMin.current + effectiveBorder || y > yMax.current - effectiveBorder) {
+                        continue;
+                    }
+
+                    // Create polygon prism and translate to position
+                    const prism = this.polygonPrism(sides, polySize, cutDepth);
+                    if (!prism._shape) continue;
+
+                    const transform = new oc.gp_Trsf_1();
+                    transform.SetTranslation_1(new oc.gp_Vec_4(x, y, cutZ - cutDepth));
+                    const loc = new oc.TopLoc_Location_2(transform);
+                    const movedPrism = prism._shape.Moved(loc, false);
+                    transform.delete();
+
+                    // Add to tool list
+                    toolList.Append_1(movedPrism);
+                    holeCount++;
+                }
+            }
+
+            if (holeCount > 0) {
+                // Use ListOfShape API - fastest boolean approach
+                const argList = new oc.TopTools_ListOfShape_1();
+                argList.Append_1(this._shape);
+
+                const cut = new oc.BRepAlgoAPI_Cut_1();
+                cut.SetArguments(argList);
+                cut.SetTools(toolList);
+                cut.Build(new oc.Message_ProgressRange_1());
+
+                if (cut.IsDone()) {
+                    result._shape = cut.Shape();
+                } else {
+                    cadError('cutPattern', 'Boolean cut failed');
+                    result._shape = this._shape;
+                }
+                cut.delete();
+            } else {
+                result._shape = this._shape;
+            }
+        } catch (e) {
+            cadError('cutPattern', 'Exception cutting pattern', e);
+            result._shape = this._shape;
         }
 
         return result;
@@ -886,10 +1145,30 @@ class Workplane {
             fuse.Build(new oc.Message_ProgressRange_1());
 
             if (fuse.IsDone()) {
-                result._shape = fuse.Shape();
-                if (!result._shape || result._shape.IsNull()) {
+                let fusedShape = fuse.Shape();
+                if (!fusedShape || fusedShape.IsNull()) {
                     cadError('union', 'Fuse succeeded but result shape is null');
                     result._shape = this._shape;
+                } else {
+                    // Unify same-domain faces/edges to remove internal seams
+                    // This is essential for chamfer/fillet to work on unioned shapes
+                    try {
+                        const unify = new oc.ShapeUpgrade_UnifySameDomain_2(fusedShape, true, true, false);
+                        unify.Build();
+                        const unifiedShape = unify.Shape();
+                        if (unifiedShape && !unifiedShape.IsNull()) {
+                            result._shape = unifiedShape;
+                            console.log('[CAD] UnifySameDomain succeeded');
+                        } else {
+                            console.log('[CAD] UnifySameDomain returned null shape, using fused shape');
+                            result._shape = fusedShape;
+                        }
+                        unify.delete();
+                    } catch (unifyErr) {
+                        // If unify fails, use the fused shape as-is
+                        console.log('[CAD] UnifySameDomain failed:', unifyErr.message || unifyErr);
+                        result._shape = fusedShape;
+                    }
                 }
             } else {
                 cadError('union', 'Fuse operation failed (IsDone=false)');
