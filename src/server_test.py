@@ -1011,3 +1011,68 @@ def test_chat_message_endpoint(server):
     assert "file_changed" in data
     # the response should mention something about the shape (box)
     assert any(word in data["response"].lower() for word in ["box", "cube", "shape", "model"])
+
+
+# ##################################################################
+# test open box example renders
+# verifies the open-box.js example file loads and renders correctly
+def test_open_box_example_renders(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"]
+        )
+        page = browser.new_page()
+
+        # capture console errors
+        errors = []
+        page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+
+        page.goto(f"{server}/")
+
+        # wait for OpenCascade to load
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready';
+            }""",
+            timeout=90000
+        )
+
+        # load the open-box.js file via the API and set it in the editor
+        result = page.evaluate("""async () => {
+            const response = await fetch('/api/models/open-box.js');
+            if (!response.ok) return { error: 'Failed to load file' };
+            const data = await response.json();
+
+            // Get the editor instance and set the code
+            if (window.cadEditor && window.cadEditor.editor) {
+                window.cadEditor.editor.setValue(data.content);
+                window.cadEditor._currentFile = 'open-box.js';
+
+                // Wait for render to complete
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                // Check if we have a valid result
+                const hasResult = window.cadEditor._currentResult !== null;
+                const statusText = document.getElementById('status-text').textContent;
+
+                return {
+                    hasResult,
+                    status: statusText,
+                    filename: data.filename
+                };
+            }
+            return { error: 'Editor not found' };
+        }""")
+
+        page.close()
+        browser.close()
+
+        # check for CAD errors
+        cad_errors = [e for e in errors if "[CAD Error]" in e]
+        assert len(cad_errors) == 0, f"CAD errors occurred: {cad_errors}"
+
+        assert "error" not in result, f"Failed to load open-box.js: {result.get('error')}"
+        assert result["hasResult"], f"open-box.js did not produce a valid result. Status: {result['status']}"
+        assert result["status"] == "Ready", f"Render failed. Status: {result['status']}"

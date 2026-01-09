@@ -743,4 +743,4 @@ result;
 }
 
 // Start the application
-new CADEditor();
+window.cadEditor = new CADEditor();
