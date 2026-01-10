@@ -240,11 +240,14 @@ class ThreeMFExporter {
         const modelData = this._model(objects);
         const objectsModelData = this._objectsModel(objects);
 
-        zip.file('3D/3dmodel.model', modelData);
-        zip.file('3D/Objects/objects.model', objectsModelData);
-        zip.file('3D/_rels/3dmodel.model.rels', this._modelRels());
-        zip.file('Metadata/model_settings.config', this._modelSettings(objects));
-        zip.file('Metadata/slice_info.config', this._sliceInfo(objects));
+        // Use DEFLATE compression for significantly smaller files
+        const compressionOpts = { compression: 'DEFLATE', compressionOptions: { level: 6 } };
+
+        zip.file('3D/3dmodel.model', modelData, compressionOpts);
+        zip.file('3D/Objects/objects.model', objectsModelData, compressionOpts);
+        zip.file('3D/_rels/3dmodel.model.rels', this._modelRels(), compressionOpts);
+        zip.file('Metadata/model_settings.config', this._modelSettings(objects), compressionOpts);
+        zip.file('Metadata/slice_info.config', this._sliceInfo(objects), compressionOpts);
 
         // Update filament colors and infill settings in project_settings.config
         const projectSettingsStr = await zip.file('Metadata/project_settings.config').async('string');
@@ -266,19 +269,40 @@ class ThreeMFExporter {
         }
 
         // Set infill settings from first object's metadata (as project defaults)
-        if (objects.length > 0 && objects[0].meta) {
-            const meta = objects[0].meta;
+        // Also track which settings differ from system defaults
+        const differentSettings = [];
+        if (objects.length > 0 && objects[0].volumes[0]?.meta) {
+            const meta = objects[0].volumes[0].meta;
             if (meta.infillDensity !== undefined) {
                 projectSettings.sparse_infill_density = `${meta.infillDensity}%`;
+                differentSettings.push('sparse_infill_density');
                 console.log(`[3MF] Setting infill density to ${meta.infillDensity}%`);
             }
             if (meta.infillPattern !== undefined) {
                 projectSettings.sparse_infill_pattern = meta.infillPattern;
+                differentSettings.push('sparse_infill_pattern');
                 console.log(`[3MF] Setting infill pattern to ${meta.infillPattern}`);
             }
         }
 
-        zip.file('Metadata/project_settings.config', JSON.stringify(projectSettings, null, 4));
+        // Add different_settings_to_system if we have overrides
+        // This tells BambuStudio which settings are intentionally different from defaults
+        if (differentSettings.length > 0) {
+            // Array entries correspond to: [print, printer, filament1, filament2, ...]
+            const settingsStr = differentSettings.join(';');
+            projectSettings.different_settings_to_system = [
+                settingsStr, // print settings
+                '',          // printer settings
+                '',          // filament 1
+                '',          // filament 2
+                '',          // filament 3
+                '',          // filament 4
+                '',          // filament 5
+                ''           // filament 6
+            ];
+        }
+
+        zip.file('Metadata/project_settings.config', JSON.stringify(projectSettings, null, 4), compressionOpts);
 
         return await zip.generateAsync({ type: 'blob' });
     }
