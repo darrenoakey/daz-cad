@@ -284,6 +284,124 @@ class CADTests {
         return hasSelection;
     }
 
+    // Test: facesNot selection (set subtraction)
+    static testFacesNot() {
+        const box = new Workplane("XY").box(20, 20, 20);
+
+        // A box has 6 faces
+        const allFaces = box.faces();
+        const bottomFaces = box.faces("<Z");
+        const topFaces = box.faces(">Z");
+        const notTopFaces = box.facesNot(">Z");
+
+        const allCount = allFaces._selectedFaces?.length || 0;
+        const bottomCount = bottomFaces._selectedFaces?.length || 0;
+        const topCount = topFaces._selectedFaces?.length || 0;
+        const notTopCount = notTopFaces._selectedFaces?.length || 0;
+
+        // Box should have 6 faces total
+        // Bottom should be 1, top should be 1
+        // facesNot(">Z") should be 5 (all except top)
+        const correctAll = allCount === 6;
+        const correctBottom = bottomCount === 1;
+        const correctTop = topCount === 1;
+        const correctNotTop = notTopCount === 5;
+
+        const passed = correctAll && correctBottom && correctTop && correctNotTop;
+
+        this.log('facesNot', passed,
+            `all: ${allCount}, bottom: ${bottomCount}, top: ${topCount}, notTop: ${notTopCount}`);
+        return passed;
+    }
+
+    // Test: edgesNot selection (set subtraction)
+    static testEdgesNot() {
+        const box = new Workplane("XY").box(20, 20, 20);
+
+        // A box has 12 edges: 4 on top, 4 on bottom, 4 vertical
+        const allEdges = box.edges();
+        const verticalEdges = box.edges("|Z");
+        const notVerticalEdges = box.edgesNot("|Z");
+
+        const allCount = allEdges._selectedEdges?.length || 0;
+        const verticalCount = verticalEdges._selectedEdges?.length || 0;
+        const notVerticalCount = notVerticalEdges._selectedEdges?.length || 0;
+
+        // Box should have 12 edges total
+        // 4 vertical edges (parallel to Z)
+        // edgesNot("|Z") should be 8 (all except vertical)
+        const correctAll = allCount === 12;
+        const correctVertical = verticalCount === 4;
+        const correctNotVertical = notVerticalCount === 8;
+
+        const passed = correctAll && correctVertical && correctNotVertical;
+
+        this.log('edgesNot', passed,
+            `all: ${allCount}, vertical: ${verticalCount}, notVertical: ${notVerticalCount}`);
+        return passed;
+    }
+
+    // Test: filterOutBottom removes bottom edges
+    static testFilterOutBottom() {
+        const box = new Workplane("XY").box(20, 20, 20);
+
+        // Get all horizontal edges (8 total: 4 top + 4 bottom)
+        const horizontalEdges = box.edgesNot("|Z");
+        const withoutBottom = box.edgesNot("|Z").filterOutBottom();
+
+        const beforeCount = horizontalEdges._selectedEdges?.length || 0;
+        const afterCount = withoutBottom._selectedEdges?.length || 0;
+
+        // Should have 8 horizontal, then 4 after filtering out bottom
+        const correctBefore = beforeCount === 8;
+        const correctAfter = afterCount === 4;
+
+        const passed = correctBefore && correctAfter;
+
+        this.log('filterOutBottom', passed,
+            `horizontal: ${beforeCount}, after filter: ${afterCount}`);
+        return passed;
+    }
+
+    // Test: filterOutTop removes top edges
+    static testFilterOutTop() {
+        const box = new Workplane("XY").box(20, 20, 20);
+
+        // Get all horizontal edges (8 total: 4 top + 4 bottom)
+        const horizontalEdges = box.edgesNot("|Z");
+        const withoutTop = box.edgesNot("|Z").filterOutTop();
+
+        const beforeCount = horizontalEdges._selectedEdges?.length || 0;
+        const afterCount = withoutTop._selectedEdges?.length || 0;
+
+        // Should have 8 horizontal, then 4 after filtering out top
+        const correctBefore = beforeCount === 8;
+        const correctAfter = afterCount === 4;
+
+        const passed = correctBefore && correctAfter;
+
+        this.log('filterOutTop', passed,
+            `horizontal: ${beforeCount}, after filter: ${afterCount}`);
+        return passed;
+    }
+
+    // Test: filterEdges with custom predicate
+    static testFilterEdges() {
+        const box = new Workplane("XY").box(20, 20, 20);
+
+        // Filter edges where zMin > 5 (only top edges of box centered at origin)
+        const topOnly = box.edges().filterEdges(e => e.zMin > 5);
+
+        const count = topOnly._selectedEdges?.length || 0;
+
+        // Box centered at origin with height 20: top edges at z=10
+        // Only 4 top edges should have zMin > 5
+        const passed = count === 4;
+
+        this.log('filterEdges', passed, `edges with zMin > 5: ${count}`);
+        return passed;
+    }
+
     // Test: polygonPrism creates hexagonal prism
     static testPolygonPrismHexagon() {
         const hex = new Workplane("XY").polygonPrism(6, 20, 30);
@@ -389,6 +507,11 @@ class CADTests {
             () => this.testAssembly(),
             () => this.testFacesSelection(),
             () => this.testEdgesSelection(),
+            () => this.testFacesNot(),
+            () => this.testEdgesNot(),
+            () => this.testFilterOutBottom(),
+            () => this.testFilterOutTop(),
+            () => this.testFilterEdges(),
             () => this.testPolygonPrismHexagon(),
             () => this.testPolygonPrismSquare(),
             () => this.testPolygonPrismTriangle(),

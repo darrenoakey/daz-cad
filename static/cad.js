@@ -678,9 +678,32 @@ class Workplane {
 
     /**
      * Create a cylinder - centered on XY, sitting on Z=0 by default
+     * Supports two signatures:
+     *   cylinder(radius, height) - specify radius
+     *   cylinder({ height, diameter }) - specify diameter (more intuitive)
      */
-    cylinder(radius, height, centered = true) {
+    cylinder(arg1, arg2) {
         const result = new Workplane(this._plane);
+
+        let radius, height;
+
+        // Check if first argument is an options object
+        if (typeof arg1 === 'object' && arg1 !== null) {
+            const opts = arg1;
+            height = opts.height;
+            if (opts.diameter !== undefined) {
+                radius = opts.diameter / 2;
+            } else if (opts.radius !== undefined) {
+                radius = opts.radius;
+            } else {
+                cadError('cylinder', 'Object argument must have either diameter or radius');
+                return result;
+            }
+        } else {
+            // Traditional signature: cylinder(radius, height)
+            radius = arg1;
+            height = arg2;
+        }
 
         // Validate inputs
         if (typeof radius !== 'number' || radius <= 0) {
@@ -1210,9 +1233,206 @@ class Workplane {
     }
 
     /**
+     * Generate a regular pattern of polygons as a single shape (union of all prisms)
+     * Use this when you want the pattern itself, not to cut it from something
+     * @param options - Configuration object:
+     *   - type: "grid"/"square", "hexagon"/"hex", or "triangle" (alternative to sides)
+     *   - sides: 3 (triangle), 4 (square), or 6 (hexagon) - default 6
+     *   - wallThickness: thickness between shapes in mm - default 0.6
+     *   - border: solid border width around edges - default 2
+     *   - depth: prism height - default shape thickness + 2
+     *   - patternZ: Z position for bottom of pattern (null = zMin - 1)
+     */
+    pattern(options = {}) {
+        // Map type names to sides if provided
+        const typeToSides = {
+            'grid': 4,
+            'square': 4,
+            'hexagon': 6,
+            'hex': 6,
+            'triangle': 3
+        };
+
+        let sidesValue = options.sides ?? 6;
+        if (options.type) {
+            const mapped = typeToSides[options.type.toLowerCase()];
+            if (mapped) {
+                sidesValue = mapped;
+            } else {
+                cadError('pattern', `Unknown type: ${options.type}. Use grid, square, hexagon, hex, or triangle`);
+                return this;
+            }
+        }
+
+        const {
+            wallThickness = 0.6,
+            border = 2,
+            depth = null,
+            size = null,  // Polygon size (flat-to-flat). null = auto-calculate
+            patternZ = null  // Z position for bottom of pattern (null = zMin - 1)
+        } = options;
+        const sides = sidesValue;
+
+        if (!this._shape) {
+            cadError('pattern', 'Cannot create pattern: no shape exists to base dimensions on');
+            return this;
+        }
+
+        // Validate sides
+        if (![3, 4, 6].includes(sides)) {
+            cadError('pattern', 'Only 3 (triangle), 4 (square), or 6 (hexagon) sides supported for tiling');
+            return this;
+        }
+
+        const result = new Workplane(this._plane);
+
+        try {
+            // Get bounding box
+            const bbox = new oc.Bnd_Box_1();
+            oc.BRepBndLib.Add(this._shape, bbox, false);
+            const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+            const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+            bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+            bbox.delete();
+
+            const length = xMax.current - xMin.current;
+            const width = yMax.current - yMin.current;
+            const thickness = zMax.current - zMin.current;
+
+            const centerX = (xMin.current + xMax.current) / 2;
+            const centerY = (yMin.current + yMax.current) / 2;
+
+            const innerLength = length - 2 * border;
+            const innerWidth = width - 2 * border;
+
+            if (innerLength <= 0 || innerWidth <= 0) {
+                result._shape = null;
+                return result;
+            }
+
+            // Calculate polygon size from wall thickness
+            const sqrt3 = Math.sqrt(3);
+
+            let polySize, d, h, rowOffset;
+            const autoSize = Math.min(innerLength, innerWidth) / 6;
+            polySize = size || autoSize;
+
+            if (sides === 6) {
+                const r = polySize / 2;
+                const R = r / Math.cos(Math.PI / 6);
+                d = 2 * R + wallThickness;
+                h = d * sqrt3 / 2;
+                rowOffset = d / 2;
+            } else if (sides === 4) {
+                const r = polySize / 2;
+                d = 2 * r + wallThickness;
+                h = d;
+                rowOffset = 0;
+            } else {
+                const r = polySize / 2;
+                const R = r / Math.cos(Math.PI / 3);
+                d = 2 * r + wallThickness;
+                h = d * sqrt3 / 2;
+                rowOffset = d / 2;
+            }
+
+            // Calculate polygon circumradius
+            let circumRadius;
+            if (sides === 6) {
+                circumRadius = (polySize / 2) / Math.cos(Math.PI / 6);
+            } else if (sides === 4) {
+                circumRadius = (polySize / 2) * Math.sqrt(2);
+            } else {
+                circumRadius = (polySize / 2) / Math.cos(Math.PI / 3);
+            }
+
+            // Calculate grid
+            const nRows = Math.max(1, Math.ceil(innerWidth / h));
+            const nCols = Math.max(1, Math.ceil(innerLength / d));
+
+            const totalSpanX = (nCols - 1) * d;
+            const totalSpanY = (nRows - 1) * h;
+            const xStart = centerX - totalSpanX / 2;
+            const yStart = centerY - totalSpanY / 2;
+
+            const prismDepth = depth || (thickness + 2);
+            const zBottom = patternZ !== null ? patternZ : (zMin.current - 1);
+            const effectiveBorder = border + circumRadius;
+
+            // Create template prism at origin
+            const templatePrism = this.polygonPrism(sides, polySize, prismDepth);
+            if (!templatePrism._shape) {
+                result._shape = null;
+                return result;
+            }
+
+            const tileWidth = d;
+            const tileHeight = 2 * h;
+            const nTileRows = Math.ceil(nRows / 2);
+            const nTileCols = nCols;
+
+            // Collect all positioned prisms
+            const allShapes = [];
+
+            for (let tileRow = 0; tileRow < nTileRows; tileRow++) {
+                for (let tileCol = 0; tileCol < nTileCols; tileCol++) {
+                    const tileX = xStart + tileCol * tileWidth;
+                    const tileY = yStart + tileRow * tileHeight;
+
+                    // Even-row position
+                    const y1 = tileY;
+                    const x1 = tileX;
+                    if (x1 >= xMin.current + effectiveBorder && x1 <= xMax.current - effectiveBorder &&
+                        y1 >= yMin.current + effectiveBorder && y1 <= yMax.current - effectiveBorder) {
+                        const t1 = new oc.gp_Trsf_1();
+                        t1.SetTranslation_1(new oc.gp_Vec_4(x1, y1, zBottom));
+                        const loc1 = new oc.TopLoc_Location_2(t1);
+                        allShapes.push(templatePrism._shape.Moved(loc1, false));
+                        t1.delete();
+                    }
+
+                    // Odd-row position
+                    const y2 = tileY + h;
+                    const x2 = tileX + rowOffset;
+                    if (y2 <= yStart + (nRows - 1) * h + 0.001 &&
+                        x2 >= xMin.current + effectiveBorder && x2 <= xMax.current - effectiveBorder &&
+                        y2 >= yMin.current + effectiveBorder && y2 <= yMax.current - effectiveBorder) {
+                        const t2 = new oc.gp_Trsf_1();
+                        t2.SetTranslation_1(new oc.gp_Vec_4(x2, y2, zBottom));
+                        const loc2 = new oc.TopLoc_Location_2(t2);
+                        allShapes.push(templatePrism._shape.Moved(loc2, false));
+                        t2.delete();
+                    }
+                }
+            }
+
+            if (allShapes.length > 0) {
+                console.log(`[CAD] pattern: ${allShapes.length} shapes`);
+
+                // Union all shapes using compound (faster than boolean union for this use case)
+                const builder = new oc.BRep_Builder();
+                const compound = new oc.TopoDS_Compound();
+                builder.MakeCompound(compound);
+                for (const shape of allShapes) {
+                    builder.Add(compound, shape);
+                }
+                result._shape = compound;
+            } else {
+                result._shape = null;
+            }
+        } catch (e) {
+            cadError('pattern', 'Exception creating pattern', e);
+            result._shape = null;
+        }
+
+        return result;
+    }
+
+    /**
      * Cut a regular pattern of polygons through the shape
      * Creates a grid of hexagons, squares, or triangles and cuts them out
      * @param options - Configuration object:
+     *   - type: "grid"/"square", "hexagon"/"hex", or "triangle" (alternative to sides)
      *   - sides: 3 (triangle), 4 (square), or 6 (hexagon) - default 6
      *   - wallThickness: thickness between shapes in mm - default 0.6
      *   - border: solid border width around edges - default 2
@@ -1220,21 +1440,40 @@ class Workplane {
      *   - cutFromZ: Z position to cut from (null = auto from top) - for cutting base from below
      */
     cutPattern(options = {}) {
+        // Map type names to sides if provided
+        const typeToSides = {
+            'grid': 4,
+            'square': 4,
+            'hexagon': 6,
+            'hex': 6,
+            'triangle': 3
+        };
+
+        let sidesValue = options.sides ?? 6;
+        if (options.type) {
+            const mapped = typeToSides[options.type.toLowerCase()];
+            if (mapped) {
+                sidesValue = mapped;
+            } else {
+                cadError('cutPattern', `Unknown type: ${options.type}. Use grid, square, hexagon, hex, or triangle`);
+                return this;
+            }
+        }
+
         const {
-            sides = 6,
             wallThickness = 0.6,
             border = 2,
             depth = null,
-            size = null,  // Polygon size (flat-to-flat). null = auto-calculate
-            cutFromZ = null  // Z position for top of cut (null = zMax + 1)
+            size = null,
+            cutFromZ = null
         } = options;
+        const sides = sidesValue;
 
         if (!this._shape) {
             cadError('cutPattern', 'Cannot cut pattern: no shape exists');
             return this;
         }
 
-        // Validate sides
         if (![3, 4, 6].includes(sides)) {
             cadError('cutPattern', 'Only 3 (triangle), 4 (square), or 6 (hexagon) sides supported for tiling');
             return this;
@@ -1315,37 +1554,27 @@ class Workplane {
             const cutZ = cutFromZ !== null ? cutFromZ : (zMax.current + 1);
             const effectiveBorder = border + circumRadius;
 
-            // TILE-BASED APPROACH: Create template once, clone with Moved()
-            // Much faster than creating each prism individually
-
-            // Create template prism at origin (created once, reused for all positions)
+            // Create template prism at origin
             const templatePrism = this.polygonPrism(sides, polySize, cutDepth);
             if (!templatePrism._shape) {
                 result._shape = this._shape;
                 return result;
             }
 
-            // Create a "tile unit" containing two prisms at the repeating unit positions
-            // For hexagons: positions (0, 0) and (rowOffset, h) form the minimal repeating unit
-            // When this tile is repeated, it creates the full staggered pattern
-
             const tileWidth = d;
             const tileHeight = 2 * h;
-
-            // Calculate how many tiles we need
             const nTileRows = Math.ceil(nRows / 2);
             const nTileCols = nCols;
 
-            // Collect all positioned prisms for each tile
+            // Collect all positioned prisms
             const allShapes = [];
 
             for (let tileRow = 0; tileRow < nTileRows; tileRow++) {
                 for (let tileCol = 0; tileCol < nTileCols; tileCol++) {
-                    // Tile origin
                     const tileX = xStart + tileCol * tileWidth;
                     const tileY = yStart + tileRow * tileHeight;
 
-                    // Add prism at even-row position (row offset = 0)
+                    // Even-row position
                     const y1 = tileY;
                     const x1 = tileX;
                     if (x1 >= xMin.current + effectiveBorder && x1 <= xMax.current - effectiveBorder &&
@@ -1357,10 +1586,10 @@ class Workplane {
                         t1.delete();
                     }
 
-                    // Add prism at odd-row position (row offset = rowOffset)
+                    // Odd-row position
                     const y2 = tileY + h;
                     const x2 = tileX + rowOffset;
-                    if (y2 <= yStart + (nRows - 1) * h + 0.001 &&  // Check we're still in bounds
+                    if (y2 <= yStart + (nRows - 1) * h + 0.001 &&
                         x2 >= xMin.current + effectiveBorder && x2 <= xMax.current - effectiveBorder &&
                         y2 >= yMin.current + effectiveBorder && y2 <= yMax.current - effectiveBorder) {
                         const t2 = new oc.gp_Trsf_1();
@@ -1373,8 +1602,6 @@ class Workplane {
             }
 
             if (allShapes.length > 0) {
-                // Use ListOfShape API for optimal boolean performance
-                // Combined with template reuse for minimal shape creation overhead
                 console.log(`[CAD] cutPattern: ${allShapes.length} holes, using ListOfShape API`);
 
                 const toolList = new oc.TopTools_ListOfShape_1();
@@ -1484,9 +1711,52 @@ class Workplane {
     }
 
     /**
+     * Select faces NOT matching a selector (set subtraction)
+     * facesNot(">Z") returns all faces except those with max Z
+     */
+    facesNot(selector) {
+        const result = new Workplane(this._plane);
+        result._shape = this._shape;
+        result._selectionMode = 'faces';
+        result._selectedFaces = [];
+
+        if (!this._shape || !selector) return result;
+
+        // Get all faces
+        const explorer = new oc.TopExp_Explorer_2(
+            this._shape,
+            oc.TopAbs_ShapeEnum.TopAbs_FACE,
+            oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+        );
+
+        const allFaces = [];
+        while (explorer.More()) {
+            const face = oc.TopoDS.Face_1(explorer.Current());
+            allFaces.push(face);
+            explorer.Next();
+        }
+        explorer.delete();
+
+        // Get faces matching selector
+        const matchingFaces = this._filterFaces(allFaces, selector);
+
+        // Build hash set of matching faces
+        const matchingHashes = new Set(matchingFaces.map(f => f.HashCode(1000000)));
+
+        // Return faces NOT in the matching set
+        result._selectedFaces = allFaces.filter(f => !matchingHashes.has(f.HashCode(1000000)));
+
+        return result;
+    }
+
+    /**
      * Select edges
      * If faces are selected, select edges of those faces
      * Otherwise, select all edges
+     * Selector can be:
+     *   "|X", "|Y", "|Z" - edges parallel to axis
+     *   ">X", ">Y", ">Z" - edge with max position on axis
+     *   "<X", "<Y", "<Z" - edge with min position on axis
      */
     edges(selector = null) {
         const result = new Workplane(this._plane);
@@ -1497,7 +1767,7 @@ class Workplane {
         if (!this._shape) return result;
 
         const edgeSet = new Set();
-        const edges = [];
+        let edges = [];
 
         if (this._selectionMode === 'faces' && this._selectedFaces.length > 0) {
             // Get edges from selected faces
@@ -1519,7 +1789,7 @@ class Workplane {
                 explorer.delete();
             }
         } else {
-            // Get all edges from shape
+            // Get all edges from shape (with deduplication)
             const explorer = new oc.TopExp_Explorer_2(
                 this._shape,
                 oc.TopAbs_ShapeEnum.TopAbs_EDGE,
@@ -1527,14 +1797,276 @@ class Workplane {
             );
             while (explorer.More()) {
                 const edge = oc.TopoDS.Edge_1(explorer.Current());
-                edges.push(edge);
+                const hash = edge.HashCode(1000000);
+                if (!edgeSet.has(hash)) {
+                    edgeSet.add(hash);
+                    edges.push(edge);
+                }
                 explorer.Next();
             }
             explorer.delete();
         }
 
+        // Apply selector filter if provided
+        if (selector && edges.length > 0) {
+            edges = this._filterEdges(edges, selector);
+        }
+
         result._selectedEdges = edges;
         return result;
+    }
+
+    /**
+     * Filter edges based on selector
+     * "|X", "|Y", "|Z" - parallel to axis
+     * ">X", ">Y", ">Z" - max position on axis
+     * "<X", "<Y", "<Z" - min position on axis
+     */
+    _filterEdges(edges, selector) {
+        const match = selector.match(/^([|><])([XYZ])$/i);
+        if (!match) {
+            console.warn(`[CAD] Unknown edge selector: ${selector}`);
+            return edges;
+        }
+
+        const op = match[1];
+        const axis = match[2].toUpperCase();
+        const axisIndex = { 'X': 0, 'Y': 1, 'Z': 2 }[axis];
+
+        // Helper to get edge direction and midpoint
+        const getEdgeInfo = (edge) => {
+            try {
+                const curve = new oc.BRepAdaptor_Curve_2(edge);
+                const first = curve.FirstParameter();
+                const last = curve.LastParameter();
+
+                // Get start and end points
+                const p1 = curve.Value(first);
+                const p2 = curve.Value(last);
+
+                // Direction vector
+                const dx = p2.X() - p1.X();
+                const dy = p2.Y() - p1.Y();
+                const dz = p2.Z() - p1.Z();
+                const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+                // Midpoint for position-based selection
+                const mid = curve.Value((first + last) / 2);
+                const midCoord = [mid.X(), mid.Y(), mid.Z()][axisIndex];
+
+                // Normalized direction
+                const dir = len > 1e-6 ? [dx/len, dy/len, dz/len] : [0, 0, 0];
+
+                curve.delete();
+                p1.delete();
+                p2.delete();
+                mid.delete();
+
+                return { dir, midCoord };
+            } catch (e) {
+                return null;
+            }
+        };
+
+        if (op === '|') {
+            // Parallel to axis - direction should be mostly along that axis
+            const tolerance = 0.1; // Allow small deviation
+            return edges.filter(edge => {
+                const info = getEdgeInfo(edge);
+                if (!info) return false;
+                const { dir } = info;
+                // Check if edge is parallel to axis (direction component ~1 or ~-1)
+                const axisComponent = Math.abs(dir[axisIndex]);
+                return axisComponent > (1 - tolerance);
+            });
+        } else if (op === '>' || op === '<') {
+            // Max or min position on axis
+            let bestEdges = [];
+            let bestValue = op === '>' ? -Infinity : Infinity;
+
+            for (const edge of edges) {
+                const info = getEdgeInfo(edge);
+                if (!info) continue;
+                const { midCoord } = info;
+
+                if (op === '>') {
+                    if (midCoord > bestValue + 1e-6) {
+                        bestValue = midCoord;
+                        bestEdges = [edge];
+                    } else if (Math.abs(midCoord - bestValue) < 1e-6) {
+                        bestEdges.push(edge);
+                    }
+                } else {
+                    if (midCoord < bestValue - 1e-6) {
+                        bestValue = midCoord;
+                        bestEdges = [edge];
+                    } else if (Math.abs(midCoord - bestValue) < 1e-6) {
+                        bestEdges.push(edge);
+                    }
+                }
+            }
+            return bestEdges;
+        }
+
+        return edges;
+    }
+
+    /**
+     * Select edges NOT matching a selector (set subtraction)
+     * edgesNot("|Z") returns all edges except those parallel to Z
+     */
+    edgesNot(selector) {
+        const result = new Workplane(this._plane);
+        result._shape = this._shape;
+        result._selectionMode = 'edges';
+        result._selectedEdges = [];
+
+        if (!this._shape || !selector) return result;
+
+        const edgeSet = new Set();
+        let allEdges = [];
+
+        if (this._selectionMode === 'faces' && this._selectedFaces.length > 0) {
+            // Get edges from selected faces
+            for (const face of this._selectedFaces) {
+                const explorer = new oc.TopExp_Explorer_2(
+                    face,
+                    oc.TopAbs_ShapeEnum.TopAbs_EDGE,
+                    oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+                );
+                while (explorer.More()) {
+                    const edge = oc.TopoDS.Edge_1(explorer.Current());
+                    const hash = edge.HashCode(1000000);
+                    if (!edgeSet.has(hash)) {
+                        edgeSet.add(hash);
+                        allEdges.push(edge);
+                    }
+                    explorer.Next();
+                }
+                explorer.delete();
+            }
+        } else {
+            // Get all edges from shape (with deduplication)
+            const explorer = new oc.TopExp_Explorer_2(
+                this._shape,
+                oc.TopAbs_ShapeEnum.TopAbs_EDGE,
+                oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+            );
+            while (explorer.More()) {
+                const edge = oc.TopoDS.Edge_1(explorer.Current());
+                const hash = edge.HashCode(1000000);
+                if (!edgeSet.has(hash)) {
+                    edgeSet.add(hash);
+                    allEdges.push(edge);
+                }
+                explorer.Next();
+            }
+            explorer.delete();
+        }
+
+        // Get edges matching selector
+        const matchingEdges = this._filterEdges(allEdges, selector);
+
+        // Build hash set of matching edges
+        const matchingHashes = new Set(matchingEdges.map(e => e.HashCode(1000000)));
+
+        // Return edges NOT in the matching set
+        result._selectedEdges = allEdges.filter(e => !matchingHashes.has(e.HashCode(1000000)));
+
+        return result;
+    }
+
+    /**
+     * Get the Z range (min/max) of an edge
+     */
+    _getEdgeZRange(edge) {
+        try {
+            const curve = new oc.BRepAdaptor_Curve_2(edge);
+            const first = curve.FirstParameter();
+            const last = curve.LastParameter();
+            const p1 = curve.Value(first);
+            const p2 = curve.Value(last);
+            const z1 = p1.Z();
+            const z2 = p2.Z();
+            p1.delete();
+            p2.delete();
+            curve.delete();
+            return { zMin: Math.min(z1, z2), zMax: Math.max(z1, z2) };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Filter selected edges using a predicate function
+     * The predicate receives an object with edge info: { zMin, zMax, edge }
+     * Example: .filterEdges(e => e.zMin > 0)
+     */
+    filterEdges(predicate) {
+        const result = new Workplane(this._plane);
+        result._shape = this._shape;
+        result._selectionMode = 'edges';
+        result._selectedEdges = [];
+
+        if (!this._selectedEdges || this._selectedEdges.length === 0) {
+            return result;
+        }
+
+        result._selectedEdges = this._selectedEdges.filter(edge => {
+            const zRange = this._getEdgeZRange(edge);
+            if (!zRange) return false;
+            return predicate({ zMin: zRange.zMin, zMax: zRange.zMax, edge });
+        });
+
+        return result;
+    }
+
+    /**
+     * Filter out edges at the bottom (zMin of the shape)
+     * Useful after boolean operations to exclude bottom edges from filleting
+     */
+    filterOutBottom() {
+        if (!this._selectedEdges || this._selectedEdges.length === 0 || !this._shape) {
+            return this;
+        }
+
+        // Get shape's bounding box to find zMin
+        const bbox = new oc.Bnd_Box_1();
+        oc.BRepBndLib.Add(this._shape, bbox, false);
+        const zMinRef = { current: 0 }, yMin = { current: 0 }, zMinShape = { current: 0 };
+        const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+        bbox.Get(zMinRef, yMin, zMinShape, xMax, yMax, zMax);
+        bbox.delete();
+
+        const shapeZMin = zMinShape.current;
+        const tolerance = 0.01;
+
+        // Filter out edges that are at zMin
+        return this.filterEdges(e => e.zMin > shapeZMin + tolerance || e.zMax > shapeZMin + tolerance);
+    }
+
+    /**
+     * Filter out edges at the top (zMax of the shape)
+     * Useful to exclude top edges from filleting
+     */
+    filterOutTop() {
+        if (!this._selectedEdges || this._selectedEdges.length === 0 || !this._shape) {
+            return this;
+        }
+
+        // Get shape's bounding box to find zMax
+        const bbox = new oc.Bnd_Box_1();
+        oc.BRepBndLib.Add(this._shape, bbox, false);
+        const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+        const xMax = { current: 0 }, yMax = { current: 0 }, zMaxRef = { current: 0 };
+        bbox.Get(xMin, yMin, zMin, xMax, yMax, zMaxRef);
+        bbox.delete();
+
+        const shapeZMax = zMaxRef.current;
+        const tolerance = 0.01;
+
+        // Filter out edges that are at zMax
+        return this.filterEdges(e => e.zMin < shapeZMax - tolerance || e.zMax < shapeZMax - tolerance);
     }
 
     /**
