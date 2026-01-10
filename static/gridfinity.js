@@ -29,10 +29,14 @@ const Gridfinity = {
     BIN_CLEARANCE: 0.25,     // clearance from bin exterior (each side)
     OUTER_RADIUS: 3.75,      // corner radius of bin
     WALL_THICKNESS: 1.2,     // shell thickness of bin
-    PLATE_HEIGHT: 5.0,       // height of base plate
 
-    // Base profile dimensions (for baseplate compatibility)
-    BASE_CHAMFER: 0.8,       // 45° chamfer at bottom outside edge
+    // Base profile dimensions (stepped z-shaped profile)
+    // See: https://github.com/KittyCAD/kcl-samples/blob/main/gridfinity-bins-stacking-lip/main.kcl
+    BASE_HEIGHT: 4.75,       // total base height (0.8 + 1.8 + 2.15)
+    STEP1_HEIGHT: 0.8,       // first 45° step (bottom)
+    STEP2_HEIGHT: 1.8,       // vertical wall section
+    STEP3_HEIGHT: 2.15,      // second 45° step (top)
+    BASE_TAPER: 2.95,        // total horizontal taper per side (0.8 + 2.15)
 
     // Insert parameters
     TOLERANCE: 0.30,         // wall clearance for inner plug
@@ -45,13 +49,58 @@ const Gridfinity = {
     MIN_BORDER: 2.0,         // default minimum shell thickness
 
     /**
+     * Create a single base unit with stepped profile (internal helper)
+     * @private
+     */
+    _createBaseUnit(cellX, cellY) {
+        // Single cell dimensions
+        const cellSize = this.UNIT_SIZE - 2 * this.BIN_CLEARANCE; // 41.5mm
+        const outerRadius = this.OUTER_RADIUS - this.BIN_CLEARANCE; // 3.5mm
+
+        // Dimensions at each level (bottom to top)
+        // At Z=0: smallest (cellSize - 2 * BASE_TAPER)
+        // At Z=BASE_HEIGHT: full cellSize
+        const bottomSize = cellSize - 2 * this.BASE_TAPER; // 35.6mm
+        const middleSize = bottomSize + 2 * this.STEP1_HEIGHT; // 37.2mm (after first 45° step)
+
+        // Calculate corner radii for each level (proportional)
+        const bottomRadius = Math.max(outerRadius - this.BASE_TAPER, 0.5);
+        const middleRadius = Math.max(outerRadius - this.STEP3_HEIGHT, 0.5);
+
+        // Build the stepped base from 3 layers
+        // Layer 1: Bottom step (0.8mm tall, 35.6mm -> 37.2mm, 45° sides)
+        let layer1 = new Workplane("XY")
+            .box(middleSize, middleSize, this.STEP1_HEIGHT)
+            .translate(cellX, cellY, this.STEP1_HEIGHT / 2);
+        layer1 = layer1.edges("|Z").fillet(middleRadius);
+        layer1 = layer1.faces("<Z").edges().chamfer(this.STEP1_HEIGHT - 0.01);
+
+        // Layer 2: Middle section (1.8mm tall, 37.2mm constant, vertical sides)
+        let layer2 = new Workplane("XY")
+            .box(middleSize, middleSize, this.STEP2_HEIGHT)
+            .translate(cellX, cellY, this.STEP1_HEIGHT + this.STEP2_HEIGHT / 2);
+        layer2 = layer2.edges("|Z").fillet(middleRadius);
+
+        // Layer 3: Top step (2.15mm tall, 37.2mm -> 41.5mm, 45° sides)
+        let layer3 = new Workplane("XY")
+            .box(cellSize, cellSize, this.STEP3_HEIGHT)
+            .translate(cellX, cellY, this.STEP1_HEIGHT + this.STEP2_HEIGHT + this.STEP3_HEIGHT / 2);
+        layer3 = layer3.edges("|Z").fillet(outerRadius);
+        layer3 = layer3.faces("<Z").edges().chamfer(this.STEP3_HEIGHT - 0.01);
+
+        // Union all layers
+        let baseUnit = layer1.union(layer2).union(layer3);
+
+        return baseUnit;
+    },
+
+    /**
      * Create a solid gridfinity bin with standardized base profile
      *
      * This creates a complete gridfinity-compatible unit with:
-     * - Correct outer dimensions (41.5mm per grid unit)
-     * - Rounded corners (3.75mm radius)
-     * - Base chamfer for baseplate compatibility
-     * - Optional stacking lip
+     * - Separate base feet for each grid cell
+     * - Stepped z-shaped profile for baseplate compatibility
+     * - Rounded corners (3.5mm radius)
      *
      * @param {Object} options
      * @param {number} options.x - X dimension in grid units (1 unit = 42mm)
@@ -75,50 +124,67 @@ const Gridfinity = {
             return new Workplane("XY");
         }
 
-        // Calculate outer dimensions
-        // Outer = grid_units * unit_size - 2 * clearance
+        // Calculate outer dimensions for the body
         const outerX = x * this.UNIT_SIZE - 2 * this.BIN_CLEARANCE;
         const outerY = y * this.UNIT_SIZE - 2 * this.BIN_CLEARANCE;
         const outerRadius = this.OUTER_RADIUS - this.BIN_CLEARANCE;
 
-        // Calculate total height
+        // Calculate total height (body height above base)
+        const bodyHeight = z * this.UNIT_HEIGHT - this.BASE_HEIGHT;
         const totalHeight = z * this.UNIT_HEIGHT;
 
         console.log(`[Gridfinity] Creating ${x}x${y}x${z} bin:`);
+        console.log(`  Grid cells: ${x * y} (${x}x${y})`);
         console.log(`  Outer dimensions: ${outerX.toFixed(2)} x ${outerY.toFixed(2)} x ${totalHeight.toFixed(2)} mm`);
-        console.log(`  Corner radius: ${outerRadius.toFixed(2)} mm`);
-        console.log(`  Stackable: ${stackable}`);
-        console.log(`  Solid: ${solid}`);
+        console.log(`  Base height: ${this.BASE_HEIGHT} mm (stepped profile)`);
+        console.log(`  Body height: ${bodyHeight.toFixed(2)} mm`);
 
-        // Create the main body
-        let result = new Workplane("XY")
-            .box(outerX, outerY, totalHeight);
+        // Create base units for each grid cell
+        let result = null;
+        const startX = -(x - 1) * this.UNIT_SIZE / 2;
+        const startY = -(y - 1) * this.UNIT_SIZE / 2;
 
-        // Apply corner radius to vertical edges
-        result = result.edges("|Z").fillet(outerRadius);
+        for (let gy = 0; gy < y; gy++) {
+            for (let gx = 0; gx < x; gx++) {
+                const cellX = startX + gx * this.UNIT_SIZE;
+                const cellY = startY + gy * this.UNIT_SIZE;
 
-        // Apply base chamfer to bottom horizontal edges
-        // This creates the profile that allows the bin to drop into a baseplate
-        result = result.faces("<Z").edges().chamfer(this.BASE_CHAMFER);
+                const baseUnit = this._createBaseUnit(cellX, cellY);
+
+                if (result === null) {
+                    result = baseUnit;
+                } else {
+                    result = result.union(baseUnit);
+                }
+            }
+        }
+
+        // Create the body above the base
+        if (bodyHeight > 0) {
+            let body = new Workplane("XY")
+                .box(outerX, outerY, bodyHeight)
+                .translate(0, 0, this.BASE_HEIGHT + bodyHeight / 2);
+            body = body.edges("|Z").fillet(outerRadius);
+
+            result = result.union(body);
+        }
 
         // If hollow (shell), cut out the interior
         if (!solid) {
             const innerX = outerX - 2 * this.WALL_THICKNESS;
             const innerY = outerY - 2 * this.WALL_THICKNESS;
             const innerRadius = Math.max(outerRadius - this.WALL_THICKNESS, 0.5);
-            const cavityHeight = totalHeight - this.PLATE_HEIGHT + 1; // +1 to cut through top
+            const cavityHeight = totalHeight - this.BASE_HEIGHT + 1; // +1 to cut through top
 
             let cavity = new Workplane("XY")
                 .box(innerX, innerY, cavityHeight)
                 .edges("|Z")
                 .fillet(innerRadius)
-                .translate(0, 0, this.PLATE_HEIGHT + cavityHeight / 2 - 0.5);
+                .translate(0, 0, this.BASE_HEIGHT + cavityHeight / 2 - 0.5);
 
             result = result.cut(cavity);
         }
 
-        // If stackable, we would add the stacking lip profile at the top
-        // For now, the solid version works well for inserts with cutouts
         if (stackable) {
             console.log(`  Note: Stacking lip not yet implemented - using flat top`);
         }
@@ -228,8 +294,9 @@ function bestGrid(partX, partY, rectX, rectY, minSpacing = 0.6, count = null) {
                 continue; // spacing too tight
             }
 
-            // Score: prefer fewer rows (makes long lines), then maximize count
-            const score = [rows, -total];
+            // Score: prefer more square-like arrangements (minimize |rows - cols|), then maximize count
+            const squareness = Math.abs(rows - cols);
+            const score = [squareness, -total];
             const candidate = { total, cols, rows, sx, sy, score };
 
             if (best === null || compareTuples(candidate.score, best.score) < 0) {
@@ -292,7 +359,9 @@ function bestCircleGrid(partX, partY, radius, minSpacing = 2.0, count = null) {
                 continue;
             }
 
-            const score = [rows, -total];
+            // Score: prefer more square-like arrangements (minimize |rows - cols|), then maximize count
+            const squareness = Math.abs(rows - cols);
+            const score = [squareness, -total];
             const candidate = { total, cols, rows, sx, sy, score };
 
             if (best === null || compareTuples(candidate.score, best.score) < 0) {

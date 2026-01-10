@@ -1,19 +1,17 @@
-// Gridfinity Demo - Create bins with standardized base and cutouts
+// Gridfinity Demo - Bins with proper stepped base profile
 //
-// Gridfinity.bin() creates a complete gridfinity-compatible unit:
+// Gridfinity.bin() creates gridfinity-compatible units with:
+// - Separate base feet for each grid cell (4 feet for 2x2)
+// - Stepped z-shaped profile (0.8mm + 1.8mm + 2.15mm = 4.75mm)
 // - Correct outer dimensions (41.5mm per grid unit)
-// - Rounded corners (3.5mm radius)
-// - Base chamfer for baseplate compatibility
-// - Ready for cutouts
 
-// Create a 3x2 gridfinity bin, 5 units tall (35mm)
-// with 2 rectangular cutouts
-const bin = Gridfinity.bin({ x: 3, y: 2, z: 5 })
+// Create a 2x2 gridfinity bin, 3 units tall
+// This will have 4 separate stepped base feet
+const bin = Gridfinity.bin({ x: 2, y: 2, z: 3 })
     .cutRectGrid({
-        width: 35,      // pocket width in mm
-        height: 55,     // pocket height in mm
-        count: 2,       // we want exactly 2 cutouts
-        fillet: 5,      // corner radius
+        width: 25,      // pocket width in mm
+        height: 25,     // pocket height in mm
+        fillet: 3,      // corner radius
         minBorder: 3    // shell thickness
     })
     .color("#2ecc71");
