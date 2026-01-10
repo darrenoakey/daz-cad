@@ -159,11 +159,14 @@ const Gridfinity = {
             }
         }
 
-        // Create the body above the base
+        // Create the body above the base (overlap into base to ensure solid union)
+        const overlap = 0.5; // mm overlap with base for solid connection
         if (bodyHeight > 0) {
+            const adjustedBodyHeight = bodyHeight + overlap;
+            const bodyStartZ = this.BASE_HEIGHT - overlap; // Start inside the base
             let body = new Workplane("XY")
-                .box(outerX, outerY, bodyHeight)
-                .translate(0, 0, this.BASE_HEIGHT + bodyHeight / 2);
+                .box(outerX, outerY, adjustedBodyHeight)
+                .translate(0, 0, bodyStartZ + adjustedBodyHeight / 2);
             body = body.edges("|Z").fillet(outerRadius);
 
             result = result.union(body);
