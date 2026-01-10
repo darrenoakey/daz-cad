@@ -7,6 +7,7 @@
 
 import { CADViewer } from './viewer.js';
 import { initCAD, Workplane, Assembly, Profiler } from './cad.js';
+import { Gridfinity } from './gridfinity.js';
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
 import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
 
@@ -151,6 +152,180 @@ class CADEditor {
                 });
 
                 require(['vs/editor/editor.main'], () => {
+                    // Add CAD library type definitions for autocomplete
+                    const cadLibDefs = `
+                        /** Gridfinity bin/insert generator */
+                        declare const Gridfinity: {
+                            /** Grid unit size (42mm) */
+                            readonly UNIT_SIZE: number;
+                            /** Height unit (7mm) */
+                            readonly UNIT_HEIGHT: number;
+                            /** Base profile height (4.75mm) */
+                            readonly BASE_HEIGHT: number;
+
+                            /**
+                             * Create a solid gridfinity bin with standardized base profile
+                             * @param options.x - X dimension in grid units (1 unit = 42mm)
+                             * @param options.y - Y dimension in grid units
+                             * @param options.z - Z dimension in height units (1 unit = 7mm)
+                             * @param options.stackable - Include stacking lip at top (default: false)
+                             * @param options.solid - Create solid or hollow shell (default: true)
+                             */
+                            bin(options: { x: number; y: number; z: number; stackable?: boolean; solid?: boolean }): Workplane;
+
+                            /**
+                             * Create a solid gridfinity insert plug (fits inside a bin)
+                             * @param options.x - X dimension in grid units
+                             * @param options.y - Y dimension in grid units
+                             * @param options.z - Z dimension in height units
+                             * @param options.tolerance - Wall clearance in mm (default: 0.30)
+                             * @param options.stackable - Account for stacking lip (default: true)
+                             */
+                            plug(options: { x: number; y: number; z: number; tolerance?: number; stackable?: boolean }): Workplane;
+                        };
+
+                        /** CAD Workplane for creating 3D shapes */
+                        declare class Workplane {
+                            constructor(plane?: "XY" | "XZ" | "YZ");
+
+                            /** Create a box centered on XY, bottom at Z=0 */
+                            box(length: number, width: number, height: number, centered?: boolean): Workplane;
+
+                            /** Create a cylinder */
+                            cylinder(radius: number, height: number): Workplane;
+                            cylinder(options: { diameter?: number; radius?: number; height: number }): Workplane;
+
+                            /** Create a sphere */
+                            sphere(radius: number): Workplane;
+
+                            /** Create a polygon prism (3=triangle, 4=square, 6=hexagon) */
+                            polygonPrism(sides: number, flatToFlat: number, height: number): Workplane;
+
+                            /** Create 3D text */
+                            text(textString: string, fontSize: number, depth: number, fontName?: string): Workplane;
+
+                            /** Union with another shape */
+                            union(other: Workplane): Workplane;
+
+                            /** Cut/subtract another shape */
+                            cut(other: Workplane): Workplane;
+
+                            /** Intersect with another shape */
+                            intersect(other: Workplane): Workplane;
+
+                            /** Create a hole (through or blind) */
+                            hole(diameter: number, depth?: number): Workplane;
+
+                            /** Chamfer edges */
+                            chamfer(distance: number): Workplane;
+
+                            /** Fillet/round edges */
+                            fillet(radius: number): Workplane;
+
+                            /** Select faces by direction */
+                            faces(selector: ">Z" | "<Z" | ">X" | "<X" | ">Y" | "<Y" | "|Z" | "|X" | "|Y"): Workplane;
+
+                            /** Exclude faces */
+                            facesNot(selector: string): Workplane;
+
+                            /** Select edges */
+                            edges(selector?: "|Z" | "|X" | "|Y" | ">Z" | "<Z"): Workplane;
+
+                            /** Exclude edges */
+                            edgesNot(selector: string): Workplane;
+
+                            /** Filter out bottom edges */
+                            filterOutBottom(): Workplane;
+
+                            /** Filter out top edges */
+                            filterOutTop(): Workplane;
+
+                            /** Move the shape */
+                            translate(x: number, y: number, z: number): Workplane;
+
+                            /** Rotate around axis through origin */
+                            rotate(axisX: number, axisY: number, axisZ: number, degrees: number): Workplane;
+
+                            /** Set color (hex string like "#ff0000") */
+                            color(hexColor: string): Workplane;
+
+                            /** Cut a pattern of holes */
+                            cutPattern(options: { sides: 3 | 4 | 6; wallThickness: number; border: number; depth?: number; size?: number }): Workplane;
+
+                            /** Cut optimized rectangular grid */
+                            cutRectGrid(options: { width: number; height: number; count?: number; fillet?: number; depth?: number; minBorder?: number; minSpacing?: number }): Workplane;
+
+                            /** Cut optimized circular grid */
+                            cutCircleGrid(options: { radius?: number; diameter?: number; count?: number; depth?: number; minBorder?: number; minSpacing?: number }): Workplane;
+
+                            /** Export to STL */
+                            toSTL(linearDeflection?: number, angularDeflection?: number): Blob;
+
+                            /** Export to 3MF (Bambu Lab compatible) */
+                            to3MF(linearDeflection?: number, angularDeflection?: number): Promise<Blob>;
+
+                            /** Convert shape to mesh data for rendering */
+                            toMesh(linearDeflection?: number, angularDeflection?: number): { vertices: Float32Array; indices: Uint32Array; normals: Float32Array; color?: string };
+
+                            /** Create a modifier for pattern operations */
+                            asModifier(): Workplane;
+
+                            /** Apply modifier and perform pattern operation */
+                            withModifier(modifier: Workplane): Workplane;
+
+                            /** Apply a repeating pattern */
+                            pattern(options: { axis: [number, number, number]; count: number; spacing: number }): Workplane;
+
+                            /** Filter edges by custom criteria */
+                            filterEdges(selector: (edge: any) => boolean): Workplane;
+
+                            /** Get the underlying shape value */
+                            val(): any;
+                        }
+
+                        /** Assembly of multiple parts */
+                        declare class Assembly {
+                            constructor();
+                            /** Add a part to the assembly */
+                            add(part: Workplane): Assembly;
+                            /** Check if this is an assembly */
+                            readonly isAssembly: boolean;
+                            /** Convert assembly to mesh data */
+                            toMesh(linearDeflection?: number, angularDeflection?: number): Array<{ vertices: Float32Array; indices: Uint32Array; normals: Float32Array; color?: string }>;
+                            /** Export assembly to STL */
+                            toSTL(linearDeflection?: number, angularDeflection?: number): Blob;
+                            /** Export assembly to 3MF (Bambu Lab compatible) */
+                            to3MF(linearDeflection?: number, angularDeflection?: number): Promise<Blob>;
+                        }
+
+                        /** Performance profiler */
+                        declare class Profiler {
+                            constructor(name?: string);
+                            /** Record a checkpoint with a label */
+                            checkpoint(label: string): Profiler;
+                            /** Finish profiling and log results */
+                            finished(): Profiler;
+                            /** Get elapsed time since profiler started */
+                            elapsed(): number;
+                        }
+
+                        /** Load a font for 3D text */
+                        declare function loadFont(url: string, name: string): Promise<void>;
+
+                        /** Get the default font name */
+                        declare function getDefaultFont(): string | null;
+                    `;
+
+                    monaco.languages.typescript.javascriptDefaults.addExtraLib(cadLibDefs, 'cad-library.d.ts');
+
+                    // Configure JS to be more lenient and suggest our completions first
+                    monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+                        target: monaco.languages.typescript.ScriptTarget.ES2020,
+                        allowNonTsExtensions: true,
+                        checkJs: false,
+                        noSemanticValidation: true,
+                    });
+
                     // Define custom theme
                     monaco.editor.defineTheme('cad-dark', {
                         base: 'vs-dark',
@@ -445,6 +620,7 @@ class CADEditor {
             // Initialize CAD library and expose to window for testing
             initCAD(this.oc);
             window.oc = this.oc;
+            window.Gridfinity = Gridfinity;
 
             this.isReady = true;
             this._setStatus('ready', 'Ready');

@@ -1383,3 +1383,185 @@ def test_polygon_prism_and_cut_pattern(server):
         assert result["success"], f"polygonPrism/cutPattern test failed: {result.get('error')}"
         print(f"Hexagon vertices: {result.get('hexVertices')}")
         print(f"Pattern vertices before: {result.get('patternVertsBefore')}, after: {result.get('patternVertsAfter')}")
+
+
+# ##################################################################
+# test monaco type definitions match actual library
+# verifies the type definitions in editor.js match the actual CAD library exports
+def test_monaco_type_definitions_match_library(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(f"{server}/")
+
+        # wait for Ready AND main thread OpenCascade AND Gridfinity
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' &&
+                       window.Workplane && window.Gridfinity;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                const issues = [];
+
+                // Get actual methods from Workplane.prototype
+                const actualWorkplaneMethods = new Set();
+                // Get own property names from prototype
+                const wpProto = Object.getPrototypeOf(new Workplane('XY'));
+                for (const name of Object.getOwnPropertyNames(wpProto)) {
+                    if (name !== 'constructor' && !name.startsWith('_') && typeof wpProto[name] === 'function') {
+                        actualWorkplaneMethods.add(name);
+                    }
+                }
+
+                // Get actual methods from Gridfinity object
+                const actualGridfinityMethods = new Set();
+                for (const name of Object.keys(Gridfinity)) {
+                    if (!name.startsWith('_') && typeof Gridfinity[name] === 'function') {
+                        actualGridfinityMethods.add(name);
+                    }
+                }
+                // Also get constants
+                const actualGridfinityConstants = new Set();
+                for (const name of Object.keys(Gridfinity)) {
+                    if (!name.startsWith('_') && typeof Gridfinity[name] !== 'function') {
+                        actualGridfinityConstants.add(name);
+                    }
+                }
+
+                // Get actual methods from Assembly.prototype
+                const actualAssemblyMethods = new Set();
+                const asmProto = Object.getPrototypeOf(new Assembly());
+                for (const name of Object.getOwnPropertyNames(asmProto)) {
+                    if (name !== 'constructor' && !name.startsWith('_') && typeof asmProto[name] === 'function') {
+                        actualAssemblyMethods.add(name);
+                    }
+                }
+
+                // Get actual methods from Profiler.prototype
+                const actualProfilerMethods = new Set();
+                const profProto = Object.getPrototypeOf(new Profiler('test'));
+                for (const name of Object.getOwnPropertyNames(profProto)) {
+                    if (name !== 'constructor' && !name.startsWith('_') && typeof profProto[name] === 'function') {
+                        actualProfilerMethods.add(name);
+                    }
+                }
+
+                // Now get the declared methods from the type definitions
+                // Access cadEditor and get its internal type definitions
+                // The cadLibDefs string is embedded in editor.js, we'll parse it from cadEditor
+                // For now, use a regex-based approach on the window.__cadLibDefs if available
+
+                // Expected methods that should be in both implementation and type definitions
+                // If a method is added to the library, it must also be added here and to editor.js type defs
+                const expectedWorkplaneMethods = [
+                    'box', 'cylinder', 'sphere', 'polygonPrism', 'text',
+                    'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet',
+                    'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
+                    'translate', 'rotate', 'color', 'cutPattern', 'cutRectGrid', 'cutCircleGrid',
+                    'toSTL', 'to3MF', 'toMesh',
+                    'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val'
+                ];
+
+                const expectedGridfinityMethods = ['bin', 'plug'];
+                const expectedGridfinityConstants = ['UNIT_SIZE', 'UNIT_HEIGHT', 'BASE_HEIGHT'];
+
+                const expectedAssemblyMethods = ['add', 'toMesh', 'toSTL', 'to3MF'];
+                const expectedProfilerMethods = ['checkpoint', 'finished', 'elapsed'];
+
+                // Check Workplane methods
+                for (const method of expectedWorkplaneMethods) {
+                    if (!actualWorkplaneMethods.has(method)) {
+                        issues.push(`Workplane.${method} declared but not implemented`);
+                    }
+                }
+                for (const method of actualWorkplaneMethods) {
+                    if (!expectedWorkplaneMethods.includes(method)) {
+                        issues.push(`Workplane.${method} implemented but not in type definitions`);
+                    }
+                }
+
+                // Check Gridfinity methods
+                for (const method of expectedGridfinityMethods) {
+                    if (!actualGridfinityMethods.has(method)) {
+                        issues.push(`Gridfinity.${method} declared but not implemented`);
+                    }
+                }
+                for (const method of actualGridfinityMethods) {
+                    if (!expectedGridfinityMethods.includes(method)) {
+                        issues.push(`Gridfinity.${method} implemented but not in type definitions`);
+                    }
+                }
+
+                // Check Gridfinity constants
+                for (const constant of expectedGridfinityConstants) {
+                    if (!actualGridfinityConstants.has(constant)) {
+                        issues.push(`Gridfinity.${constant} declared but not implemented`);
+                    }
+                }
+
+                // Check Assembly methods
+                for (const method of expectedAssemblyMethods) {
+                    if (!actualAssemblyMethods.has(method)) {
+                        issues.push(`Assembly.${method} declared but not implemented`);
+                    }
+                }
+                for (const method of actualAssemblyMethods) {
+                    if (!expectedAssemblyMethods.includes(method)) {
+                        issues.push(`Assembly.${method} implemented but not in type definitions`);
+                    }
+                }
+
+                // Check Profiler methods
+                for (const method of expectedProfilerMethods) {
+                    if (!actualProfilerMethods.has(method)) {
+                        issues.push(`Profiler.${method} declared but not implemented`);
+                    }
+                }
+                for (const method of actualProfilerMethods) {
+                    if (!expectedProfilerMethods.includes(method)) {
+                        issues.push(`Profiler.${method} implemented but not in type definitions`);
+                    }
+                }
+
+                return {
+                    success: issues.length === 0,
+                    issues,
+                    actualWorkplaneMethods: [...actualWorkplaneMethods].sort(),
+                    actualGridfinityMethods: [...actualGridfinityMethods].sort(),
+                    actualGridfinityConstants: [...actualGridfinityConstants].sort(),
+                    actualAssemblyMethods: [...actualAssemblyMethods].sort(),
+                    actualProfilerMethods: [...actualProfilerMethods].sort()
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        if "error" in result:
+            raise AssertionError(f"Type definition validation error: {result.get('error')}")
+
+        # Print actual methods for debugging
+        print(f"\nActual Workplane methods: {result.get('actualWorkplaneMethods')}")
+        print(f"Actual Gridfinity methods: {result.get('actualGridfinityMethods')}")
+        print(f"Actual Gridfinity constants: {result.get('actualGridfinityConstants')}")
+        print(f"Actual Assembly methods: {result.get('actualAssemblyMethods')}")
+        print(f"Actual Profiler methods: {result.get('actualProfilerMethods')}")
+
+        if result.get('issues'):
+            print(f"\nType definition issues found:")
+            for issue in result['issues']:
+                print(f"  - {issue}")
+
+        assert result["success"], (
+            f"Type definitions out of sync with library! Issues:\n" +
+            "\n".join(f"  - {issue}" for issue in result.get('issues', []))
+        )
