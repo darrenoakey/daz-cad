@@ -62,7 +62,9 @@ class CADEditor {
         this._fileList = null;
         this._newFileInput = null;
         this._createFileBtn = null;
+        this._resetFileBtn = null;
         this._availableFiles = [];
+        this._hasTemplate = false;
 
         // Hot reload state
         this._fileMtime = null; // Last known modification time
@@ -512,6 +514,64 @@ class CADEditor {
         if (el && this._currentFile) {
             el.textContent = this._currentFile;
         }
+        // Check if this file has a resettable template
+        this._checkHasTemplate();
+    }
+
+    async _checkHasTemplate() {
+        if (!this._currentFile || !this._resetFileBtn) {
+            this._hasTemplate = false;
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/models/${this._currentFile}/has-template`);
+            if (response.ok) {
+                const data = await response.json();
+                this._hasTemplate = data.has_template;
+                this._resetFileBtn.style.display = this._hasTemplate ? 'flex' : 'none';
+            }
+        } catch (error) {
+            this._hasTemplate = false;
+            this._resetFileBtn.style.display = 'none';
+        }
+    }
+
+    async _resetFile() {
+        if (!this._currentFile || !this._hasTemplate) return;
+
+        if (!confirm(`Reset "${this._currentFile}" to its original template? This will overwrite your changes.`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/models/${this._currentFile}/reset`, {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to reset file');
+            }
+
+            const data = await response.json();
+            this._fileMtime = data.mtime;
+
+            // Update editor without triggering save
+            this._skipSave = true;
+            this.editor.setValue(data.content);
+
+            // Clear any pending debounce and render immediately
+            if (this.debounceTimer) {
+                clearTimeout(this.debounceTimer);
+                this.debounceTimer = null;
+            }
+            this._render();
+
+            console.log(`Reset ${this._currentFile} to original template`);
+        } catch (error) {
+            console.error('Failed to reset file:', error);
+            this._showError(`Failed to reset file: ${error.message}`);
+        }
     }
 
     _startFileWatcher() {
@@ -577,6 +637,7 @@ class CADEditor {
         this._fileList = document.getElementById('file-list');
         this._newFileInput = document.getElementById('new-file-input');
         this._createFileBtn = document.getElementById('create-file-btn');
+        this._resetFileBtn = document.getElementById('reset-file-btn');
 
         // Toggle dropdown on button click
         this._fileSelectorBtn.addEventListener('click', (e) => {
@@ -598,6 +659,9 @@ class CADEditor {
                 this._createNewFile();
             }
         });
+
+        // Reset file to template
+        this._resetFileBtn.addEventListener('click', () => this._resetFile());
     }
 
     _toggleFileDropdown() {

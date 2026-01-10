@@ -279,6 +279,46 @@ async def list_models():
 
 
 # ##################################################################
+# reset model file
+# restores a model file to its original template from examples
+@app.post("/api/models/{filename}/reset")
+async def reset_model(filename: str):
+    if not filename.endswith(".js"):
+        raise HTTPException(status_code=400, detail="Only .js files allowed")
+
+    safe_name = Path(filename).name
+    template_path = EXAMPLES_DIR / safe_name
+
+    if not template_path.exists():
+        raise HTTPException(status_code=404, detail="No template exists for this file")
+
+    template_content = template_path.read_text()
+    target_path = MODELS_DIR / safe_name
+    target_path.write_text(template_content)
+
+    return {
+        "filename": safe_name,
+        "content": template_content,
+        "mtime": target_path.stat().st_mtime,
+        "reset": True
+    }
+
+
+# ##################################################################
+# check if template exists
+# returns whether a file has a resettable template
+@app.get("/api/models/{filename}/has-template")
+async def has_template(filename: str):
+    if not filename.endswith(".js"):
+        raise HTTPException(status_code=400, detail="Only .js files allowed")
+
+    safe_name = Path(filename).name
+    template_path = EXAMPLES_DIR / safe_name
+
+    return {"has_template": template_path.exists()}
+
+
+# ##################################################################
 # get or create agent client
 # initializes the claude agent client on first use
 async def get_or_create_agent() -> ClaudeSDKClient:
