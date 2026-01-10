@@ -94,7 +94,7 @@ def format_results(results):
 
     if "testConfig" in results:
         config = results["testConfig"]
-        print(f"\nConfiguration:")
+        print("\nConfiguration:")
         print(f"  Base: {config.get('baseSize', '?')}x{config.get('baseSize', '?')/2}x{config.get('baseThickness', '?')}mm")
         print(f"  Hex size: {config.get('hexSize', '?'):.2f}mm")
         print(f"  Wall thickness: {config.get('wallThickness', '?')}mm")

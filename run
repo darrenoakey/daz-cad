@@ -52,13 +52,15 @@ def command_serve(_: argparse.Namespace) -> int:
     _ensure_venv()
     _ensure_dependencies()
     print(f"Starting server at http://127.0.0.1:{PORT}")
-    return _run([
+    return subprocess.call([
         _venv_python(), "-m", "uvicorn",
         "src.server:app",
         "--host", "127.0.0.1",
         "--port", str(PORT),
-        "--reload"
-    ])
+        "--reload",
+        "--reload-dir", str(PROJECT_ROOT / "src"),
+        "--reload-dir", str(PROJECT_ROOT / "static"),
+    ], cwd=PROJECT_ROOT)
 
 
 # ##################################################################
