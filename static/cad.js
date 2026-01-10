@@ -3013,4 +3013,11 @@ class Assembly {
     }
 }
 
-export { initCAD, Workplane, Assembly, Profiler, loadFont, getDefaultFont };
+/**
+ * Get the OpenCascade instance (for use by extension modules)
+ */
+function getOC() {
+    return oc;
+}
+
+export { initCAD, Workplane, Assembly, Profiler, loadFont, getDefaultFont, getOC };

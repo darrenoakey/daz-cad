@@ -1,0 +1,515 @@
+/**
+ * Gridfinity.js - Gridfinity insert generator for daz-cad-2
+ *
+ * Extends the CAD library with Gridfinity-specific operations:
+ * - Gridfinity.plug() - Create solid insert plugs
+ * - Workplane.cutRectGrid() - Optimized rectangular cutout grid
+ * - Workplane.cutCircleGrid() - Optimized circular cutout grid
+ *
+ * Example:
+ *   const plug = Gridfinity.plug({ x: 2, y: 3, z: 3 })
+ *       .cutRectGrid({ width: 30, height: 20, count: 6, fillet: 3 });
+ */
+
+import { Workplane, getOC } from './cad.js';
+
+// ============================================================
+// GRIDFINITY CONSTANTS
+// ============================================================
+
+const Gridfinity = {
+    // Grid dimensions (from gfthings)
+    UNIT_SIZE: 42,           // mm per grid unit (x/y)
+    UNIT_HEIGHT: 7,          // mm per height unit (z)
+    BIN_CLEARANCE: 0.25,     // clearance from bin exterior
+    OUTER_RADIUS: 3.75,      // corner radius of bin
+    WALL_THICKNESS: 1.2,     // shell thickness of bin
+    PLATE_HEIGHT: 5.0,       // height of base plate
+
+    // Insert parameters
+    TOLERANCE: 0.30,         // wall clearance for inner plug
+    TOP_GAP: 1.0,            // gap above stackable plug for extraction
+    STACKING_LIP: 4.4,       // height of stacking lip
+
+    // Cutout defaults
+    MIN_SPACING_RECT: 0.6,   // minimum space between rectangular cutouts
+    MIN_SPACING_CIRCLE: 2.0, // minimum space between circular cutouts
+    MIN_BORDER: 2.0,         // default minimum shell thickness
+
+    /**
+     * Create a solid gridfinity insert plug
+     *
+     * @param {Object} options
+     * @param {number} options.x - X dimension in grid units (1 unit = 42mm)
+     * @param {number} options.y - Y dimension in grid units
+     * @param {number} options.z - Z dimension in height units (1 unit = 7mm)
+     * @param {number} [options.tolerance=0.30] - Wall clearance in mm
+     * @param {boolean} [options.stackable=true] - Account for stacking lip
+     * @returns {Workplane} - A Workplane object with the plug shape
+     */
+    plug(options) {
+        const {
+            x,
+            y,
+            z,
+            tolerance = this.TOLERANCE,
+            stackable = true
+        } = options;
+
+        if (!x || !y || !z) {
+            console.error('[Gridfinity] plug requires x, y, z dimensions');
+            return new Workplane("XY");
+        }
+
+        // Calculate inner dimensions
+        // inner = cols * bin_size - 2 * (bin_clearance + wall_thickness + tolerance)
+        const innerX = x * this.UNIT_SIZE - 2 * (this.BIN_CLEARANCE + this.WALL_THICKNESS + tolerance);
+        const innerY = y * this.UNIT_SIZE - 2 * (this.BIN_CLEARANCE + this.WALL_THICKNESS + tolerance);
+        const innerRadius = Math.max(this.OUTER_RADIUS - this.BIN_CLEARANCE - this.WALL_THICKNESS - tolerance, 0);
+
+        // Calculate height based on stackability
+        let innerZ;
+        if (stackable) {
+            // With stacking lip, leave room for the lip and a gap to pull out
+            innerZ = z * this.UNIT_HEIGHT - this.TOP_GAP;
+        } else {
+            // Without stacking lip, extend all the way to the top
+            innerZ = z * this.UNIT_HEIGHT;
+        }
+
+        console.log(`[Gridfinity] Creating ${x}x${y}x${z} plug:`);
+        console.log(`  Inner dimensions: ${innerX.toFixed(2)} x ${innerY.toFixed(2)} x ${innerZ.toFixed(2)} mm`);
+        console.log(`  Corner radius: ${innerRadius.toFixed(2)} mm`);
+        console.log(`  Stackable: ${stackable}`);
+
+        // Create rounded rectangle and extrude
+        // For now, use box with fillet since we don't have roundedBox primitive
+        // The fillet radius needs to be applied to vertical edges only
+        const result = new Workplane("XY")
+            .box(innerX, innerY, innerZ)
+            .edges("|Z")
+            .fillet(innerRadius);
+
+        return result;
+    }
+};
+
+
+// ============================================================
+// GRID OPTIMIZATION ALGORITHMS
+// ============================================================
+
+/**
+ * Find optimal grid layout for rectangular cutouts
+ *
+ * @param {number} partX - Available width in mm
+ * @param {number} partY - Available height in mm
+ * @param {number} rectX - Cutout width in mm
+ * @param {number} rectY - Cutout height in mm
+ * @param {number} minSpacing - Minimum spacing between cutouts
+ * @param {number|null} count - Target count (null = maximize)
+ * @returns {Object} - { cols, rows, spacingX, spacingY }
+ */
+function bestGrid(partX, partY, rectX, rectY, minSpacing = 0.6, count = null) {
+    const maxCols = Math.floor((partX + minSpacing) / (rectX + minSpacing));
+    const maxRows = Math.floor((partY + minSpacing) / (rectY + minSpacing));
+
+    console.log(`[bestGrid] Part: ${partX.toFixed(1)}x${partY.toFixed(1)}, Rect: ${rectX}x${rectY}`);
+    console.log(`[bestGrid] Max possible: ${maxCols}x${maxRows}`);
+
+    if (maxCols === 0 || maxRows === 0) {
+        throw new Error('Cutouts do not fit - part too small');
+    }
+
+    let best = null;
+
+    for (let rows = 1; rows <= maxRows; rows++) {
+        for (let cols = 1; cols <= maxCols; cols++) {
+            const total = rows * cols;
+
+            if (count !== null && total < count) {
+                continue; // not enough pockets
+            }
+
+            const sx = (partX - cols * rectX) / (cols + 1);
+            const sy = (partY - rows * rectY) / (rows + 1);
+
+            if (sx < minSpacing || sy < minSpacing) {
+                continue; // spacing too tight
+            }
+
+            // Score: prefer fewer rows (makes long lines), then maximize count
+            const score = [rows, -total];
+            const candidate = { total, cols, rows, sx, sy, score };
+
+            if (best === null || compareTuples(candidate.score, best.score) < 0) {
+                best = candidate;
+            }
+        }
+    }
+
+    if (best === null) {
+        throw new Error(`Unable to fit rectangular cutouts with >= ${minSpacing}mm spacing`);
+    }
+
+    console.log(`[bestGrid] Selected: ${best.cols}x${best.rows} = ${best.total} cutouts`);
+    console.log(`[bestGrid] Spacing: ${best.sx.toFixed(2)} x ${best.sy.toFixed(2)} mm`);
+
+    return {
+        cols: best.cols,
+        rows: best.rows,
+        spacingX: best.sx,
+        spacingY: best.sy
+    };
+}
+
+/**
+ * Find optimal grid layout for circular cutouts
+ *
+ * @param {number} partX - Available width in mm
+ * @param {number} partY - Available height in mm
+ * @param {number} radius - Circle radius in mm
+ * @param {number} minSpacing - Minimum spacing between circles
+ * @param {number|null} count - Target count (null = maximize)
+ * @returns {Object} - { cols, rows, spacingX, spacingY }
+ */
+function bestCircleGrid(partX, partY, radius, minSpacing = 2.0, count = null) {
+    const diameter = 2 * radius;
+    const maxCols = Math.floor((partX + minSpacing) / (diameter + minSpacing));
+    const maxRows = Math.floor((partY + minSpacing) / (diameter + minSpacing));
+
+    console.log(`[bestCircleGrid] Part: ${partX.toFixed(1)}x${partY.toFixed(1)}, Diameter: ${diameter}`);
+    console.log(`[bestCircleGrid] Max possible: ${maxCols}x${maxRows}`);
+
+    if (maxCols === 0 || maxRows === 0) {
+        throw new Error('Circles do not fit - part too small or radius too large');
+    }
+
+    let best = null;
+
+    for (let rows = 1; rows <= maxRows; rows++) {
+        for (let cols = 1; cols <= maxCols; cols++) {
+            const total = rows * cols;
+
+            if (count !== null && total < count) {
+                continue;
+            }
+
+            const sx = (partX - cols * diameter) / (cols + 1);
+            const sy = (partY - rows * diameter) / (rows + 1);
+
+            if (sx < minSpacing || sy < minSpacing) {
+                continue;
+            }
+
+            const score = [rows, -total];
+            const candidate = { total, cols, rows, sx, sy, score };
+
+            if (best === null || compareTuples(candidate.score, best.score) < 0) {
+                best = candidate;
+            }
+        }
+    }
+
+    if (best === null) {
+        throw new Error(`Unable to fit circular cutouts with >= ${minSpacing}mm spacing`);
+    }
+
+    console.log(`[bestCircleGrid] Selected: ${best.cols}x${best.rows} = ${best.total} circles`);
+    console.log(`[bestCircleGrid] Spacing: ${best.sx.toFixed(2)} x ${best.sy.toFixed(2)} mm`);
+
+    return {
+        cols: best.cols,
+        rows: best.rows,
+        spacingX: best.sx,
+        spacingY: best.sy
+    };
+}
+
+/**
+ * Compare two tuples lexicographically
+ */
+function compareTuples(a, b) {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+        if (a[i] < b[i]) return -1;
+        if (a[i] > b[i]) return 1;
+    }
+    return a.length - b.length;
+}
+
+
+// ============================================================
+// WORKPLANE EXTENSIONS
+// ============================================================
+
+/**
+ * Cut a grid of rectangular pockets with automatic spacing optimization
+ *
+ * @param {Object} options
+ * @param {number} options.width - Pocket width in mm
+ * @param {number} options.height - Pocket height in mm
+ * @param {number} [options.count=null] - Target count (null = maximize)
+ * @param {number} [options.fillet=0] - Corner fillet radius
+ * @param {number} [options.depth=null] - Cut depth (null = auto: shape height - minBorder)
+ * @param {number} [options.minBorder=2.0] - Minimum shell thickness
+ * @param {number} [options.minSpacing=0.6] - Minimum spacing between cutouts
+ * @returns {Workplane} - New Workplane with cuts applied
+ */
+Workplane.prototype.cutRectGrid = function(options) {
+    const {
+        width,
+        height,
+        count = null,
+        fillet = 0,
+        depth = null,
+        minBorder = Gridfinity.MIN_BORDER,
+        minSpacing = Gridfinity.MIN_SPACING_RECT
+    } = options;
+
+    if (!width || !height) {
+        console.error('[cutRectGrid] width and height are required');
+        return this;
+    }
+
+    if (!this._shape) {
+        console.error('[cutRectGrid] No shape to cut');
+        return this;
+    }
+
+    // Get bounding box of current shape
+    const bbox = this._getBoundingBox();
+    if (!bbox) {
+        console.error('[cutRectGrid] Could not get bounding box');
+        return this;
+    }
+
+    const partX = bbox.sizeX - 2 * minBorder;
+    const partY = bbox.sizeY - 2 * minBorder;
+
+    // Calculate depth
+    let cutDepth;
+    if (depth !== null) {
+        cutDepth = depth;
+        if (cutDepth > bbox.sizeZ - minBorder) {
+            console.warn(`[cutRectGrid] Depth ${cutDepth}mm exceeds max ${bbox.sizeZ - minBorder}mm`);
+            cutDepth = bbox.sizeZ - minBorder;
+        }
+    } else {
+        cutDepth = bbox.sizeZ - minBorder;
+    }
+
+    if (cutDepth <= 0) {
+        console.error('[cutRectGrid] Computed depth <= 0 - part too shallow');
+        return this;
+    }
+
+    console.log(`[cutRectGrid] Part: ${bbox.sizeX.toFixed(1)}x${bbox.sizeY.toFixed(1)}x${bbox.sizeZ.toFixed(1)} mm`);
+    console.log(`[cutRectGrid] Usable area: ${partX.toFixed(1)}x${partY.toFixed(1)} mm`);
+    console.log(`[cutRectGrid] Cut depth: ${cutDepth.toFixed(2)} mm`);
+
+    // Get optimal grid layout
+    let grid;
+    try {
+        grid = bestGrid(partX, partY, width, height, minSpacing, count);
+    } catch (e) {
+        console.error('[cutRectGrid] ' + e.message);
+        return this;
+    }
+
+    // Calculate starting positions (centered)
+    const startX = bbox.centerX - (grid.cols - 1) * (width + grid.spacingX) / 2;
+    const startY = bbox.centerY - (grid.rows - 1) * (height + grid.spacingY) / 2;
+
+    // Apply fillet (clamp to valid range)
+    const actualFillet = Math.min(fillet, Math.min(width, height) / 2 - 0.01);
+
+    console.log(`[cutRectGrid] Creating ${grid.cols}x${grid.rows} = ${grid.cols * grid.rows} cutouts`);
+
+    // Create and subtract all cutters
+    let result = this;
+
+    for (let r = 0; r < grid.rows; r++) {
+        const cy = startY + r * (height + grid.spacingY);
+        for (let c = 0; c < grid.cols; c++) {
+            const cx = startX + c * (width + grid.spacingX);
+
+            // Create cutter at this position
+            // Position at top of shape and cut down
+            let cutter = new Workplane("XY")
+                .box(width, height, cutDepth + 1) // +1 to ensure clean cut through top
+                .translate(cx, cy, bbox.maxZ - cutDepth / 2 + 0.5);
+
+            if (actualFillet > 0) {
+                cutter = cutter.edges("|Z").fillet(actualFillet);
+            }
+
+            result = result.cut(cutter);
+        }
+    }
+
+    return result;
+};
+
+
+/**
+ * Cut a grid of circular pockets with automatic spacing optimization
+ *
+ * @param {Object} options
+ * @param {number} options.radius - Circle radius in mm (or use diameter)
+ * @param {number} [options.diameter] - Circle diameter in mm (alternative to radius)
+ * @param {number} [options.count=null] - Target count (null = maximize)
+ * @param {number} [options.depth=null] - Cut depth (null = auto: shape height - minBorder)
+ * @param {number} [options.minBorder=2.0] - Minimum shell thickness
+ * @param {number} [options.minSpacing=2.0] - Minimum spacing between circles
+ * @returns {Workplane} - New Workplane with cuts applied
+ */
+Workplane.prototype.cutCircleGrid = function(options) {
+    let {
+        radius,
+        diameter,
+        count = null,
+        depth = null,
+        minBorder = Gridfinity.MIN_BORDER,
+        minSpacing = Gridfinity.MIN_SPACING_CIRCLE
+    } = options;
+
+    // Handle diameter vs radius
+    if (diameter !== undefined) {
+        radius = diameter / 2;
+    }
+
+    if (!radius) {
+        console.error('[cutCircleGrid] radius or diameter is required');
+        return this;
+    }
+
+    if (!this._shape) {
+        console.error('[cutCircleGrid] No shape to cut');
+        return this;
+    }
+
+    // Get bounding box of current shape
+    const bbox = this._getBoundingBox();
+    if (!bbox) {
+        console.error('[cutCircleGrid] Could not get bounding box');
+        return this;
+    }
+
+    const partX = bbox.sizeX - 2 * minBorder;
+    const partY = bbox.sizeY - 2 * minBorder;
+
+    // Calculate depth
+    let cutDepth;
+    if (depth !== null) {
+        cutDepth = depth;
+        if (cutDepth > bbox.sizeZ - minBorder) {
+            console.warn(`[cutCircleGrid] Depth ${cutDepth}mm exceeds max ${bbox.sizeZ - minBorder}mm`);
+            cutDepth = bbox.sizeZ - minBorder;
+        }
+    } else {
+        cutDepth = bbox.sizeZ - minBorder;
+    }
+
+    if (cutDepth <= 0) {
+        console.error('[cutCircleGrid] Computed depth <= 0 - part too shallow');
+        return this;
+    }
+
+    console.log(`[cutCircleGrid] Part: ${bbox.sizeX.toFixed(1)}x${bbox.sizeY.toFixed(1)}x${bbox.sizeZ.toFixed(1)} mm`);
+    console.log(`[cutCircleGrid] Usable area: ${partX.toFixed(1)}x${partY.toFixed(1)} mm`);
+    console.log(`[cutCircleGrid] Circle radius: ${radius} mm`);
+    console.log(`[cutCircleGrid] Cut depth: ${cutDepth.toFixed(2)} mm`);
+
+    // Get optimal grid layout
+    let grid;
+    try {
+        grid = bestCircleGrid(partX, partY, radius, minSpacing, count);
+    } catch (e) {
+        console.error('[cutCircleGrid] ' + e.message);
+        return this;
+    }
+
+    // Calculate starting positions (centered)
+    const diameter2 = 2 * radius;
+    const startX = bbox.centerX - (grid.cols - 1) * (diameter2 + grid.spacingX) / 2;
+    const startY = bbox.centerY - (grid.rows - 1) * (diameter2 + grid.spacingY) / 2;
+
+    console.log(`[cutCircleGrid] Creating ${grid.cols}x${grid.rows} = ${grid.cols * grid.rows} circles`);
+
+    // Create and subtract all cutters
+    let result = this;
+
+    for (let r = 0; r < grid.rows; r++) {
+        const cy = startY + r * (diameter2 + grid.spacingY);
+        for (let c = 0; c < grid.cols; c++) {
+            const cx = startX + c * (diameter2 + grid.spacingX);
+
+            // Create cylinder cutter at this position
+            const cutter = new Workplane("XY")
+                .cylinder(radius, cutDepth + 1)
+                .translate(cx, cy, bbox.maxZ - cutDepth / 2 + 0.5);
+
+            result = result.cut(cutter);
+        }
+    }
+
+    return result;
+};
+
+
+/**
+ * Helper to get bounding box info from current shape
+ * @private
+ */
+Workplane.prototype._getBoundingBox = function() {
+    if (!this._shape) return null;
+
+    try {
+        const oc = this._getOC();
+        const bndBox = new oc.Bnd_Box_1();
+        oc.BRepBndLib.Add(this._shape, bndBox, false);
+
+        const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+        const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+        bndBox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+        bndBox.delete();
+
+        return {
+            minX: xMin.current,
+            minY: yMin.current,
+            minZ: zMin.current,
+            maxX: xMax.current,
+            maxY: yMax.current,
+            maxZ: zMax.current,
+            sizeX: xMax.current - xMin.current,
+            sizeY: yMax.current - yMin.current,
+            sizeZ: zMax.current - zMin.current,
+            centerX: (xMin.current + xMax.current) / 2,
+            centerY: (yMin.current + yMax.current) / 2,
+            centerZ: (zMin.current + zMax.current) / 2
+        };
+    } catch (e) {
+        console.error('[_getBoundingBox] Error:', e);
+        return null;
+    }
+};
+
+
+/**
+ * Get the OpenCascade instance
+ * @private
+ */
+Workplane.prototype._getOC = function() {
+    const oc = getOC();
+    if (!oc) {
+        throw new Error('OpenCascade not initialized');
+    }
+    return oc;
+};
+
+
+// ============================================================
+// EXPORTS
+// ============================================================
+
+export { Gridfinity, bestGrid, bestCircleGrid };

@@ -6,6 +6,7 @@
  */
 
 import { initCAD, Workplane, Assembly, Profiler, loadFont, getDefaultFont } from './cad.js';
+import { Gridfinity } from './gridfinity.js';
 
 let oc = null;
 let isInitialized = false;
@@ -120,9 +121,9 @@ function executeCode(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    // Execute the code with Workplane, Assembly, Profiler, and font functions available
-    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', code + '\nreturn result;');
-    const result = fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont);
+    // Execute the code with Workplane, Assembly, Profiler, Gridfinity, and font functions available
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', code + '\nreturn result;');
+    const result = fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity);
 
     if (!result) {
         throw new Error('Code did not produce a result');
@@ -144,8 +145,8 @@ function executeForExport(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', code + '\nreturn result;');
-    return fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont);
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', code + '\nreturn result;');
+    return fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity);
 }
 
 // Handle messages from main thread
