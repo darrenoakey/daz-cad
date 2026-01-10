@@ -246,7 +246,7 @@ class ThreeMFExporter {
         zip.file('Metadata/model_settings.config', this._modelSettings(objects));
         zip.file('Metadata/slice_info.config', this._sliceInfo(objects));
 
-        // Update filament colors in project_settings.config
+        // Update filament colors and infill settings in project_settings.config
         const projectSettingsStr = await zip.file('Metadata/project_settings.config').async('string');
         const projectSettings = JSON.parse(projectSettingsStr);
 
@@ -263,6 +263,19 @@ class ThreeMFExporter {
             const color = allColors[i];
             const hexColor = color.startsWith('#') ? color.toUpperCase() : `#${color.toUpperCase()}`;
             projectSettings.filament_colour[i] = hexColor;
+        }
+
+        // Set infill settings from first object's metadata (as project defaults)
+        if (objects.length > 0 && objects[0].meta) {
+            const meta = objects[0].meta;
+            if (meta.infillDensity !== undefined) {
+                projectSettings.sparse_infill_density = `${meta.infillDensity}%`;
+                console.log(`[3MF] Setting infill density to ${meta.infillDensity}%`);
+            }
+            if (meta.infillPattern !== undefined) {
+                projectSettings.sparse_infill_pattern = meta.infillPattern;
+                console.log(`[3MF] Setting infill pattern to ${meta.infillPattern}`);
+            }
         }
 
         zip.file('Metadata/project_settings.config', JSON.stringify(projectSettings, null, 4));
@@ -286,7 +299,8 @@ class ThreeMFExporter {
                 mesh: this._weldMesh(part.mesh),
                 subtype: 'normal_part',
                 color: part.color || '#808080',
-                name: part.name || `Part_${i + 1}`
+                name: part.name || `Part_${i + 1}`,
+                meta: part.meta || {}
             });
 
             // Modifiers attached to this part
@@ -297,14 +311,16 @@ class ThreeMFExporter {
                         mesh: this._weldMesh(mod.mesh),
                         subtype: 'modifier_part',
                         color: mod.color || '#FFFFFF',
-                        name: mod.name || `Modifier_${m + 1}`
+                        name: mod.name || `Modifier_${m + 1}`,
+                        meta: mod.meta || {}
                     });
                 }
             }
 
             objects.push({
                 name: part.name || `Object_${i + 1}`,
-                volumes
+                volumes,
+                meta: part.meta || {}
             });
         }
 
@@ -500,6 +516,18 @@ ${resources} </resources>
             let partsXml = '';
             for (let volIdx = 0; volIdx < obj.volumes.length; volIdx++) {
                 const vol = obj.volumes[volIdx];
+
+                // Build custom metadata from vol.meta
+                let customMeta = '';
+                if (vol.meta) {
+                    if (vol.meta.infillDensity !== undefined) {
+                        customMeta += `      <metadata key="sparse_infill_density" value="${vol.meta.infillDensity}%"/>\n`;
+                    }
+                    if (vol.meta.infillPattern !== undefined) {
+                        customMeta += `      <metadata key="sparse_infill_pattern" value="${vol.meta.infillPattern}"/>\n`;
+                    }
+                }
+
                 partsXml += `    <part id="${vol.volumeId}" subtype="${vol.subtype}">
       <metadata key="name" value="${vol.name}"/>
       <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>
@@ -510,7 +538,7 @@ ${resources} </resources>
       <metadata key="source_offset_y" value="0"/>
       <metadata key="source_offset_z" value="0"/>
       <metadata key="extruder" value="${extruder}"/>
-    </part>\n`;
+${customMeta}    </part>\n`;
                 extruder++;
             }
 
@@ -574,6 +602,38 @@ class Workplane {
         this._selectionMode = null; // 'faces', 'edges', or null
         this._color = null; // hex color string like "#ff0000"
         this._isModifier = false; // true if this is a modifier volume (for 3MF export)
+        this._modifiers = null; // array of modifier Workplanes
+        this._meta = {}; // generic metadata (infillDensity, infillPattern, partName, etc.)
+    }
+
+    /**
+     * Clone all properties from source to this Workplane
+     * Used by operations to preserve properties across transformations
+     * @private
+     */
+    _cloneProperties(source) {
+        this._plane = source._plane;
+        this._selectedFaces = source._selectedFaces;
+        this._selectedEdges = source._selectedEdges;
+        this._selectionMode = source._selectionMode;
+        this._color = source._color;
+        this._isModifier = source._isModifier;
+        this._modifiers = source._modifiers ? [...source._modifiers] : null;
+        this._meta = { ...source._meta };
+        return this;
+    }
+
+    /**
+     * Merge properties from another Workplane into this one
+     * Used by boolean operations - this object's values win on conflicts
+     * @private
+     */
+    _mergeProperties(other) {
+        // Merge metadata: other's values first, then this's values override
+        if (other && other._meta) {
+            this._meta = { ...other._meta, ...this._meta };
+        }
+        return this;
     }
 
     /**
@@ -583,12 +643,8 @@ class Workplane {
     color(hexColor) {
         const result = new Workplane(this._plane);
         result._shape = this._shape;
-        result._selectedFaces = this._selectedFaces;
-        result._selectedEdges = this._selectedEdges;
-        result._selectionMode = this._selectionMode;
+        result._cloneProperties(this);
         result._color = hexColor;
-        result._isModifier = this._isModifier;
-        result._modifiers = this._modifiers;
         return result;
     }
 
@@ -600,12 +656,8 @@ class Workplane {
     asModifier() {
         const result = new Workplane(this._plane);
         result._shape = this._shape;
-        result._selectedFaces = this._selectedFaces;
-        result._selectedEdges = this._selectedEdges;
-        result._selectionMode = this._selectionMode;
-        result._color = this._color;
+        result._cloneProperties(this);
         result._isModifier = true;
-        result._modifiers = this._modifiers;
         return result;
     }
 
@@ -619,14 +671,55 @@ class Workplane {
     withModifier(modifier) {
         const result = new Workplane(this._plane);
         result._shape = this._shape;
-        result._selectedFaces = this._selectedFaces;
-        result._selectedEdges = this._selectedEdges;
-        result._selectionMode = this._selectionMode;
-        result._color = this._color;
-        result._isModifier = this._isModifier;
+        result._cloneProperties(this);
         // Store modifiers as an array
         result._modifiers = [...(this._modifiers || []), modifier];
         return result;
+    }
+
+    /**
+     * Get or set generic metadata on this object
+     * Metadata is preserved through operations and used by exporters
+     * @param {string} key - Metadata key (e.g., 'infillDensity', 'infillPattern', 'partName')
+     * @param {*} [value] - If provided, sets the value and returns new Workplane. If omitted, returns current value.
+     * @returns {Workplane|*} New Workplane with metadata set, or current value if getting
+     */
+    meta(key, value) {
+        if (value === undefined) {
+            return this._meta[key];
+        }
+        const result = new Workplane(this._plane);
+        result._shape = this._shape;
+        result._cloneProperties(this);
+        result._meta = { ...this._meta, [key]: value };
+        return result;
+    }
+
+    /**
+     * Set infill density for this object (used in 3MF export)
+     * @param {number} percent - Infill density percentage (e.g., 5, 15, 20)
+     * @returns {Workplane} New Workplane with infill density set
+     */
+    infillDensity(percent) {
+        return this.meta('infillDensity', percent);
+    }
+
+    /**
+     * Set infill pattern for this object (used in 3MF export)
+     * @param {string} pattern - Infill pattern ('grid', 'gyroid', 'honeycomb', 'triangles', 'cubic', 'line', 'concentric')
+     * @returns {Workplane} New Workplane with infill pattern set
+     */
+    infillPattern(pattern) {
+        return this.meta('infillPattern', pattern);
+    }
+
+    /**
+     * Set the part name for this object (used in 3MF export)
+     * @param {string} name - Part name
+     * @returns {Workplane} New Workplane with part name set
+     */
+    partName(name) {
+        return this.meta('partName', name);
     }
 
     /**
@@ -1285,6 +1378,7 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
 
         try {
             // Get bounding box
@@ -1638,9 +1732,11 @@ class Workplane {
     /**
      * Select faces matching a selector
      * Selectors: ">Z" (top), "<Z" (bottom), ">X", "<X", ">Y", "<Y", "|Z" (parallel to Z), etc.
+     * Preserves all properties
      */
     faces(selector = null) {
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
         result._shape = this._shape;
         result._selectionMode = 'faces';
         result._selectedFaces = [];
@@ -1713,9 +1809,11 @@ class Workplane {
     /**
      * Select faces NOT matching a selector (set subtraction)
      * facesNot(">Z") returns all faces except those with max Z
+     * Preserves all properties
      */
     facesNot(selector) {
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
         result._shape = this._shape;
         result._selectionMode = 'faces';
         result._selectedFaces = [];
@@ -1757,9 +1855,11 @@ class Workplane {
      *   "|X", "|Y", "|Z" - edges parallel to axis
      *   ">X", ">Y", ">Z" - edge with max position on axis
      *   "<X", "<Y", "<Z" - edge with min position on axis
+     * Preserves all properties
      */
     edges(selector = null) {
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
         result._shape = this._shape;
         result._selectionMode = 'edges';
         result._selectedEdges = [];
@@ -1914,9 +2014,11 @@ class Workplane {
     /**
      * Select edges NOT matching a selector (set subtraction)
      * edgesNot("|Z") returns all edges except those parallel to Z
+     * Preserves all properties
      */
     edgesNot(selector) {
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
         result._shape = this._shape;
         result._selectionMode = 'edges';
         result._selectedEdges = [];
@@ -2001,9 +2103,11 @@ class Workplane {
      * Filter selected edges using a predicate function
      * The predicate receives an object with edge info: { zMin, zMax, edge }
      * Example: .filterEdges(e => e.zMin > 0)
+     * Preserves all properties
      */
     filterEdges(predicate) {
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
         result._shape = this._shape;
         result._selectionMode = 'edges';
         result._selectedEdges = [];
@@ -2071,6 +2175,7 @@ class Workplane {
 
     /**
      * Create a hole through the shape along Z axis at XY center
+     * Preserves all properties
      */
     hole(diameter, depth = null) {
         if (!this._shape) {
@@ -2079,6 +2184,7 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
 
         // Validate inputs
         if (typeof diameter !== 'number' || diameter <= 0) {
@@ -2143,6 +2249,7 @@ class Workplane {
     /**
      * Apply chamfer to selected edges
      * Uses BRepFilletAPI_MakeChamfer
+     * Preserves all properties
      */
     chamfer(distance) {
         if (!this._shape) {
@@ -2157,6 +2264,7 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
 
         // Try different constructor patterns
         let chamferBuilder = null;
@@ -2256,6 +2364,7 @@ class Workplane {
 
     /**
      * Apply fillet to selected edges
+     * Preserves all properties
      */
     fillet(radius) {
         if (!this._shape) {
@@ -2270,6 +2379,7 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
 
         // Try different constructor patterns for BRepFilletAPI_MakeFillet
         // The constructor requires (shape, ChFi3d_FilletShape) - both parameters
@@ -2388,6 +2498,7 @@ class Workplane {
 
     /**
      * Boolean union with another shape
+     * Preserves metadata from both shapes (this wins on conflicts)
      */
     union(other) {
         if (!this._shape) {
@@ -2400,6 +2511,8 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
+        result._mergeProperties(other);
 
         try {
             const fuse = new oc.BRepAlgoAPI_Fuse_3(
@@ -2450,6 +2563,7 @@ class Workplane {
 
     /**
      * Boolean cut (subtract another shape)
+     * Preserves metadata from both shapes (this wins on conflicts)
      */
     cut(other) {
         if (!this._shape) {
@@ -2462,6 +2576,8 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
+        result._mergeProperties(other);
 
         try {
             const cut = new oc.BRepAlgoAPI_Cut_3(
@@ -2492,6 +2608,7 @@ class Workplane {
 
     /**
      * Boolean intersection
+     * Preserves metadata from both shapes (this wins on conflicts)
      */
     intersect(other) {
         if (!this._shape) {
@@ -2504,6 +2621,8 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
+        result._mergeProperties(other);
 
         try {
             const common = new oc.BRepAlgoAPI_Common_3(
@@ -2534,6 +2653,7 @@ class Workplane {
 
     /**
      * Translate the shape
+     * Preserves all properties
      */
     translate(x, y, z) {
         if (!this._shape) {
@@ -2548,6 +2668,7 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
 
         try {
             const transform = new oc.gp_Trsf_1();
@@ -2573,6 +2694,7 @@ class Workplane {
 
     /**
      * Rotate the shape around an axis
+     * Preserves all properties
      */
     rotate(axisX, axisY, axisZ, angleDegrees) {
         if (!this._shape) {
@@ -2598,6 +2720,7 @@ class Workplane {
         }
 
         const result = new Workplane(this._plane);
+        result._cloneProperties(this);
 
         try {
             const axis = new oc.gp_Ax1_2(
@@ -2840,7 +2963,8 @@ class Workplane {
         const partData = {
             mesh: mainMesh,
             color: this._color || '#FF1493',
-            name: 'Part_1'
+            name: this._meta.partName || 'Part_1',
+            meta: { ...this._meta }
         };
 
         // Add modifiers if present
@@ -2854,7 +2978,8 @@ class Workplane {
                         partData.modifiers.push({
                             mesh: modMesh,
                             color: mod._color || '#FFFFFF',
-                            name: `Modifier_${idx + 1}`
+                            name: mod._meta?.partName || `Modifier_${idx + 1}`,
+                            meta: { ...mod._meta }
                         });
                     }
                 }
@@ -2983,7 +3108,8 @@ class Assembly {
             const partData = {
                 mesh: mainMesh,
                 color: part._color || '#808080',
-                name: `Part_${i + 1}`
+                name: part._meta?.partName || `Part_${i + 1}`,
+                meta: { ...part._meta }
             };
 
             // Add modifiers if present
@@ -2997,7 +3123,8 @@ class Assembly {
                             partData.modifiers.push({
                                 mesh: modMesh,
                                 color: mod._color || '#FFFFFF',
-                                name: `Modifier_${idx + 1}`
+                                name: mod._meta?.partName || `Modifier_${idx + 1}`,
+                                meta: { ...mod._meta }
                             });
                         }
                     }

@@ -197,6 +197,11 @@ const Gridfinity = {
             console.log(`  Note: Stacking lip not yet implemented - using flat top`);
         }
 
+        // Set default gridfinity metadata for 3MF export
+        result = result
+            .meta('infillDensity', 5)
+            .meta('infillPattern', 'gyroid');
+
         return result;
     },
 
@@ -249,10 +254,15 @@ const Gridfinity = {
         // Create rounded rectangle and extrude
         // For now, use box with fillet since we don't have roundedBox primitive
         // The fillet radius needs to be applied to vertical edges only
-        const result = new Workplane("XY")
+        let result = new Workplane("XY")
             .box(innerX, innerY, innerZ)
             .edges("|Z")
             .fillet(innerRadius);
+
+        // Set default gridfinity metadata for 3MF export
+        result = result
+            .meta('infillDensity', 5)
+            .meta('infillPattern', 'gyroid');
 
         return result;
     }

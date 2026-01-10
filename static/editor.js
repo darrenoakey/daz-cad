@@ -281,6 +281,18 @@ class CADEditor {
 
                             /** Get the underlying shape value */
                             val(): any;
+
+                            /** Get or set generic metadata (used by exporters) */
+                            meta(key: string, value?: any): Workplane | any;
+
+                            /** Set infill density for 3MF export (e.g., 5 for 5%) */
+                            infillDensity(percent: number): Workplane;
+
+                            /** Set infill pattern for 3MF export */
+                            infillPattern(pattern: 'grid' | 'gyroid' | 'honeycomb' | 'triangles' | 'cubic' | 'line' | 'concentric'): Workplane;
+
+                            /** Set part name for 3MF export */
+                            partName(name: string): Workplane;
                         }
 
                         /** Assembly of multiple parts */

@@ -1465,7 +1465,8 @@ def test_monaco_type_definitions_match_library(server):
                     'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
                     'translate', 'rotate', 'color', 'cutPattern', 'cutRectGrid', 'cutCircleGrid',
                     'toSTL', 'to3MF', 'toMesh',
-                    'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val'
+                    'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val',
+                    'meta', 'infillDensity', 'infillPattern', 'partName'
                 ];
 
                 const expectedGridfinityMethods = ['bin', 'plug'];
