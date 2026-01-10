@@ -198,9 +198,13 @@ const Gridfinity = {
         }
 
         // Set default gridfinity metadata for 3MF export
+        // minCutZ tells cutRectGrid/cutCircleGrid where to stop cutting
+        // (just above the base profile, leaving a thin floor)
+        const floorThickness = 1.0; // mm floor above base
         result = result
             .meta('infillDensity', 5)
-            .meta('infillPattern', 'gyroid');
+            .meta('infillPattern', 'gyroid')
+            .meta('minCutZ', this.BASE_HEIGHT + floorThickness);
 
         return result;
     },
@@ -464,13 +468,19 @@ Workplane.prototype.cutRectGrid = function(options) {
     const partY = bbox.sizeY - 2 * minBorder;
 
     // Calculate depth
+    // Use minCutZ metadata if available (e.g., Gridfinity bins set this to preserve base)
+    const minCutZ = this._meta?.minCutZ;
     let cutDepth;
     if (depth !== null) {
         cutDepth = depth;
-        if (cutDepth > bbox.sizeZ - minBorder) {
-            console.warn(`[cutRectGrid] Depth ${cutDepth}mm exceeds max ${bbox.sizeZ - minBorder}mm`);
-            cutDepth = bbox.sizeZ - minBorder;
+        const maxDepth = minCutZ !== undefined ? (bbox.maxZ - minCutZ) : (bbox.sizeZ - minBorder);
+        if (cutDepth > maxDepth) {
+            console.warn(`[cutRectGrid] Depth ${cutDepth}mm exceeds max ${maxDepth.toFixed(2)}mm`);
+            cutDepth = maxDepth;
         }
+    } else if (minCutZ !== undefined) {
+        // Use minCutZ to determine depth (cut from top down to minCutZ)
+        cutDepth = bbox.maxZ - minCutZ;
     } else {
         cutDepth = bbox.sizeZ - minBorder;
     }
@@ -576,13 +586,19 @@ Workplane.prototype.cutCircleGrid = function(options) {
     const partY = bbox.sizeY - 2 * minBorder;
 
     // Calculate depth
+    // Use minCutZ metadata if available (e.g., Gridfinity bins set this to preserve base)
+    const minCutZ = this._meta?.minCutZ;
     let cutDepth;
     if (depth !== null) {
         cutDepth = depth;
-        if (cutDepth > bbox.sizeZ - minBorder) {
-            console.warn(`[cutCircleGrid] Depth ${cutDepth}mm exceeds max ${bbox.sizeZ - minBorder}mm`);
-            cutDepth = bbox.sizeZ - minBorder;
+        const maxDepth = minCutZ !== undefined ? (bbox.maxZ - minCutZ) : (bbox.sizeZ - minBorder);
+        if (cutDepth > maxDepth) {
+            console.warn(`[cutCircleGrid] Depth ${cutDepth}mm exceeds max ${maxDepth.toFixed(2)}mm`);
+            cutDepth = maxDepth;
         }
+    } else if (minCutZ !== undefined) {
+        // Use minCutZ to determine depth (cut from top down to minCutZ)
+        cutDepth = bbox.maxZ - minCutZ;
     } else {
         cutDepth = bbox.sizeZ - minBorder;
     }
