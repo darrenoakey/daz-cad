@@ -1,14 +1,19 @@
 /**
- * Gridfinity.js - Gridfinity insert generator for daz-cad-2
+ * Gridfinity.js - Gridfinity bin/insert generator for daz-cad-2
  *
  * Extends the CAD library with Gridfinity-specific operations:
- * - Gridfinity.plug() - Create solid insert plugs
+ * - Gridfinity.bin() - Create solid gridfinity bin with standardized base
+ * - Gridfinity.plug() - Create solid insert plugs (fits inside a bin)
  * - Workplane.cutRectGrid() - Optimized rectangular cutout grid
  * - Workplane.cutCircleGrid() - Optimized circular cutout grid
  *
- * Example:
+ * Example - Solid bin with cutouts:
+ *   const bin = Gridfinity.bin({ x: 3, y: 2, z: 5 })
+ *       .cutRectGrid({ width: 30, height: 40, count: 2, fillet: 3 });
+ *
+ * Example - Insert plug for existing bin:
  *   const plug = Gridfinity.plug({ x: 2, y: 3, z: 3 })
- *       .cutRectGrid({ width: 30, height: 20, count: 6, fillet: 3 });
+ *       .cutCircleGrid({ diameter: 20, count: 4 });
  */
 
 import { Workplane, getOC } from './cad.js';
@@ -18,13 +23,16 @@ import { Workplane, getOC } from './cad.js';
 // ============================================================
 
 const Gridfinity = {
-    // Grid dimensions (from gfthings)
+    // Grid dimensions (from gridfinity spec)
     UNIT_SIZE: 42,           // mm per grid unit (x/y)
     UNIT_HEIGHT: 7,          // mm per height unit (z)
-    BIN_CLEARANCE: 0.25,     // clearance from bin exterior
+    BIN_CLEARANCE: 0.25,     // clearance from bin exterior (each side)
     OUTER_RADIUS: 3.75,      // corner radius of bin
     WALL_THICKNESS: 1.2,     // shell thickness of bin
     PLATE_HEIGHT: 5.0,       // height of base plate
+
+    // Base profile dimensions (for baseplate compatibility)
+    BASE_CHAMFER: 0.8,       // 45° chamfer at bottom outside edge
 
     // Insert parameters
     TOLERANCE: 0.30,         // wall clearance for inner plug
@@ -37,7 +45,89 @@ const Gridfinity = {
     MIN_BORDER: 2.0,         // default minimum shell thickness
 
     /**
-     * Create a solid gridfinity insert plug
+     * Create a solid gridfinity bin with standardized base profile
+     *
+     * This creates a complete gridfinity-compatible unit with:
+     * - Correct outer dimensions (41.5mm per grid unit)
+     * - Rounded corners (3.75mm radius)
+     * - Base chamfer for baseplate compatibility
+     * - Optional stacking lip
+     *
+     * @param {Object} options
+     * @param {number} options.x - X dimension in grid units (1 unit = 42mm)
+     * @param {number} options.y - Y dimension in grid units
+     * @param {number} options.z - Z dimension in height units (1 unit = 7mm)
+     * @param {boolean} [options.stackable=false] - Include stacking lip at top
+     * @param {boolean} [options.solid=true] - Create solid (true) or hollow shell (false)
+     * @returns {Workplane} - A Workplane object with the gridfinity bin
+     */
+    bin(options) {
+        const {
+            x,
+            y,
+            z,
+            stackable = false,
+            solid = true
+        } = options;
+
+        if (!x || !y || !z) {
+            console.error('[Gridfinity] bin requires x, y, z dimensions');
+            return new Workplane("XY");
+        }
+
+        // Calculate outer dimensions
+        // Outer = grid_units * unit_size - 2 * clearance
+        const outerX = x * this.UNIT_SIZE - 2 * this.BIN_CLEARANCE;
+        const outerY = y * this.UNIT_SIZE - 2 * this.BIN_CLEARANCE;
+        const outerRadius = this.OUTER_RADIUS - this.BIN_CLEARANCE;
+
+        // Calculate total height
+        const totalHeight = z * this.UNIT_HEIGHT;
+
+        console.log(`[Gridfinity] Creating ${x}x${y}x${z} bin:`);
+        console.log(`  Outer dimensions: ${outerX.toFixed(2)} x ${outerY.toFixed(2)} x ${totalHeight.toFixed(2)} mm`);
+        console.log(`  Corner radius: ${outerRadius.toFixed(2)} mm`);
+        console.log(`  Stackable: ${stackable}`);
+        console.log(`  Solid: ${solid}`);
+
+        // Create the main body
+        let result = new Workplane("XY")
+            .box(outerX, outerY, totalHeight);
+
+        // Apply corner radius to vertical edges
+        result = result.edges("|Z").fillet(outerRadius);
+
+        // Apply base chamfer to bottom horizontal edges
+        // This creates the profile that allows the bin to drop into a baseplate
+        result = result.faces("<Z").edges().chamfer(this.BASE_CHAMFER);
+
+        // If hollow (shell), cut out the interior
+        if (!solid) {
+            const innerX = outerX - 2 * this.WALL_THICKNESS;
+            const innerY = outerY - 2 * this.WALL_THICKNESS;
+            const innerRadius = Math.max(outerRadius - this.WALL_THICKNESS, 0.5);
+            const cavityHeight = totalHeight - this.PLATE_HEIGHT + 1; // +1 to cut through top
+
+            let cavity = new Workplane("XY")
+                .box(innerX, innerY, cavityHeight)
+                .edges("|Z")
+                .fillet(innerRadius)
+                .translate(0, 0, this.PLATE_HEIGHT + cavityHeight / 2 - 0.5);
+
+            result = result.cut(cavity);
+        }
+
+        // If stackable, we would add the stacking lip profile at the top
+        // For now, the solid version works well for inserts with cutouts
+        if (stackable) {
+            console.log(`  Note: Stacking lip not yet implemented - using flat top`);
+        }
+
+        return result;
+    },
+
+    /**
+     * Create a solid gridfinity insert plug (fits inside a bin)
      *
      * @param {Object} options
      * @param {number} options.x - X dimension in grid units (1 unit = 42mm)

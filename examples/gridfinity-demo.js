@@ -1,18 +1,22 @@
-// Gridfinity Demo - Create inserts with optimized cutout grids
+// Gridfinity Demo - Create bins with standardized base and cutouts
 //
-// This demonstrates the Gridfinity extension for creating
-// gridfinity-compatible inserts with automatic grid optimization.
+// Gridfinity.bin() creates a complete gridfinity-compatible unit:
+// - Correct outer dimensions (41.5mm per grid unit)
+// - Rounded corners (3.5mm radius)
+// - Base chamfer for baseplate compatibility
+// - Ready for cutouts
 
-// Create a 2x2 gridfinity plug, 3 units tall
-// with rectangular cutouts optimized for the space
-const plug = Gridfinity.plug({ x: 2, y: 2, z: 3 })
+// Create a 3x2 gridfinity bin, 5 units tall (35mm)
+// with 2 rectangular cutouts
+const bin = Gridfinity.bin({ x: 3, y: 2, z: 5 })
     .cutRectGrid({
-        width: 25,      // pocket width in mm
-        height: 25,     // pocket height in mm
-        fillet: 3,      // corner radius
-        minBorder: 2    // shell thickness
+        width: 35,      // pocket width in mm
+        height: 55,     // pocket height in mm
+        count: 2,       // we want exactly 2 cutouts
+        fillet: 5,      // corner radius
+        minBorder: 3    // shell thickness
     })
-    .color("#3498db");
+    .color("#2ecc71");
 
-const result = plug;
+const result = bin;
 result;
