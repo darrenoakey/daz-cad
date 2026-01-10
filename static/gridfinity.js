@@ -492,7 +492,8 @@ Workplane.prototype.cutRectGrid = function(options) {
 
     console.log(`[cutRectGrid] Part: ${bbox.sizeX.toFixed(1)}x${bbox.sizeY.toFixed(1)}x${bbox.sizeZ.toFixed(1)} mm`);
     console.log(`[cutRectGrid] Usable area: ${partX.toFixed(1)}x${partY.toFixed(1)} mm`);
-    console.log(`[cutRectGrid] Cut depth: ${cutDepth.toFixed(2)} mm`);
+    console.log(`[cutRectGrid] minCutZ: ${minCutZ !== undefined ? minCutZ.toFixed(2) : 'not set'}, bbox.maxZ: ${bbox.maxZ.toFixed(2)}`);
+    console.log(`[cutRectGrid] Cut depth: ${cutDepth.toFixed(2)} mm (cuts from Z=${bbox.maxZ.toFixed(2)} to Z=${(bbox.maxZ - cutDepth).toFixed(2)})`);
 
     // Get optimal grid layout
     let grid;
