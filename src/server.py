@@ -423,6 +423,25 @@ async def hot_reload():
 
 
 # ##################################################################
+# model path endpoint (must be last to avoid capturing other routes)
+# serves editor for a specific model via path (e.g., /anker_holder)
+# frontend reads model name from path and loads it
+@app.get("/{model_name}")
+async def model_path(model_name: str):
+    # Exclude paths that look like API endpoints, static files, or special routes
+    excluded_prefixes = ("api", "static", "hot-reload", "health", "init-test", "perf-test")
+    if model_name.startswith(excluded_prefixes):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Only serve editor.html for model-like paths (no dots except .js extension)
+    # This prevents capturing paths like favicon.ico or other static files
+    if "." in model_name and not model_name.endswith(".js"):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return FileResponse(BASE_DIR / "static" / "editor.html")
+
+
+# ##################################################################
 # main
 # starts the uvicorn server with configured host and port
 def main():

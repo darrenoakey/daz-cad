@@ -651,23 +651,32 @@ class CADEditor {
 
     async _loadDefaultFile() {
         try {
-            // Check localStorage for last edited file
+            // Priority 1: Check URL path for model name (e.g., /anker_holder → anker_holder.js)
+            const pathModel = this._getModelFromPath();
+
+            // Priority 2: Check localStorage for last edited file
             const lastFile = localStorage.getItem('cad-editor-last-file');
 
-            // If we have a remembered file, try to load it first
-            if (lastFile) {
+            // Determine which file to load (URL path takes precedence)
+            const targetFile = pathModel || lastFile;
+
+            // If we have a target file, try to load it
+            if (targetFile) {
                 try {
-                    const fileResponse = await fetch(`/api/models/${lastFile}`);
+                    const fileResponse = await fetch(`/api/models/${targetFile}`);
                     if (fileResponse.ok) {
                         const fileData = await fileResponse.json();
                         this._currentFile = fileData.filename;
                         this._fileMtime = fileData.mtime;
                         this.editor.setValue(fileData.content);
                         this._updateFilenameDisplay();
-                        return; // Successfully loaded remembered file
+                        // Update localStorage and URL
+                        localStorage.setItem('cad-editor-last-file', this._currentFile);
+                        this._updateUrlWithModel();
+                        return; // Successfully loaded target file
                     }
                 } catch (e) {
-                    console.warn(`Could not load remembered file ${lastFile}, falling back to default`);
+                    console.warn(`Could not load file ${targetFile}, falling back to default`);
                 }
             }
 
@@ -687,6 +696,7 @@ class CADEditor {
             this.editor.setValue(fileData.content);
             this._updateFilenameDisplay();
             localStorage.setItem('cad-editor-last-file', this._currentFile);
+            this._updateUrlWithModel();
 
         } catch (error) {
             console.warn('Failed to load default file from server:', error);
@@ -695,6 +705,30 @@ class CADEditor {
             this._fileMtime = null;
             this._updateFilenameDisplay();
         }
+    }
+
+    _getModelFromPath() {
+        // Extract model name from URL path (e.g., /anker_holder → anker_holder.js)
+        const path = window.location.pathname;
+        if (path && path !== '/') {
+            // Remove leading slash and add .js if needed
+            let modelName = path.substring(1);
+            if (!modelName.endsWith('.js')) {
+                modelName += '.js';
+            }
+            return modelName;
+        }
+        return null;
+    }
+
+    _updateUrlWithModel() {
+        if (!this._currentFile) return;
+
+        // Use path-based URL (e.g., /anker_holder instead of /?model=anker_holder.js)
+        const modelPath = '/' + this._currentFile.replace('.js', '');
+
+        // Use replaceState to update URL without adding to history
+        window.history.replaceState({}, '', modelPath);
     }
 
     _updateFilenameDisplay() {
@@ -918,8 +952,9 @@ class CADEditor {
             this._updateFilenameDisplay();
             this._closeFileDropdown();
 
-            // Save to localStorage for persistence
+            // Save to localStorage and update URL for persistence
             localStorage.setItem('cad-editor-last-file', this._currentFile);
+            this._updateUrlWithModel();
 
             // Trigger re-render
             this._render();
@@ -974,8 +1009,9 @@ result;
             this._newFileInput.value = '';
             this._closeFileDropdown();
 
-            // Save to localStorage for persistence
+            // Save to localStorage and update URL for persistence
             localStorage.setItem('cad-editor-last-file', this._currentFile);
+            this._updateUrlWithModel();
 
             // Trigger re-render
             this._render();
