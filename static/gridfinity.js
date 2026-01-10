@@ -64,27 +64,31 @@ const Gridfinity = {
         const middleSize = bottomSize + 2 * this.STEP1_HEIGHT; // 37.2mm (after first 45° step)
 
         // Calculate corner radii for each level (proportional)
-        const bottomRadius = Math.max(outerRadius - this.BASE_TAPER, 0.5);
         const middleRadius = Math.max(outerRadius - this.STEP3_HEIGHT, 0.5);
 
         // Build the stepped base from 3 layers
-        // Layer 1: Bottom step (0.8mm tall, 35.6mm -> 37.2mm, 45° sides)
+        // box() creates with bottom at Z=0, so translate Z positions the bottom
+
+        // Layer 1: Bottom step (0.8mm tall, chamfered from 35.6mm to 37.2mm)
+        // Z = 0 to 0.8mm
         let layer1 = new Workplane("XY")
             .box(middleSize, middleSize, this.STEP1_HEIGHT)
-            .translate(cellX, cellY, this.STEP1_HEIGHT / 2);
+            .translate(cellX, cellY, 0);
         layer1 = layer1.edges("|Z").fillet(middleRadius);
         layer1 = layer1.faces("<Z").edges().chamfer(this.STEP1_HEIGHT - 0.01);
 
         // Layer 2: Middle section (1.8mm tall, 37.2mm constant, vertical sides)
+        // Z = 0.8 to 2.6mm
         let layer2 = new Workplane("XY")
             .box(middleSize, middleSize, this.STEP2_HEIGHT)
-            .translate(cellX, cellY, this.STEP1_HEIGHT + this.STEP2_HEIGHT / 2);
+            .translate(cellX, cellY, this.STEP1_HEIGHT);
         layer2 = layer2.edges("|Z").fillet(middleRadius);
 
-        // Layer 3: Top step (2.15mm tall, 37.2mm -> 41.5mm, 45° sides)
+        // Layer 3: Top step (2.15mm tall, chamfered from 37.2mm to 41.5mm)
+        // Z = 2.6 to 4.75mm
         let layer3 = new Workplane("XY")
             .box(cellSize, cellSize, this.STEP3_HEIGHT)
-            .translate(cellX, cellY, this.STEP1_HEIGHT + this.STEP2_HEIGHT + this.STEP3_HEIGHT / 2);
+            .translate(cellX, cellY, this.STEP1_HEIGHT + this.STEP2_HEIGHT);
         layer3 = layer3.edges("|Z").fillet(outerRadius);
         layer3 = layer3.faces("<Z").edges().chamfer(this.STEP3_HEIGHT - 0.01);
 
@@ -160,13 +164,14 @@ const Gridfinity = {
         }
 
         // Create the body above the base (overlap into base to ensure solid union)
+        // box() creates with bottom at Z=0, so translate Z positions the bottom
         const overlap = 0.5; // mm overlap with base for solid connection
         if (bodyHeight > 0) {
             const adjustedBodyHeight = bodyHeight + overlap;
-            const bodyStartZ = this.BASE_HEIGHT - overlap; // Start inside the base
+            const bodyBottomZ = this.BASE_HEIGHT - overlap; // Start inside the base
             let body = new Workplane("XY")
                 .box(outerX, outerY, adjustedBodyHeight)
-                .translate(0, 0, bodyStartZ + adjustedBodyHeight / 2);
+                .translate(0, 0, bodyBottomZ); // Position bottom at bodyBottomZ
             body = body.edges("|Z").fillet(outerRadius);
 
             result = result.union(body);
