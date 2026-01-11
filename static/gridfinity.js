@@ -454,7 +454,7 @@ const Gridfinity = {
     },
 
     /**
-     * Pack rectangles into a given space using shelf algorithm
+     * Pack rectangles into a given space using shelf algorithm with centering
      * @private
      * @returns {Array|null} - Array of placements or null if doesn't fit
      */
@@ -467,98 +467,112 @@ const Gridfinity = {
             return maxB - maxA;
         });
 
-        // Try both orientations for each cut (allow rotation)
-        const tryPack = (cutsToPlace) => {
-            const placements = [];
-            const shelves = [];  // {y, height, rightEdge}
+        // Initial shelf packing (bottom-left)
+        const placements = [];
+        const shelves = [];  // {y, height, items: [{x, width, ...}]}
 
-            for (const cut of cutsToPlace) {
-                let placed = false;
+        for (const cut of sortedCuts) {
+            let placed = false;
 
-                // Try to place in existing shelf
-                for (const shelf of shelves) {
-                    // Try original orientation
-                    if (shelf.rightEdge + cut.width + spacing <= areaWidth &&
-                        cut.height <= shelf.height) {
-                        placements.push({
-                            x: shelf.rightEdge,
-                            y: shelf.y,
-                            width: cut.width,
-                            height: cut.height,
-                            fillet: cut.fillet,
-                            id: cut.id
-                        });
-                        shelf.rightEdge += cut.width + spacing;
-                        placed = true;
-                        break;
-                    }
-                    // Try rotated
-                    if (shelf.rightEdge + cut.height + spacing <= areaWidth &&
-                        cut.width <= shelf.height) {
-                        placements.push({
-                            x: shelf.rightEdge,
-                            y: shelf.y,
-                            width: cut.height,  // swapped
-                            height: cut.width,  // swapped
-                            fillet: cut.fillet,
-                            id: cut.id
-                        });
-                        shelf.rightEdge += cut.height + spacing;
-                        placed = true;
-                        break;
-                    }
+            // Try to place in existing shelf
+            for (const shelf of shelves) {
+                const totalWidth = shelf.items.reduce((sum, item) => sum + item.width, 0);
+                const usedWidth = totalWidth + (shelf.items.length) * spacing;
+
+                // Try original orientation
+                if (usedWidth + cut.width <= areaWidth && cut.height <= shelf.height) {
+                    shelf.items.push({
+                        width: cut.width,
+                        height: cut.height,
+                        fillet: cut.fillet,
+                        id: cut.id
+                    });
+                    placed = true;
+                    break;
                 }
-
-                if (!placed) {
-                    // Start new shelf
-                    const shelfY = shelves.length === 0 ? 0 :
-                        shelves[shelves.length - 1].y + shelves[shelves.length - 1].height + spacing;
-
-                    // Try original orientation
-                    if (cut.width <= areaWidth && shelfY + cut.height <= areaHeight) {
-                        shelves.push({
-                            y: shelfY,
-                            height: cut.height,
-                            rightEdge: cut.width + spacing
-                        });
-                        placements.push({
-                            x: 0,
-                            y: shelfY,
-                            width: cut.width,
-                            height: cut.height,
-                            fillet: cut.fillet,
-                            id: cut.id
-                        });
-                        placed = true;
-                    }
-                    // Try rotated
-                    else if (cut.height <= areaWidth && shelfY + cut.width <= areaHeight) {
-                        shelves.push({
-                            y: shelfY,
-                            height: cut.width,  // swapped
-                            rightEdge: cut.height + spacing
-                        });
-                        placements.push({
-                            x: 0,
-                            y: shelfY,
-                            width: cut.height,  // swapped
-                            height: cut.width,  // swapped
-                            fillet: cut.fillet,
-                            id: cut.id
-                        });
-                        placed = true;
-                    }
-                }
-
-                if (!placed) {
-                    return null;  // Doesn't fit
+                // Try rotated
+                if (usedWidth + cut.height <= areaWidth && cut.width <= shelf.height) {
+                    shelf.items.push({
+                        width: cut.height,  // swapped
+                        height: cut.width,  // swapped
+                        fillet: cut.fillet,
+                        id: cut.id
+                    });
+                    placed = true;
+                    break;
                 }
             }
 
-            return placements;
-        };
+            if (!placed) {
+                // Calculate where new shelf would start
+                const totalShelfHeight = shelves.reduce((sum, s) => sum + s.height, 0);
+                const shelfY = totalShelfHeight + shelves.length * spacing;
 
-        return tryPack(sortedCuts);
+                // Try original orientation
+                if (cut.width <= areaWidth && shelfY + cut.height <= areaHeight) {
+                    shelves.push({
+                        height: cut.height,
+                        items: [{
+                            width: cut.width,
+                            height: cut.height,
+                            fillet: cut.fillet,
+                            id: cut.id
+                        }]
+                    });
+                    placed = true;
+                }
+                // Try rotated
+                else if (cut.height <= areaWidth && shelfY + cut.width <= areaHeight) {
+                    shelves.push({
+                        height: cut.width,  // swapped
+                        items: [{
+                            width: cut.height,  // swapped
+                            height: cut.width,  // swapped
+                            fillet: cut.fillet,
+                            id: cut.id
+                        }]
+                    });
+                    placed = true;
+                }
+            }
+
+            if (!placed) {
+                return null;  // Doesn't fit
+            }
+        }
+
+        // Now center everything with equal spacing
+        // Calculate total height used by shelves
+        const totalShelvesHeight = shelves.reduce((sum, s) => sum + s.height, 0);
+        const verticalGaps = shelves.length + 1;  // gaps above, between, and below
+        const verticalSpacing = (areaHeight - totalShelvesHeight) / verticalGaps;
+
+        let currentY = verticalSpacing;
+
+        for (const shelf of shelves) {
+            // Calculate horizontal spacing for this shelf
+            const totalItemsWidth = shelf.items.reduce((sum, item) => sum + item.width, 0);
+            const horizontalGaps = shelf.items.length + 1;
+            const horizontalSpacing = (areaWidth - totalItemsWidth) / horizontalGaps;
+
+            let currentX = horizontalSpacing;
+
+            for (const item of shelf.items) {
+                placements.push({
+                    x: currentX,
+                    y: currentY,
+                    width: item.width,
+                    height: item.height,
+                    fillet: item.fillet,
+                    id: item.id
+                });
+                currentX += item.width + horizontalSpacing;
+            }
+
+            currentY += shelf.height + verticalSpacing;
+        }
+
+        return placements;
     }
 };
 
