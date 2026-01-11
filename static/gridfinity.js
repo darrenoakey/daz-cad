@@ -547,20 +547,33 @@ const Gridfinity = {
         const verticalGaps = shelves.length + 1;  // gaps above, between, and below
         const verticalSpacing = (areaHeight - totalShelvesHeight) / verticalGaps;
 
-        let currentY = verticalSpacing;
+        console.log(`[_packRectangles] Centering: area ${areaWidth.toFixed(1)}x${areaHeight.toFixed(1)}, ${shelves.length} shelves`);
+        console.log(`[_packRectangles] Vertical: totalHeight=${totalShelvesHeight.toFixed(1)}, spacing=${verticalSpacing.toFixed(1)}`);
 
-        for (const shelf of shelves) {
-            // Calculate horizontal spacing for this shelf
+        let shelfY = verticalSpacing;
+
+        for (let shelfIdx = 0; shelfIdx < shelves.length; shelfIdx++) {
+            const shelf = shelves[shelfIdx];
+            // Calculate horizontal spacing for this shelf independently
             const totalItemsWidth = shelf.items.reduce((sum, item) => sum + item.width, 0);
             const horizontalGaps = shelf.items.length + 1;
             const horizontalSpacing = (areaWidth - totalItemsWidth) / horizontalGaps;
 
+            console.log(`[_packRectangles] Shelf ${shelfIdx}: ${shelf.items.length} items, totalWidth=${totalItemsWidth.toFixed(1)}, hSpacing=${horizontalSpacing.toFixed(1)}`);
+
             let currentX = horizontalSpacing;
 
             for (const item of shelf.items) {
+                // Center each item vertically within the shelf (not just aligned to bottom)
+                const itemVerticalOffset = (shelf.height - item.height) / 2;
+                const itemY = shelfY + itemVerticalOffset;
+
+                const centerX = currentX + item.width / 2;
+                const centerY = itemY + item.height / 2;
+                console.log(`[_packRectangles]   Item ${item.width}x${item.height}: x=${currentX.toFixed(1)}, y=${itemY.toFixed(1)}, center=(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`);
                 placements.push({
                     x: currentX,
-                    y: currentY,
+                    y: itemY,
                     width: item.width,
                     height: item.height,
                     fillet: item.fillet,
@@ -569,7 +582,7 @@ const Gridfinity = {
                 currentX += item.width + horizontalSpacing;
             }
 
-            currentY += shelf.height + verticalSpacing;
+            shelfY += shelf.height + verticalSpacing;
         }
 
         return placements;
