@@ -522,10 +522,13 @@ Workplane.prototype.cutRectGrid = function(options) {
             const cx = startX + c * (width + grid.spacingX);
 
             // Create cutter at this position
-            // Position at top of shape and cut down
+            // box() places bottom at Z=0, so translate to position bottom at cut floor
+            const cutFloorZ = bbox.maxZ - cutDepth;
             let cutter = new Workplane("XY")
                 .box(width, height, cutDepth + 1) // +1 to ensure clean cut through top
-                .translate(cx, cy, bbox.maxZ - cutDepth / 2 + 0.5);
+                .translate(cx, cy, cutFloorZ);
+
+            console.log(`[cutRectGrid] Cutter at (${cx.toFixed(1)}, ${cy.toFixed(1)}), bottom Z=${cutFloorZ.toFixed(2)}, top Z=${(cutFloorZ + cutDepth + 1).toFixed(2)}`);
 
             if (actualFillet > 0) {
                 cutter = cutter.edges("|Z").fillet(actualFillet);
@@ -639,9 +642,11 @@ Workplane.prototype.cutCircleGrid = function(options) {
             const cx = startX + c * (diameter2 + grid.spacingX);
 
             // Create cylinder cutter at this position
+            // cylinder() places bottom at Z=0, so translate to position bottom at cut floor
+            const cutFloorZ = bbox.maxZ - cutDepth;
             const cutter = new Workplane("XY")
                 .cylinder(radius, cutDepth + 1)
-                .translate(cx, cy, bbox.maxZ - cutDepth / 2 + 0.5);
+                .translate(cx, cy, cutFloorZ);
 
             result = result.cut(cutter);
         }
