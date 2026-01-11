@@ -64,14 +64,15 @@ class CADViewer {
         directionalLight2.position.set(-50, 50, 50);
         this.scene.add(directionalLight2);
 
-        // Grid on XY plane (Z=0) - CAD convention
-        this._addXYGrid(100, 20);
+        // Grid on XY plane (Z=0) - sized for 250x250mm build volume
+        // Grid goes from -125 to +125 in X and Y (centered at origin)
+        this._addXYGrid(250, 25);  // 25 divisions = 10mm grid spacing
 
-        // Custom thick axes - double length (30 units)
-        this._addThickAxes(30, 0.3);
+        // Thick axes extending to build volume edge
+        this._addThickAxes(130, 0.5);  // 130mm length, slightly thicker
 
         // Axis labels - positioned past end of axes
-        this._addAxisLabels(33);
+        this._addAxisLabels(135);
 
         // Group for meshes
         this.meshGroup = new THREE.Group();
