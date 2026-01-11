@@ -13,6 +13,12 @@ DAZ-CAD-2 is a web-based CAD application that allows you to create and edit 3D m
 - Multi-material support with automatic filament assignment
 - Export to Bambu Lab-compatible 3MF files for direct printing
 - Global opacity controls for visualization
+- Built-in Gridfinity bin and insert generator
+
+## Documentation
+
+- **[User Guide](docs/user-guide.md)** - Complete walkthrough of the interface, navigation, and features
+- **[Library Reference](docs/library-reference.md)** - API documentation for all CAD operations
 
 ## Installation
 
