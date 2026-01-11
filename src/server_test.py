@@ -1469,7 +1469,7 @@ def test_monaco_type_definitions_match_library(server):
                     'meta', 'infillDensity', 'infillPattern', 'partName'
                 ];
 
-                const expectedGridfinityMethods = ['bin', 'plug'];
+                const expectedGridfinityMethods = ['bin', 'plug', 'fitBin'];
                 const expectedGridfinityConstants = ['UNIT_SIZE', 'UNIT_HEIGHT', 'BASE_HEIGHT'];
 
                 const expectedAssemblyMethods = ['add', 'toMesh', 'toSTL', 'to3MF'];

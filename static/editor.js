@@ -182,6 +182,21 @@ class CADEditor {
                              * @param options.stackable - Account for stacking lip (default: true)
                              */
                             plug(options: { x: number; y: number; z: number; tolerance?: number; stackable?: boolean }): Workplane;
+
+                            /**
+                             * Create a bin with multiple custom-sized cutouts, auto-sized to fit
+                             * @param options.cuts - Array of [width, height] or {width, height, fillet?}
+                             * @param options.z - Height in gridfinity units (1 unit = 7mm)
+                             * @param options.spacing - Minimum spacing between cuts (default: 1.5mm)
+                             * @param options.fillet - Default corner fillet radius (default: 3mm)
+                             * @example Gridfinity.fitBin({ cuts: [[80, 40], [30, 20], [35, 20]], z: 3 })
+                             */
+                            fitBin(options: {
+                                cuts: Array<[number, number] | { width: number; height: number; fillet?: number }>;
+                                z: number;
+                                spacing?: number;
+                                fillet?: number;
+                            }): Workplane;
                         };
 
                         /** CAD Workplane for creating 3D shapes */

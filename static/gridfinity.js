@@ -269,6 +269,296 @@ const Gridfinity = {
             .meta('infillPattern', 'gyroid');
 
         return result;
+    },
+
+    /**
+     * Create a gridfinity bin with multiple custom-sized cutouts
+     * Automatically finds the smallest bin that fits all cuts
+     *
+     * @param {Object} options
+     * @param {Array} options.cuts - Array of [width, height] or {width, height, fillet?}
+     * @param {number} options.z - Height in gridfinity units (1 unit = 7mm)
+     * @param {number} [options.spacing=1.5] - Minimum spacing between cuts and edges (mm)
+     * @param {number} [options.fillet=3] - Default corner fillet radius (mm)
+     * @returns {Workplane} - A Workplane with the bin and all cuts applied
+     *
+     * @example
+     * // Fit three different compartments in the smallest possible bin
+     * const bin = Gridfinity.fitBin({
+     *     cuts: [[80, 40], [30, 20], [35, 20]],
+     *     z: 3
+     * });
+     *
+     * @example
+     * // With custom fillets per cut
+     * const bin = Gridfinity.fitBin({
+     *     cuts: [
+     *         { width: 80, height: 40, fillet: 5 },
+     *         { width: 30, height: 20 },
+     *         { width: 35, height: 20, fillet: 0 }
+     *     ],
+     *     z: 4,
+     *     spacing: 2
+     * });
+     */
+    fitBin(options) {
+        const {
+            cuts,
+            z,
+            spacing = 1.5,
+            fillet: defaultFillet = 3
+        } = options;
+
+        if (!cuts || !Array.isArray(cuts) || cuts.length === 0) {
+            console.error('[Gridfinity.fitBin] cuts array is required');
+            return new Workplane("XY");
+        }
+
+        if (!z) {
+            console.error('[Gridfinity.fitBin] z (height in units) is required');
+            return new Workplane("XY");
+        }
+
+        // Normalize cuts to [{width, height, fillet}] format
+        const normalizedCuts = cuts.map((cut, i) => {
+            if (Array.isArray(cut)) {
+                return { width: cut[0], height: cut[1], fillet: defaultFillet, id: i };
+            }
+            return { width: cut.width, height: cut.height, fillet: cut.fillet ?? defaultFillet, id: i };
+        });
+
+        console.log(`[Gridfinity.fitBin] Fitting ${normalizedCuts.length} cuts with ${spacing}mm spacing:`);
+        normalizedCuts.forEach((c, i) => console.log(`  Cut ${i + 1}: ${c.width}x${c.height}mm`));
+
+        // Find minimum bin size that fits all cuts
+        const result = this._findMinBin(normalizedCuts, spacing, z);
+
+        if (!result) {
+            console.error('[Gridfinity.fitBin] Could not fit cuts in any reasonable bin size');
+            return new Workplane("XY");
+        }
+
+        console.log(`[Gridfinity.fitBin] Best fit: ${result.x}x${result.y} bin`);
+        console.log(`[Gridfinity.fitBin] Placements:`);
+        result.placements.forEach((p, i) => {
+            console.log(`  Cut ${i + 1}: (${p.x.toFixed(1)}, ${p.y.toFixed(1)}) ${p.width}x${p.height}mm`);
+        });
+
+        // Create the bin
+        let bin = this.bin({ x: result.x, y: result.y, z });
+
+        // Get bounding box for positioning cuts
+        const bbox = bin._getBoundingBox();
+        if (!bbox) {
+            console.error('[Gridfinity.fitBin] Could not get bin bounding box');
+            return bin;
+        }
+
+        // Apply each cut at its calculated position
+        const minCutZ = bin._meta?.minCutZ ?? (this.BASE_HEIGHT + 1.0);
+        const cutDepth = bbox.maxZ - minCutZ;
+
+        for (const placement of result.placements) {
+            // Position is relative to bin center
+            const cx = placement.x + placement.width / 2;
+            const cy = placement.y + placement.height / 2;
+
+            // Create and apply the cutter
+            const cutFloorZ = bbox.maxZ - cutDepth;
+            let cutter = new Workplane("XY")
+                .box(placement.width, placement.height, cutDepth + 1)
+                .translate(cx, cy, cutFloorZ);
+
+            if (placement.fillet > 0) {
+                const actualFillet = Math.min(placement.fillet, Math.min(placement.width, placement.height) / 2 - 0.01);
+                if (actualFillet > 0) {
+                    cutter = cutter.edges("|Z").fillet(actualFillet);
+                }
+            }
+
+            bin = bin.cut(cutter);
+        }
+
+        return bin;
+    },
+
+    /**
+     * Find the minimum bin size that fits all cuts
+     * @private
+     */
+    _findMinBin(cuts, spacing, z) {
+        // Calculate usable inner dimensions for a given bin size
+        const getUsable = (x, y) => {
+            const outerX = x * this.UNIT_SIZE - 2 * this.BIN_CLEARANCE;
+            const outerY = y * this.UNIT_SIZE - 2 * this.BIN_CLEARANCE;
+            // Subtract spacing from edges (acts as border)
+            return {
+                width: outerX - 2 * spacing,
+                height: outerY - 2 * spacing,
+                // Offset from bin center to usable area corner
+                offsetX: -outerX / 2 + spacing,
+                offsetY: -outerY / 2 + spacing
+            };
+        };
+
+        // Find max dimensions needed
+        const maxWidth = Math.max(...cuts.map(c => Math.min(c.width, c.height)));
+        const maxHeight = Math.max(...cuts.map(c => Math.max(c.width, c.height)));
+        const totalArea = cuts.reduce((sum, c) => sum + (c.width + spacing) * (c.height + spacing), 0);
+
+        // Generate bin sizes to try, sorted by area
+        const maxUnits = 8; // Don't try bins larger than 8x8
+        const binSizes = [];
+        for (let x = 1; x <= maxUnits; x++) {
+            for (let y = x; y <= maxUnits; y++) {  // y >= x to avoid duplicates
+                binSizes.push({ x, y });
+                if (x !== y) binSizes.push({ x: y, y: x });  // Add rotated version
+            }
+        }
+        binSizes.sort((a, b) => (a.x * a.y) - (b.x * b.y));
+
+        // Try each bin size
+        for (const size of binSizes) {
+            const usable = getUsable(size.x, size.y);
+
+            // Quick check: does the largest cut fit?
+            if (usable.width < maxWidth || usable.height < maxHeight) {
+                continue;
+            }
+
+            // Quick check: is there enough total area?
+            if (usable.width * usable.height < totalArea * 0.7) {  // Allow some inefficiency
+                continue;
+            }
+
+            // Try to pack all cuts
+            const placements = this._packRectangles(cuts, usable.width, usable.height, spacing);
+
+            if (placements) {
+                // Adjust positions from usable-area-relative to bin-center-relative
+                const adjustedPlacements = placements.map(p => ({
+                    ...p,
+                    x: p.x + usable.offsetX,
+                    y: p.y + usable.offsetY
+                }));
+
+                return {
+                    x: size.x,
+                    y: size.y,
+                    placements: adjustedPlacements
+                };
+            }
+        }
+
+        return null;  // No fit found
+    },
+
+    /**
+     * Pack rectangles into a given space using shelf algorithm
+     * @private
+     * @returns {Array|null} - Array of placements or null if doesn't fit
+     */
+    _packRectangles(cuts, areaWidth, areaHeight, spacing) {
+        // Sort cuts by height (tallest first) for better shelf packing
+        const sortedCuts = [...cuts].sort((a, b) => {
+            // Sort by max dimension descending
+            const maxA = Math.max(a.width, a.height);
+            const maxB = Math.max(b.width, b.height);
+            return maxB - maxA;
+        });
+
+        // Try both orientations for each cut (allow rotation)
+        const tryPack = (cutsToPlace) => {
+            const placements = [];
+            const shelves = [];  // {y, height, rightEdge}
+
+            for (const cut of cutsToPlace) {
+                let placed = false;
+
+                // Try to place in existing shelf
+                for (const shelf of shelves) {
+                    // Try original orientation
+                    if (shelf.rightEdge + cut.width + spacing <= areaWidth &&
+                        cut.height <= shelf.height) {
+                        placements.push({
+                            x: shelf.rightEdge,
+                            y: shelf.y,
+                            width: cut.width,
+                            height: cut.height,
+                            fillet: cut.fillet,
+                            id: cut.id
+                        });
+                        shelf.rightEdge += cut.width + spacing;
+                        placed = true;
+                        break;
+                    }
+                    // Try rotated
+                    if (shelf.rightEdge + cut.height + spacing <= areaWidth &&
+                        cut.width <= shelf.height) {
+                        placements.push({
+                            x: shelf.rightEdge,
+                            y: shelf.y,
+                            width: cut.height,  // swapped
+                            height: cut.width,  // swapped
+                            fillet: cut.fillet,
+                            id: cut.id
+                        });
+                        shelf.rightEdge += cut.height + spacing;
+                        placed = true;
+                        break;
+                    }
+                }
+
+                if (!placed) {
+                    // Start new shelf
+                    const shelfY = shelves.length === 0 ? 0 :
+                        shelves[shelves.length - 1].y + shelves[shelves.length - 1].height + spacing;
+
+                    // Try original orientation
+                    if (cut.width <= areaWidth && shelfY + cut.height <= areaHeight) {
+                        shelves.push({
+                            y: shelfY,
+                            height: cut.height,
+                            rightEdge: cut.width + spacing
+                        });
+                        placements.push({
+                            x: 0,
+                            y: shelfY,
+                            width: cut.width,
+                            height: cut.height,
+                            fillet: cut.fillet,
+                            id: cut.id
+                        });
+                        placed = true;
+                    }
+                    // Try rotated
+                    else if (cut.height <= areaWidth && shelfY + cut.width <= areaHeight) {
+                        shelves.push({
+                            y: shelfY,
+                            height: cut.width,  // swapped
+                            rightEdge: cut.height + spacing
+                        });
+                        placements.push({
+                            x: 0,
+                            y: shelfY,
+                            width: cut.height,  // swapped
+                            height: cut.width,  // swapped
+                            fillet: cut.fillet,
+                            id: cut.id
+                        });
+                        placed = true;
+                    }
+                }
+
+                if (!placed) {
+                    return null;  // Doesn't fit
+                }
+            }
+
+            return placements;
+        };
+
+        return tryPack(sortedCuts);
     }
 };
 
