@@ -14,7 +14,7 @@ Complete API documentation for the CAD library.
   - [Metadata](#metadata)
   - [Colors and Modifiers](#colors-and-modifiers)
 - [Gridfinity Module](#gridfinity-module)
-  - [Creating Bins and Plugs](#creating-bins-and-plugs)
+  - [Creating Bins, Plugs, and Baseplates](#creating-bins-plugs-and-baseplates)
   - [Cutout Grids](#cutout-grids)
   - [Auto-Fit Packing](#auto-fit-packing)
 - [Assembly Class](#assembly-class)
@@ -513,7 +513,7 @@ const part = box.withModifier(colorZone);
 
 ## Gridfinity Module
 
-### Creating Bins and Plugs
+### Creating Bins, Plugs, and Baseplates
 
 #### Gridfinity.bin(options)
 
@@ -545,6 +545,36 @@ Creates a solid insert plug that fits inside a bin.
 **Example:**
 ```javascript
 const plug = Gridfinity.plug({ x: 2, y: 2, z: 3 });
+```
+
+---
+
+#### Gridfinity.baseplate(options)
+
+Creates a minimal Gridfinity baseplate (no magnets). This is the thinnest possible baseplate - an open grid structure with just the stepped rim profile that bins clip into (no solid floor).
+
+**Options:**
+- `x` - X dimension in grid units (1 unit = 42mm)
+- `y` - Y dimension in grid units
+
+**Example:**
+```javascript
+// Create a 3x2 baseplate (open grid)
+const plate = Gridfinity.baseplate({ x: 3, y: 2 });
+```
+
+---
+
+#### addBaseplate()
+
+Adds a gridfinity baseplate onto the top face of an existing shape. Automatically calculates the largest baseplate that fits.
+
+**Example:**
+```javascript
+// Add baseplate to top of a box
+const boxWithPlate = new Workplane("XY")
+    .box(150, 100, 10)
+    .addBaseplate();
 ```
 
 ---
@@ -639,6 +669,8 @@ const bin = Gridfinity.fitBin({
 | `Gridfinity.WALL_THICKNESS` | 1.2mm | Shell thickness |
 | `Gridfinity.BASE_HEIGHT` | 4.75mm | Total base height |
 | `Gridfinity.TOLERANCE` | 0.30mm | Default plug tolerance |
+| `Gridfinity.BP_HEIGHT` | 4.65mm | Baseplate rim height |
+| `Gridfinity.BP_FLOOR` | 1.0mm | Default baseplate floor thickness |
 
 ---
 

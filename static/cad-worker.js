@@ -173,12 +173,17 @@ self.onmessage = async function(e) {
 
         isRendering = true;
         postStatus('compiling', 'Compiling...');
+        console.log('[Worker] Started rendering');
+        const renderStart = performance.now();
 
         try {
             const meshData = executeCode(code);
+            const elapsed = ((performance.now() - renderStart) / 1000).toFixed(2);
+            console.log(`[Worker] Finished rendering (${elapsed}s)`);
             postResult(meshData);
             self.postMessage({ type: 'renderComplete', id, meshData });
         } catch (error) {
+            console.log('[Worker] Rendering failed:', error.message);
             postError(error.message);
             self.postMessage({ type: 'renderError', id, error: error.message });
         } finally {

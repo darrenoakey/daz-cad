@@ -38,6 +38,15 @@ const Gridfinity = {
     STEP3_HEIGHT: 2.15,      // second 45° step (top)
     BASE_TAPER: 2.95,        // total horizontal taper per side (0.8 + 2.15)
 
+    // Baseplate profile dimensions (inverse of bin base, slightly different)
+    // See: https://github.com/ostat/gridfinity_extended_openscad
+    BP_LOWER_TAPER: 0.7,     // bottom 45° step height
+    BP_RISER: 1.8,           // vertical wall section
+    BP_UPPER_TAPER: 2.15,    // top 45° step height
+    BP_HEIGHT: 4.65,         // total baseplate rim height (0.7 + 1.8 + 2.15)
+    BP_CORNER_RADIUS: 4.0,   // corner radius of baseplate pockets
+    BP_FLOOR: 1.0,           // minimal floor thickness for thin baseplate
+
     // Insert parameters
     TOLERANCE: 0.30,         // wall clearance for inner plug
     TOP_GAP: 1.0,            // gap above stackable plug for extraction
@@ -586,6 +595,129 @@ const Gridfinity = {
         }
 
         return placements;
+    },
+
+    /**
+     * Create a single baseplate pocket cutter with stepped profile (internal helper)
+     * This is the inverse of the bin base profile - creates the pocket shape
+     * @private
+     */
+    _createPocketCutter(cellX, cellY, floorZ) {
+        // Pocket dimensions at each level
+        // At top (opening): full 42mm grid cell
+        // Tapers in as we go down to floor
+        const topSize = this.UNIT_SIZE;  // 42mm at opening
+        const midSize = topSize - 2 * this.BP_UPPER_TAPER;  // 37.7mm after upper taper
+        const bottomSize = midSize - 2 * this.BP_LOWER_TAPER;  // 36.3mm at floor
+
+        // Corner radii (proportional to size)
+        const topRadius = this.BP_CORNER_RADIUS;  // 4.0mm
+        const midRadius = Math.max(topRadius - this.BP_UPPER_TAPER, 0.5);  // ~1.85mm
+        const bottomRadius = Math.max(midRadius - this.BP_LOWER_TAPER, 0.3);  // ~1.15mm
+
+        // Layer 1: Bottom step (at floor, chamfered upward)
+        // Z = floorZ to floorZ + 0.7
+        let layer1 = new Workplane("XY")
+            .box(midSize, midSize, this.BP_LOWER_TAPER)
+            .translate(cellX, cellY, floorZ);
+        layer1 = layer1.edges("|Z").fillet(midRadius);
+        layer1 = layer1.faces("<Z").edges().chamfer(this.BP_LOWER_TAPER - 0.01);
+
+        // Layer 2: Middle section (vertical walls)
+        // Z = floorZ + 0.7 to floorZ + 2.5
+        let layer2 = new Workplane("XY")
+            .box(midSize, midSize, this.BP_RISER)
+            .translate(cellX, cellY, floorZ + this.BP_LOWER_TAPER);
+        layer2 = layer2.edges("|Z").fillet(midRadius);
+
+        // Layer 3: Top step (chamfered from mid to top)
+        // Z = floorZ + 2.5 to floorZ + 4.65
+        let layer3 = new Workplane("XY")
+            .box(topSize, topSize, this.BP_UPPER_TAPER)
+            .translate(cellX, cellY, floorZ + this.BP_LOWER_TAPER + this.BP_RISER);
+        layer3 = layer3.edges("|Z").fillet(topRadius);
+        layer3 = layer3.faces("<Z").edges().chamfer(this.BP_UPPER_TAPER - 0.01);
+
+        // Union all layers to create pocket cutter
+        return layer1.union(layer2).union(layer3);
+    },
+
+    /**
+     * Create a minimal gridfinity baseplate
+     *
+     * Creates the thinnest possible baseplate with no magnets - just the
+     * stepped grid walls that bins clip into. No solid floor - just an
+     * open frame/grid structure.
+     *
+     * @param {Object} options
+     * @param {number} options.x - X dimension in grid units (1 unit = 42mm)
+     * @param {number} options.y - Y dimension in grid units
+     * @param {boolean} [options.fillet=true] - Round outer corners (reduces curling)
+     * @param {boolean} [options.chamfer=true] - Chamfer bottom edge (better bed adhesion)
+     * @returns {Workplane} - A Workplane object with the baseplate
+     *
+     * @example
+     * // Create a 3x2 baseplate
+     * const plate = Gridfinity.baseplate({ x: 3, y: 2 });
+     *
+     * @example
+     * // Without chamfer (for mounting on a surface)
+     * const plate = Gridfinity.baseplate({ x: 3, y: 2, chamfer: false });
+     */
+    baseplate(options) {
+        const {
+            x,
+            y,
+            fillet = true,
+            chamfer = true
+        } = options;
+
+        if (!x || !y) {
+            console.error('[Gridfinity] baseplate requires x, y dimensions');
+            return new Workplane("XY");
+        }
+
+        const totalHeight = this.BP_HEIGHT;  // 4.65mm - just the rim height
+        const outerX = x * this.UNIT_SIZE;
+        const outerY = y * this.UNIT_SIZE;
+
+        console.log(`[Gridfinity] Creating ${x}x${y} baseplate (open grid):`);
+        console.log(`  Outer dimensions: ${outerX} x ${outerY} x ${totalHeight.toFixed(2)} mm`);
+
+        // Create solid base block at rim height
+        // Apply corner treatments BEFORE cutting pockets (while it's a simple box)
+        let result = new Workplane("XY")
+            .box(outerX, outerY, totalHeight);
+
+        if (fillet) {
+            result = result.edges("|Z").fillet(4);      // Round outer vertical corners (reduces curling)
+        }
+        if (chamfer) {
+            result = result.faces("<Z").edges().chamfer(0.5);  // Chamfer bottom edge (better bed adhesion)
+        }
+
+        // Cut completely through for each grid cell (no floor)
+        const startX = -(x - 1) * this.UNIT_SIZE / 2;
+        const startY = -(y - 1) * this.UNIT_SIZE / 2;
+
+        for (let gy = 0; gy < y; gy++) {
+            for (let gx = 0; gx < x; gx++) {
+                const cellX = startX + gx * this.UNIT_SIZE;
+                const cellY = startY + gy * this.UNIT_SIZE;
+
+                // Create through-cutter starting at Z=0 (cuts all the way through)
+                const throughCutter = this._createPocketCutter(cellX, cellY, 0);
+
+                result = result.cut(throughCutter);
+            }
+        }
+
+        // Set metadata
+        result = result
+            .meta('infillDensity', 10)
+            .meta('infillPattern', 'grid');
+
+        return result;
     }
 };
 
@@ -1021,6 +1153,75 @@ Workplane.prototype._getOC = function() {
         throw new Error('OpenCascade not initialized');
     }
     return oc;
+};
+
+
+/**
+ * Add a gridfinity baseplate onto the top face of this shape
+ *
+ * Automatically calculates the largest baseplate that fits on the
+ * top face and unions it to the shape. The baseplate rises up from
+ * the face surface as an open grid structure.
+ *
+ * @param {Object} [options]
+ * @param {boolean} [options.fillet=true] - Round outer corners of baseplate
+ * @returns {Workplane} - New Workplane with baseplate attached
+ *
+ * @example
+ * // Add baseplate to top of a box
+ * const boxWithPlate = new Workplane("XY")
+ *     .box(150, 100, 10)
+ *     .addBaseplate();
+ *
+ * @example
+ * // Without rounded corners
+ * const sharpPlate = myShape.addBaseplate({ fillet: false });
+ */
+Workplane.prototype.addBaseplate = function(options = {}) {
+    const { fillet = true } = options;
+
+    if (!this._shape) {
+        console.error('[addBaseplate] No shape to add baseplate to');
+        return this;
+    }
+
+    // Get bounding box of current shape
+    const bbox = this._getBoundingBox();
+    if (!bbox) {
+        console.error('[addBaseplate] Could not get bounding box');
+        return this;
+    }
+
+    // Calculate how many grid cells fit
+    const availableX = bbox.sizeX;
+    const availableY = bbox.sizeY;
+
+    const gridX = Math.floor(availableX / Gridfinity.UNIT_SIZE);
+    const gridY = Math.floor(availableY / Gridfinity.UNIT_SIZE);
+
+    if (gridX < 1 || gridY < 1) {
+        console.error(`[addBaseplate] Face too small for baseplate. Need at least ${Gridfinity.UNIT_SIZE}x${Gridfinity.UNIT_SIZE}mm, have ${availableX.toFixed(1)}x${availableY.toFixed(1)}mm`);
+        return this;
+    }
+
+    console.log(`[addBaseplate] Available area: ${availableX.toFixed(1)}x${availableY.toFixed(1)}mm`);
+    console.log(`[addBaseplate] Fitting ${gridX}x${gridY} baseplate (${gridX * Gridfinity.UNIT_SIZE}x${gridY * Gridfinity.UNIT_SIZE}mm)`);
+
+    // Create the baseplate (no chamfer since we're on a surface, not the build plate)
+    const baseplate = Gridfinity.baseplate({ x: gridX, y: gridY, fillet, chamfer: false });
+
+    // Position it on top of the current shape
+    // Baseplate is centered at origin with bottom at Z=0
+    // We need to move it to the top of our shape
+    let posX = bbox.centerX;
+    let posY = bbox.centerY;
+    const posZ = bbox.maxZ;  // Bottom of baseplate sits on top of shape
+
+    // Translate baseplate to position
+    const positioned = baseplate.translate(posX, posY, posZ);
+
+    // Union with current shape
+    return this.union(positioned);
 };
 
 

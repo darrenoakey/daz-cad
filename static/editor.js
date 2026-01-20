@@ -162,6 +162,10 @@ class CADEditor {
                             readonly UNIT_HEIGHT: number;
                             /** Base profile height (4.75mm) */
                             readonly BASE_HEIGHT: number;
+                            /** Baseplate rim height (4.65mm) */
+                            readonly BP_HEIGHT: number;
+                            /** Baseplate floor thickness (1.0mm) */
+                            readonly BP_FLOOR: number;
 
                             /**
                              * Create a solid gridfinity bin with standardized base profile
@@ -197,6 +201,16 @@ class CADEditor {
                                 spacing?: number;
                                 fillet?: number;
                             }): Workplane;
+
+                            /**
+                             * Create a minimal gridfinity baseplate (open grid, no floor)
+                             * @param options.x - X dimension in grid units (1 unit = 42mm)
+                             * @param options.y - Y dimension in grid units
+                             * @param options.fillet - Round outer corners (default: true)
+                             * @param options.chamfer - Chamfer bottom edge for bed adhesion (default: true)
+                             * @example Gridfinity.baseplate({ x: 3, y: 2 })
+                             */
+                            baseplate(options: { x: number; y: number; fillet?: boolean; chamfer?: boolean }): Workplane;
                         };
 
                         /** CAD Workplane for creating 3D shapes */
@@ -272,6 +286,15 @@ class CADEditor {
 
                             /** Cut optimized circular grid */
                             cutCircleGrid(options: { radius?: number; diameter?: number; count?: number; depth?: number; minBorder?: number; minSpacing?: number }): Workplane;
+
+                            /** Add gridfinity baseplate onto top face, auto-sized to fit */
+                            addBaseplate(options?: { fillet?: boolean }): Workplane;
+
+                            /** Cut away everything below the origin plane on specified axis */
+                            cutBelow(axis: "X" | "Y" | "Z"): Workplane;
+
+                            /** Cut away everything above the origin plane on specified axis */
+                            cutAbove(axis: "X" | "Y" | "Z"): Workplane;
 
                             /** Export to STL */
                             toSTL(linearDeflection?: number, angularDeflection?: number): Blob;

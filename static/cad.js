@@ -2560,15 +2560,12 @@ class Workplane {
                         const unifiedShape = unify.Shape();
                         if (unifiedShape && !unifiedShape.IsNull()) {
                             result._shape = unifiedShape;
-                            console.log('[CAD] UnifySameDomain succeeded');
                         } else {
-                            console.log('[CAD] UnifySameDomain returned null shape, using fused shape');
                             result._shape = fusedShape;
                         }
                         unify.delete();
                     } catch (unifyErr) {
                         // If unify fails, use the fused shape as-is
-                        console.log('[CAD] UnifySameDomain failed:', unifyErr.message || unifyErr);
                         result._shape = fusedShape;
                     }
                 }
@@ -2673,6 +2670,142 @@ class Workplane {
         }
 
         return result;
+    }
+
+    /**
+     * Cut away everything below the origin plane on the specified axis.
+     * For example, cutBelow("Z") removes all geometry where Z < 0.
+     * @param {string} axis - "X", "Y", or "Z"
+     * @returns {Workplane}
+     */
+    cutBelow(axis) {
+        if (!this._shape) {
+            cadError('cutBelow', 'Cannot cut: no shape exists');
+            return this;
+        }
+
+        const normalizedAxis = axis.toUpperCase();
+        if (!['X', 'Y', 'Z'].includes(normalizedAxis)) {
+            cadError('cutBelow', `Invalid axis: ${axis} (must be "X", "Y", or "Z")`);
+            return this;
+        }
+
+        // Get bounding box to determine required size
+        const bbox = new oc.Bnd_Box_1();
+        oc.BRepBndLib.Add(this._shape, bbox, false);
+        const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+        const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+        bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+        bbox.delete();
+
+        // Use a size that extends well beyond the shape bounds
+        const margin = 10;
+        const size = Math.max(
+            Math.abs(xMin.current), Math.abs(xMax.current),
+            Math.abs(yMin.current), Math.abs(yMax.current),
+            Math.abs(zMin.current), Math.abs(zMax.current)
+        ) + margin;
+
+        // Create a box covering the negative half of the specified axis
+        let cutterBox;
+        try {
+            if (normalizedAxis === 'Z') {
+                // Box from Z = -size to Z = 0, centered on X/Y
+                cutterBox = new oc.BRepPrimAPI_MakeBox_3(
+                    new oc.gp_Pnt_3(-size, -size, -size),
+                    2 * size, 2 * size, size
+                );
+            } else if (normalizedAxis === 'Y') {
+                // Box from Y = -size to Y = 0, full extent on X/Z
+                cutterBox = new oc.BRepPrimAPI_MakeBox_3(
+                    new oc.gp_Pnt_3(-size, -size, -size),
+                    2 * size, size, 2 * size
+                );
+            } else { // X
+                // Box from X = -size to X = 0, full extent on Y/Z
+                cutterBox = new oc.BRepPrimAPI_MakeBox_3(
+                    new oc.gp_Pnt_3(-size, -size, -size),
+                    size, 2 * size, 2 * size
+                );
+            }
+
+            const cutterWorkplane = new Workplane(this._plane);
+            cutterWorkplane._shape = cutterBox.Shape();
+            cutterBox.delete();
+
+            return this.cut(cutterWorkplane);
+        } catch (e) {
+            cadError('cutBelow', 'Exception during cutBelow', e);
+            return this;
+        }
+    }
+
+    /**
+     * Cut away everything above the origin plane on the specified axis.
+     * For example, cutAbove("Z") removes all geometry where Z > 0.
+     * @param {string} axis - "X", "Y", or "Z"
+     * @returns {Workplane}
+     */
+    cutAbove(axis) {
+        if (!this._shape) {
+            cadError('cutAbove', 'Cannot cut: no shape exists');
+            return this;
+        }
+
+        const normalizedAxis = axis.toUpperCase();
+        if (!['X', 'Y', 'Z'].includes(normalizedAxis)) {
+            cadError('cutAbove', `Invalid axis: ${axis} (must be "X", "Y", or "Z")`);
+            return this;
+        }
+
+        // Get bounding box to determine required size
+        const bbox = new oc.Bnd_Box_1();
+        oc.BRepBndLib.Add(this._shape, bbox, false);
+        const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+        const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+        bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+        bbox.delete();
+
+        // Use a size that extends well beyond the shape bounds
+        const margin = 10;
+        const size = Math.max(
+            Math.abs(xMin.current), Math.abs(xMax.current),
+            Math.abs(yMin.current), Math.abs(yMax.current),
+            Math.abs(zMin.current), Math.abs(zMax.current)
+        ) + margin;
+
+        // Create a box covering the positive half of the specified axis
+        let cutterBox;
+        try {
+            if (normalizedAxis === 'Z') {
+                // Box from Z = 0 to Z = size, centered on X/Y
+                cutterBox = new oc.BRepPrimAPI_MakeBox_3(
+                    new oc.gp_Pnt_3(-size, -size, 0),
+                    2 * size, 2 * size, size
+                );
+            } else if (normalizedAxis === 'Y') {
+                // Box from Y = 0 to Y = size, full extent on X/Z
+                cutterBox = new oc.BRepPrimAPI_MakeBox_3(
+                    new oc.gp_Pnt_3(-size, 0, -size),
+                    2 * size, size, 2 * size
+                );
+            } else { // X
+                // Box from X = 0 to X = size, full extent on Y/Z
+                cutterBox = new oc.BRepPrimAPI_MakeBox_3(
+                    new oc.gp_Pnt_3(0, -size, -size),
+                    size, 2 * size, 2 * size
+                );
+            }
+
+            const cutterWorkplane = new Workplane(this._plane);
+            cutterWorkplane._shape = cutterBox.Shape();
+            cutterBox.delete();
+
+            return this.cut(cutterWorkplane);
+        } catch (e) {
+            cadError('cutAbove', 'Exception during cutAbove', e);
+            return this;
+        }
     }
 
     /**

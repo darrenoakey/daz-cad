@@ -1463,14 +1463,14 @@ def test_monaco_type_definitions_match_library(server):
                     'box', 'cylinder', 'sphere', 'polygonPrism', 'text',
                     'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet',
                     'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
-                    'translate', 'rotate', 'color', 'cutPattern', 'cutRectGrid', 'cutCircleGrid',
+                    'translate', 'rotate', 'color', 'cutPattern', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutBelow', 'cutAbove',
                     'toSTL', 'to3MF', 'toMesh',
                     'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val',
                     'meta', 'infillDensity', 'infillPattern', 'partName'
                 ];
 
-                const expectedGridfinityMethods = ['bin', 'plug', 'fitBin'];
-                const expectedGridfinityConstants = ['UNIT_SIZE', 'UNIT_HEIGHT', 'BASE_HEIGHT'];
+                const expectedGridfinityMethods = ['baseplate', 'bin', 'fitBin', 'plug'];
+                const expectedGridfinityConstants = ['UNIT_SIZE', 'UNIT_HEIGHT', 'BASE_HEIGHT', 'BP_HEIGHT', 'BP_FLOOR'];
 
                 const expectedAssemblyMethods = ['add', 'toMesh', 'toSTL', 'to3MF'];
                 const expectedProfilerMethods = ['checkpoint', 'finished', 'elapsed'];
