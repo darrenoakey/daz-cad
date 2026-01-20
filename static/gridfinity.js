@@ -1157,25 +1157,61 @@ Workplane.prototype._getOC = function() {
 
 
 /**
- * Add a gridfinity baseplate onto the top face of this shape
+ * Get bounding box of a single face
+ * @private
+ */
+Workplane.prototype._getFaceBoundingBox = function(face) {
+    const oc = this._getOC();
+    try {
+        const bbox = new oc.Bnd_Box_1();
+        oc.BRepBndLib.Add(face, bbox, false);
+
+        const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
+        const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
+        bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+        bbox.delete();
+
+        return {
+            minX: xMin.current,
+            minY: yMin.current,
+            minZ: zMin.current,
+            maxX: xMax.current,
+            maxY: yMax.current,
+            maxZ: zMax.current,
+            sizeX: xMax.current - xMin.current,
+            sizeY: yMax.current - yMin.current,
+            sizeZ: zMax.current - zMin.current,
+            centerX: (xMin.current + xMax.current) / 2,
+            centerY: (yMin.current + yMax.current) / 2,
+            centerZ: (zMin.current + zMax.current) / 2
+        };
+    } catch (e) {
+        console.error('[_getFaceBoundingBox] Error:', e);
+        return null;
+    }
+};
+
+
+/**
+ * Add a gridfinity baseplate onto a selected face (or top of shape if no face selected)
  *
- * Automatically calculates the largest baseplate that fits on the
- * top face and unions it to the shape. The baseplate rises up from
- * the face surface as an open grid structure.
+ * Use .faces(">Z") or similar to select a face first, then call .addBaseplate().
+ * The baseplate will be sized to fit the selected face and positioned on it.
  *
  * @param {Object} [options]
  * @param {boolean} [options.fillet=true] - Round outer corners of baseplate
  * @returns {Workplane} - New Workplane with baseplate attached
  *
  * @example
- * // Add baseplate to top of a box
+ * // Add baseplate to the top face of a box
  * const boxWithPlate = new Workplane("XY")
  *     .box(150, 100, 10)
+ *     .faces(">Z")
  *     .addBaseplate();
  *
  * @example
  * // Without rounded corners
- * const sharpPlate = myShape.addBaseplate({ fillet: false });
+ * const sharpPlate = myShape.faces(">Z").addBaseplate({ fillet: false });
  */
 Workplane.prototype.addBaseplate = function(options = {}) {
     const { fillet = true } = options;
@@ -1185,17 +1221,44 @@ Workplane.prototype.addBaseplate = function(options = {}) {
         return this;
     }
 
-    // Get bounding box of current shape
-    const bbox = this._getBoundingBox();
-    if (!bbox) {
-        console.error('[addBaseplate] Could not get bounding box');
-        return this;
+    let availableX, availableY, posX, posY, posZ;
+
+    // Check if a face is selected
+    if (this._selectedFaces && this._selectedFaces.length > 0) {
+        // Use the first selected face
+        const face = this._selectedFaces[0];
+        const faceBbox = this._getFaceBoundingBox(face);
+
+        if (!faceBbox) {
+            console.error('[addBaseplate] Could not get face bounding box');
+            return this;
+        }
+
+        availableX = faceBbox.sizeX;
+        availableY = faceBbox.sizeY;
+        posX = faceBbox.centerX;
+        posY = faceBbox.centerY;
+        posZ = faceBbox.maxZ;  // Top of the face
+
+        console.log(`[addBaseplate] Using selected face at Z=${posZ.toFixed(1)}`);
+    } else {
+        // Fall back to shape bounding box (top face)
+        const bbox = this._getBoundingBox();
+        if (!bbox) {
+            console.error('[addBaseplate] Could not get bounding box');
+            return this;
+        }
+
+        availableX = bbox.sizeX;
+        availableY = bbox.sizeY;
+        posX = bbox.centerX;
+        posY = bbox.centerY;
+        posZ = bbox.maxZ;
+
+        console.log('[addBaseplate] No face selected, using top of bounding box');
     }
 
     // Calculate how many grid cells fit
-    const availableX = bbox.sizeX;
-    const availableY = bbox.sizeY;
-
     const gridX = Math.floor(availableX / Gridfinity.UNIT_SIZE);
     const gridY = Math.floor(availableY / Gridfinity.UNIT_SIZE);
 
@@ -1210,14 +1273,7 @@ Workplane.prototype.addBaseplate = function(options = {}) {
     // Create the baseplate (no chamfer since we're on a surface, not the build plate)
     const baseplate = Gridfinity.baseplate({ x: gridX, y: gridY, fillet, chamfer: false });
 
-    // Position it on top of the current shape
-    // Baseplate is centered at origin with bottom at Z=0
-    // We need to move it to the top of our shape
-    let posX = bbox.centerX;
-    let posY = bbox.centerY;
-    const posZ = bbox.maxZ;  // Bottom of baseplate sits on top of shape
-
-    // Translate baseplate to position
+    // Translate baseplate to position on the face
     const positioned = baseplate.translate(posX, posY, posZ);
 
     // Union with current shape

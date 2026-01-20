@@ -565,16 +565,23 @@ const plate = Gridfinity.baseplate({ x: 3, y: 2 });
 
 ---
 
-#### addBaseplate()
+#### addBaseplate(options?)
 
-Adds a gridfinity baseplate onto the top face of an existing shape. Automatically calculates the largest baseplate that fits.
+Adds a gridfinity baseplate onto a selected face. Use `.faces()` to select a face first. Automatically calculates the largest baseplate that fits on that face.
+
+**Options:**
+- `fillet` - Round outer corners (default: true)
 
 **Example:**
 ```javascript
-// Add baseplate to top of a box
+// Add baseplate to the top face of a box
 const boxWithPlate = new Workplane("XY")
     .box(150, 100, 10)
+    .faces(">Z")
     .addBaseplate();
+
+// Without rounded corners
+const sharpPlate = myShape.faces(">Z").addBaseplate({ fillet: false });
 ```
 
 ---
