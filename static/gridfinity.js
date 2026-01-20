@@ -1281,6 +1281,135 @@ Workplane.prototype.addBaseplate = function(options = {}) {
 };
 
 
+/**
+ * Cut a pattern of horizontal lines (grooves) into a selected face
+ *
+ * Use .faces(">Z") or similar to select a face first, then call .cutLines().
+ * Creates parallel grooves across the face for grip or aesthetics.
+ *
+ * @param {Object} [options]
+ * @param {number} [options.width=1.0] - Width of each groove in mm
+ * @param {number} [options.depth=0.4] - Depth of grooves in mm
+ * @param {number} [options.spacing=2.0] - Distance between groove centers in mm
+ * @param {number} [options.border=2.0] - Margin from face edges in mm
+ * @returns {Workplane} - New Workplane with grooves cut
+ *
+ * @example
+ * // Cut horizontal lines into the top face
+ * const grooved = box.faces(">Z").cutLines();
+ *
+ * @example
+ * // Custom groove dimensions
+ * const custom = box.faces(">Z").cutLines({ width: 0.8, depth: 0.3, spacing: 1.5 });
+ */
+Workplane.prototype.cutLines = function(options = {}) {
+    const {
+        width = 1.0,
+        depth = 0.4,
+        spacing = 2.0,
+        border = 2.0
+    } = options;
+
+    if (!this._shape) {
+        console.error('[cutLines] No shape to cut');
+        return this;
+    }
+
+    const oc = this._getOC();
+    let faceBbox;
+    let cutZ;
+
+    // Check if a face is selected
+    if (this._selectedFaces && this._selectedFaces.length > 0) {
+        const face = this._selectedFaces[0];
+        faceBbox = this._getFaceBoundingBox(face);
+        if (!faceBbox) {
+            console.error('[cutLines] Could not get face bounding box');
+            return this;
+        }
+        cutZ = faceBbox.maxZ;
+        console.log(`[cutLines] Using selected face at Z=${cutZ.toFixed(2)}`);
+    } else {
+        // Fall back to shape bounding box top
+        faceBbox = this._getBoundingBox();
+        if (!faceBbox) {
+            console.error('[cutLines] Could not get bounding box');
+            return this;
+        }
+        cutZ = faceBbox.maxZ;
+        console.log('[cutLines] No face selected, using top of bounding box');
+    }
+
+    const result = new Workplane(this._plane);
+    result._cloneProperties(this);
+
+    try {
+        // Calculate groove positions (horizontal lines along Y)
+        const startY = faceBbox.minY + border;
+        const endY = faceBbox.maxY - border;
+        const grooveLength = faceBbox.sizeX - 2 * border;
+        const centerX = faceBbox.centerX;
+
+        if (grooveLength <= 0 || endY - startY <= 0) {
+            console.error('[cutLines] Face too small for grooves with given border');
+            result._shape = this._shape;
+            return result;
+        }
+
+        // Build list of cutter shapes
+        const cutterShapes = [];
+        let y = startY + spacing / 2;
+
+        while (y < endY) {
+            // Create a box for this groove using BRepPrimAPI_MakeBox_3(point, dx, dy, dz)
+            const grooveBox = new oc.BRepPrimAPI_MakeBox_3(
+                new oc.gp_Pnt_3(centerX - grooveLength / 2, y - width / 2, cutZ - depth),
+                grooveLength, width, depth + 1  // +1 to ensure clean cut through top
+            );
+            cutterShapes.push(grooveBox.Shape());
+            grooveBox.delete();
+
+            y += spacing;
+        }
+
+        console.log(`[cutLines] Creating ${cutterShapes.length} grooves`);
+
+        if (cutterShapes.length > 0) {
+            // Use TopTools_ListOfShape for efficient boolean cut
+            const toolList = new oc.TopTools_ListOfShape_1();
+            for (const shape of cutterShapes) {
+                toolList.Append_1(shape);
+            }
+
+            const argList = new oc.TopTools_ListOfShape_1();
+            argList.Append_1(this._shape);
+
+            const cut = new oc.BRepAlgoAPI_Cut_1();
+            cut.SetArguments(argList);
+            cut.SetTools(toolList);
+            cut.Build(new oc.Message_ProgressRange_1());
+
+            if (cut.IsDone()) {
+                result._shape = cut.Shape();
+            } else {
+                console.error('[cutLines] Boolean cut failed');
+                result._shape = this._shape;
+            }
+            cut.delete();
+            toolList.delete();
+            argList.delete();
+        } else {
+            result._shape = this._shape;
+        }
+    } catch (e) {
+        console.error('[cutLines] Exception:', e);
+        result._shape = this._shape;
+    }
+
+    return result;
+};
+
+
 // ============================================================
 // EXPORTS
 // ============================================================

@@ -290,6 +290,9 @@ class CADEditor {
                             /** Add gridfinity baseplate onto top face, auto-sized to fit */
                             addBaseplate(options?: { fillet?: boolean }): Workplane;
 
+                            /** Cut horizontal line grooves into a selected face */
+                            cutLines(options?: { width?: number; depth?: number; spacing?: number; border?: number }): Workplane;
+
                             /** Cut away everything below the origin plane on specified axis */
                             cutBelow(axis: "X" | "Y" | "Z"): Workplane;
 

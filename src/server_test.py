@@ -1463,7 +1463,7 @@ def test_monaco_type_definitions_match_library(server):
                     'box', 'cylinder', 'sphere', 'polygonPrism', 'text',
                     'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet',
                     'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
-                    'translate', 'rotate', 'color', 'cutPattern', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutBelow', 'cutAbove',
+                    'translate', 'rotate', 'color', 'cutPattern', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutLines', 'cutBelow', 'cutAbove',
                     'toSTL', 'to3MF', 'toMesh',
                     'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val',
                     'meta', 'infillDensity', 'infillPattern', 'partName'
