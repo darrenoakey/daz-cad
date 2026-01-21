@@ -7,6 +7,7 @@
 
 import { initCAD, Workplane, Assembly, Profiler, loadFont, getDefaultFont } from './cad.js';
 import { Gridfinity } from './gridfinity.js';
+import './patterns.js';  // Extends Workplane with unified cutPattern()
 
 let oc = null;
 let isInitialized = false;

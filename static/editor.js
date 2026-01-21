@@ -8,6 +8,7 @@
 import { CADViewer } from './viewer.js';
 import { initCAD, Workplane, Assembly, Profiler } from './cad.js';
 import { Gridfinity } from './gridfinity.js';
+import './patterns.js';  // Extends Workplane with unified cutPattern()
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
 import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
 
@@ -278,8 +279,60 @@ class CADEditor {
                             /** Set color (hex string like "#ff0000") */
                             color(hexColor: string): Workplane;
 
-                            /** Cut a pattern of holes */
-                            cutPattern(options: { sides: 3 | 4 | 6; wallThickness: number; border: number; depth?: number; size?: number }): Workplane;
+                            /**
+                             * Cut a unified pattern into a selected face
+                             * Supports: line, rect, square, circle, hexagon, octagon, triangle, or any n-sided polygon
+                             */
+                            cutPattern(options: {
+                                /** Shape type: 'line', 'rect', 'square', 'circle', 'hexagon', 'octagon', 'triangle', or number (sides) */
+                                shape?: 'line' | 'rect' | 'square' | 'circle' | 'hexagon' | 'octagon' | 'triangle' | number;
+                                /** Primary dimension (line width, rect width, circle diameter, polygon flat-to-flat) */
+                                width?: number;
+                                /** Secondary dimension (rect height). Defaults to width */
+                                height?: number;
+                                /** For lines: line length (null = auto fill face) */
+                                length?: number;
+                                /** Corner radius for rectangles/squares */
+                                fillet?: number;
+                                /** Round the ends of lines (stadium shape) */
+                                roundEnds?: boolean;
+                                /** Shear angle in degrees (parallelograms) */
+                                shear?: number;
+                                /** Rotate each individual shape by this angle */
+                                rotation?: number;
+                                /** Cut depth in mm. null = through-cut */
+                                depth?: number;
+                                /** Space between shape centers */
+                                spacing?: number;
+                                /** Override X spacing */
+                                spacingX?: number;
+                                /** Override Y spacing */
+                                spacingY?: number;
+                                /** Alternative: specify wall between shapes */
+                                wallThickness?: number;
+                                /** Margin from face edges */
+                                border?: number;
+                                /** Override X border */
+                                borderX?: number;
+                                /** Override Y border */
+                                borderY?: number;
+                                /** Split pattern into N column groups */
+                                columns?: number;
+                                /** Gap between column groups */
+                                columnGap?: number;
+                                /** Split into N row groups */
+                                rows?: number;
+                                /** Gap between row groups */
+                                rowGap?: number;
+                                /** Offset alternate rows (brick/hex pattern) */
+                                stagger?: boolean;
+                                /** Fraction of spacingX to offset */
+                                staggerAmount?: number;
+                                /** Rotate entire pattern (degrees) */
+                                angle?: number;
+                                /** For lines: 'x' (horizontal) or 'y' (vertical) */
+                                direction?: 'x' | 'y';
+                            }): Workplane;
 
                             /** Cut optimized rectangular grid */
                             cutRectGrid(options: { width: number; height: number; count?: number; fillet?: number; depth?: number; minBorder?: number; minSpacing?: number }): Workplane;
@@ -289,9 +342,6 @@ class CADEditor {
 
                             /** Add gridfinity baseplate onto top face, auto-sized to fit */
                             addBaseplate(options?: { fillet?: boolean }): Workplane;
-
-                            /** Cut horizontal line grooves into a selected face */
-                            cutLines(options?: { width?: number; depth?: number; spacing?: number; border?: number }): Workplane;
 
                             /** Cut away everything below the origin plane on specified axis */
                             cutBelow(axis: "X" | "Y" | "Z"): Workplane;

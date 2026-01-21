@@ -1386,6 +1386,86 @@ def test_polygon_prism_and_cut_pattern(server):
 
 
 # ##################################################################
+# test cut pattern with fillet (rounded rectangles)
+# verifies cutPattern works with fillet option for rounded corners
+def test_cut_pattern_fillet(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        # capture console for debugging
+        console_messages = []
+        page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
+
+        page.goto(f"{server}/")
+
+        # wait for Ready AND main thread OpenCascade
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                // test cutPattern with fillet - rounded rectangles
+                const box = new Workplane('XY').box(60, 40, 8);
+                const meshBefore = box.toMesh(0.1, 0.3);
+                const vertsBefore = meshBefore.vertices.length / 3;
+
+                const boxWithPattern = box.faces('>Z').cutPattern({
+                    shape: 'rect',
+                    width: 20,
+                    height: 8,
+                    fillet: 3,
+                    spacing: 15,
+                    border: 5
+                });
+
+                if (!boxWithPattern._shape) {
+                    return { success: false, error: 'cutPattern with fillet returned null shape' };
+                }
+
+                const meshAfter = boxWithPattern.toMesh(0.1, 0.3);
+                const vertsAfter = meshAfter.vertices.length / 3;
+
+                // cutPattern should add vertices for the cut
+                if (vertsAfter <= vertsBefore) {
+                    return {
+                        success: false,
+                        error: 'cutPattern with fillet did not modify geometry',
+                        vertsBefore: vertsBefore,
+                        vertsAfter: vertsAfter
+                    };
+                }
+
+                return {
+                    success: true,
+                    vertsBefore: vertsBefore,
+                    vertsAfter: vertsAfter
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        # print console for debugging
+        if not result.get("success"):
+            print("\n--- Browser console ---")
+            for msg in console_messages:
+                print(msg)
+            print("--- End console ---\n")
+
+        assert result["success"], f"cutPattern fillet test failed: {result.get('error')}\nStack: {result.get('stack', 'none')}"
+        print(f"Fillet pattern vertices before: {result.get('vertsBefore')}, after: {result.get('vertsAfter')}")
+
+
+# ##################################################################
 # test monaco type definitions match actual library
 # verifies the type definitions in editor.js match the actual CAD library exports
 def test_monaco_type_definitions_match_library(server):

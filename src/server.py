@@ -204,6 +204,14 @@ async def health():
 
 
 # ##################################################################
+# favicon endpoint
+# returns SVG favicon for the CAD editor
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse(BASE_DIR / "static" / "favicon-32.png", media_type="image/png")
+
+
+# ##################################################################
 # pydantic model for file save request
 class FileSaveRequest(BaseModel):
     content: str

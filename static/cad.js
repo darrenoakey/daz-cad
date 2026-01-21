@@ -122,6 +122,47 @@ function cadError(operation, message, originalError = null) {
 }
 
 /**
+ * CSS color name to hex mapping
+ * Supports standard CSS color names
+ */
+const CSS_COLORS = {
+    // Basic colors
+    black: '#000000', white: '#ffffff', red: '#ff0000', green: '#008000',
+    blue: '#0000ff', yellow: '#ffff00', cyan: '#00ffff', magenta: '#ff00ff',
+    // Extended colors
+    orange: '#ffa500', pink: '#ffc0cb', purple: '#800080', brown: '#a52a2a',
+    gray: '#808080', grey: '#808080', lime: '#00ff00', navy: '#000080',
+    teal: '#008080', olive: '#808000', maroon: '#800000', aqua: '#00ffff',
+    silver: '#c0c0c0', gold: '#ffd700', coral: '#ff7f50', salmon: '#fa8072',
+    turquoise: '#40e0d0', violet: '#ee82ee', indigo: '#4b0082', crimson: '#dc143c',
+    // Common web colors
+    tomato: '#ff6347', skyblue: '#87ceeb', steelblue: '#4682b4',
+    slategray: '#708090', darkgreen: '#006400', darkblue: '#00008b',
+    darkred: '#8b0000', lightgray: '#d3d3d3', lightblue: '#add8e6',
+    lightgreen: '#90ee90', lightyellow: '#ffffe0', hotpink: '#ff69b4',
+    deeppink: '#ff1493', chartreuse: '#7fff00', springgreen: '#00ff7f',
+    // Material-ish colors
+    amber: '#ffbf00', deeporange: '#ff5722', lightcoral: '#f08080',
+    mediumseagreen: '#3cb371', royalblue: '#4169e1', darkorange: '#ff8c00'
+};
+
+/**
+ * Resolve a color value - convert name to hex if needed
+ * @param {string} color - Color name or hex value
+ * @returns {string} Hex color value
+ */
+function _resolveColor(color) {
+    if (!color) return null;
+    // If it starts with #, assume it's already hex
+    if (color.startsWith('#')) return color;
+    // Look up in CSS colors (case insensitive)
+    const hex = CSS_COLORS[color.toLowerCase()];
+    if (hex) return hex;
+    // If not found, return as-is (might be rgb() or other format)
+    return color;
+}
+
+/**
  * Get the last CAD error (useful for debugging)
  */
 function getLastError() {
@@ -662,13 +703,14 @@ class Workplane {
 
     /**
      * Set the color of this workplane object
-     * @param {string} hexColor - CSS hex color like "#ff0000" or "red"
+     * @param {string} color - CSS hex color like "#ff0000" or color name like "red", "green", "blue"
      */
-    color(hexColor) {
+    color(color) {
         const result = new Workplane(this._plane);
         result._shape = this._shape;
         result._cloneProperties(this);
-        result._color = hexColor;
+        // Convert color names to hex if needed
+        result._color = _resolveColor(color);
         return result;
     }
 
@@ -1546,212 +1588,7 @@ class Workplane {
         return result;
     }
 
-    /**
-     * Cut a regular pattern of polygons through the shape
-     * Creates a grid of hexagons, squares, or triangles and cuts them out
-     * @param options - Configuration object:
-     *   - type: "grid"/"square", "hexagon"/"hex", or "triangle" (alternative to sides)
-     *   - sides: 3 (triangle), 4 (square), or 6 (hexagon) - default 6
-     *   - wallThickness: thickness between shapes in mm - default 0.6
-     *   - border: solid border width around edges - default 2
-     *   - depth: cut depth (null = through-cut) - default null
-     *   - cutFromZ: Z position to cut from (null = auto from top) - for cutting base from below
-     */
-    cutPattern(options = {}) {
-        // Map type names to sides if provided
-        const typeToSides = {
-            'grid': 4,
-            'square': 4,
-            'hexagon': 6,
-            'hex': 6,
-            'triangle': 3
-        };
-
-        let sidesValue = options.sides ?? 6;
-        if (options.type) {
-            const mapped = typeToSides[options.type.toLowerCase()];
-            if (mapped) {
-                sidesValue = mapped;
-            } else {
-                cadError('cutPattern', `Unknown type: ${options.type}. Use grid, square, hexagon, hex, or triangle`);
-                return this;
-            }
-        }
-
-        const {
-            wallThickness = 0.6,
-            border = 2,
-            depth = null,
-            size = null,
-            cutFromZ = null
-        } = options;
-        const sides = sidesValue;
-
-        if (!this._shape) {
-            cadError('cutPattern', 'Cannot cut pattern: no shape exists');
-            return this;
-        }
-
-        if (![3, 4, 6].includes(sides)) {
-            cadError('cutPattern', 'Only 3 (triangle), 4 (square), or 6 (hexagon) sides supported for tiling');
-            return this;
-        }
-
-        const result = new Workplane(this._plane);
-
-        try {
-            // Get bounding box
-            const bbox = new oc.Bnd_Box_1();
-            oc.BRepBndLib.Add(this._shape, bbox, false);
-            const xMin = { current: 0 }, yMin = { current: 0 }, zMin = { current: 0 };
-            const xMax = { current: 0 }, yMax = { current: 0 }, zMax = { current: 0 };
-            bbox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
-            bbox.delete();
-
-            const length = xMax.current - xMin.current;
-            const width = yMax.current - yMin.current;
-            const thickness = zMax.current - zMin.current;
-
-            const centerX = (xMin.current + xMax.current) / 2;
-            const centerY = (yMin.current + yMax.current) / 2;
-
-            const innerLength = length - 2 * border;
-            const innerWidth = width - 2 * border;
-
-            if (innerLength <= 0 || innerWidth <= 0) {
-                result._shape = this._shape;
-                return result;
-            }
-
-            // Calculate polygon size from wall thickness
-            const sqrt3 = Math.sqrt(3);
-
-            let polySize, d, h, rowOffset;
-            const autoSize = Math.min(innerLength, innerWidth) / 6;
-            polySize = size || autoSize;
-
-            if (sides === 6) {
-                const r = polySize / 2;
-                const R = r / Math.cos(Math.PI / 6);
-                d = 2 * R + wallThickness;
-                h = d * sqrt3 / 2;
-                rowOffset = d / 2;
-            } else if (sides === 4) {
-                const r = polySize / 2;
-                d = 2 * r + wallThickness;
-                h = d;
-                rowOffset = 0;
-            } else {
-                const r = polySize / 2;
-                const R = r / Math.cos(Math.PI / 3);
-                d = 2 * r + wallThickness;
-                h = d * sqrt3 / 2;
-                rowOffset = d / 2;
-            }
-
-            // Calculate polygon circumradius
-            let circumRadius;
-            if (sides === 6) {
-                circumRadius = (polySize / 2) / Math.cos(Math.PI / 6);
-            } else if (sides === 4) {
-                circumRadius = (polySize / 2) * Math.sqrt(2);
-            } else {
-                circumRadius = (polySize / 2) / Math.cos(Math.PI / 3);
-            }
-
-            // Calculate grid
-            const nRows = Math.max(1, Math.ceil(innerWidth / h));
-            const nCols = Math.max(1, Math.ceil(innerLength / d));
-
-            const totalSpanX = (nCols - 1) * d;
-            const totalSpanY = (nRows - 1) * h;
-            const xStart = centerX - totalSpanX / 2;
-            const yStart = centerY - totalSpanY / 2;
-
-            const cutDepth = depth || (thickness + 2);
-            const cutZ = cutFromZ !== null ? cutFromZ : (zMax.current + 1);
-            const effectiveBorder = border + circumRadius;
-
-            // Create template prism at origin
-            const templatePrism = this.polygonPrism(sides, polySize, cutDepth);
-            if (!templatePrism._shape) {
-                result._shape = this._shape;
-                return result;
-            }
-
-            const tileWidth = d;
-            const tileHeight = 2 * h;
-            const nTileRows = Math.ceil(nRows / 2);
-            const nTileCols = nCols;
-
-            // Collect all positioned prisms
-            const allShapes = [];
-
-            for (let tileRow = 0; tileRow < nTileRows; tileRow++) {
-                for (let tileCol = 0; tileCol < nTileCols; tileCol++) {
-                    const tileX = xStart + tileCol * tileWidth;
-                    const tileY = yStart + tileRow * tileHeight;
-
-                    // Even-row position
-                    const y1 = tileY;
-                    const x1 = tileX;
-                    if (x1 >= xMin.current + effectiveBorder && x1 <= xMax.current - effectiveBorder &&
-                        y1 >= yMin.current + effectiveBorder && y1 <= yMax.current - effectiveBorder) {
-                        const t1 = new oc.gp_Trsf_1();
-                        t1.SetTranslation_1(new oc.gp_Vec_4(x1, y1, cutZ - cutDepth));
-                        const loc1 = new oc.TopLoc_Location_2(t1);
-                        allShapes.push(templatePrism._shape.Moved(loc1, false));
-                        t1.delete();
-                    }
-
-                    // Odd-row position
-                    const y2 = tileY + h;
-                    const x2 = tileX + rowOffset;
-                    if (y2 <= yStart + (nRows - 1) * h + 0.001 &&
-                        x2 >= xMin.current + effectiveBorder && x2 <= xMax.current - effectiveBorder &&
-                        y2 >= yMin.current + effectiveBorder && y2 <= yMax.current - effectiveBorder) {
-                        const t2 = new oc.gp_Trsf_1();
-                        t2.SetTranslation_1(new oc.gp_Vec_4(x2, y2, cutZ - cutDepth));
-                        const loc2 = new oc.TopLoc_Location_2(t2);
-                        allShapes.push(templatePrism._shape.Moved(loc2, false));
-                        t2.delete();
-                    }
-                }
-            }
-
-            if (allShapes.length > 0) {
-                console.log(`[CAD] cutPattern: ${allShapes.length} holes, using ListOfShape API`);
-
-                const toolList = new oc.TopTools_ListOfShape_1();
-                for (const shape of allShapes) {
-                    toolList.Append_1(shape);
-                }
-
-                const argList = new oc.TopTools_ListOfShape_1();
-                argList.Append_1(this._shape);
-
-                const cut = new oc.BRepAlgoAPI_Cut_1();
-                cut.SetArguments(argList);
-                cut.SetTools(toolList);
-                cut.Build(new oc.Message_ProgressRange_1());
-
-                if (cut.IsDone()) {
-                    result._shape = cut.Shape();
-                } else {
-                    cadError('cutPattern', 'Boolean cut failed');
-                    result._shape = this._shape;
-                }
-                cut.delete();
-            } else {
-                result._shape = this._shape;
-            }
-        } catch (e) {
-            cadError('cutPattern', 'Exception cutting pattern', e);
-            result._shape = this._shape;
-        }
-
-        return result;
-    }
+    // cutPattern() is now implemented in patterns.js with a unified API
 
     /**
      * Select faces matching a selector
