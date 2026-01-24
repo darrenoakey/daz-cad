@@ -16,7 +16,8 @@
  *   });
  */
 
-import { Workplane, getOC } from './cad.js';
+// Absolute path for import map cache busting
+import { Workplane, getOC } from '/static/cad.js';
 
 
 // ============================================================
@@ -199,13 +200,32 @@ function _createPolygonCutter(oc, sides, flatToFlat, depth) {
         wireBuilder.Add_1(edge);
     }
 
+    // Validate wire construction
+    if (!wireBuilder.IsDone()) {
+        console.error(`[_createPolygonCutter] Wire construction failed for ${sides}-sided polygon, flatToFlat=${flatToFlat}`);
+        return null;
+    }
+
     const wire = wireBuilder.Wire();
-    const face = new oc.BRepBuilderAPI_MakeFace_15(wire, true);
+    const faceMaker = new oc.BRepBuilderAPI_MakeFace_15(wire, true);
+
+    // Validate face construction
+    if (!faceMaker.IsDone()) {
+        console.error(`[_createPolygonCutter] Face construction failed for ${sides}-sided polygon, flatToFlat=${flatToFlat}`);
+        return null;
+    }
+
     const prism = new oc.BRepPrimAPI_MakePrism_1(
-        face.Face(),
+        faceMaker.Face(),
         new oc.gp_Vec_4(0, 0, depth),
         false, true
     );
+
+    // Validate prism construction
+    if (!prism.IsDone()) {
+        console.error(`[_createPolygonCutter] Prism construction failed for ${sides}-sided polygon, flatToFlat=${flatToFlat}, depth=${depth}`);
+        return null;
+    }
 
     return prism.Shape();
 }
@@ -836,6 +856,15 @@ Workplane.prototype.cutPattern = function(options = {}) {
                 return result;
             }
 
+            // Check if template cutter was created successfully
+            if (!templateCutter) {
+                console.error(`[cutPattern] Failed to create template cutter for shape: ${shape}`);
+                result._shape = this._shape;
+                return result;
+            }
+
+            console.log(`[cutPattern] Created template cutter for ${shape}, width=${effectiveWidth}, positions=${positions.length}`);
+
             // Position cutters at each grid location
             for (const pos of positions) {
                 // pos.x and pos.y are in face-local coordinates (centered)
@@ -872,20 +901,65 @@ Workplane.prototype.cutPattern = function(options = {}) {
         console.log(`[cutPattern] Creating ${cutterShapes.length} cutters (${shape})`);
 
         if (cutterShapes.length > 0) {
-            // Create compound of all cutters
-            const builder = new oc.BRep_Builder();
-            const compound = new oc.TopoDS_Compound();
-            builder.MakeCompound(compound);
-            for (const cutter of cutterShapes) {
-                builder.Add(compound, cutter);
+            // Fuse all cutters together to eliminate internal faces
+            // This is important when cutters are close together or overlapping
+            let fusedCutters;
+
+            if (cutterShapes.length === 1) {
+                // Single cutter, no need to fuse
+                fusedCutters = cutterShapes[0];
+            } else {
+                // Multiple cutters - fuse them together
+                try {
+                    // Create argument list with first cutter
+                    const fuseArgs = new oc.TopTools_ListOfShape_1();
+                    fuseArgs.Append_1(cutterShapes[0]);
+
+                    // Create tools list with remaining cutters
+                    const fuseTools = new oc.TopTools_ListOfShape_1();
+                    for (let i = 1; i < cutterShapes.length; i++) {
+                        fuseTools.Append_1(cutterShapes[i]);
+                    }
+
+                    const fuser = new oc.BRepAlgoAPI_Fuse_1();
+                    fuser.SetArguments(fuseArgs);
+                    fuser.SetTools(fuseTools);
+                    fuser.Build(new oc.Message_ProgressRange_1());
+
+                    if (fuser.IsDone()) {
+                        fusedCutters = fuser.Shape();
+                        console.log('[cutPattern] Fused cutters successfully');
+                    } else {
+                        // Fallback to compound if fuse fails
+                        console.warn('[cutPattern] Fuse failed, falling back to compound');
+                        const builder = new oc.BRep_Builder();
+                        const compound = new oc.TopoDS_Compound();
+                        builder.MakeCompound(compound);
+                        for (const cutter of cutterShapes) {
+                            builder.Add(compound, cutter);
+                        }
+                        fusedCutters = compound;
+                    }
+
+                    fuser.delete();
+                    fuseArgs.delete();
+                    fuseTools.delete();
+                } catch (e) {
+                    // Fallback to compound if fuse throws
+                    console.warn('[cutPattern] Fuse exception, falling back to compound:', e.message);
+                    const builder = new oc.BRep_Builder();
+                    const compound = new oc.TopoDS_Compound();
+                    builder.MakeCompound(compound);
+                    for (const cutter of cutterShapes) {
+                        builder.Add(compound, cutter);
+                    }
+                    fusedCutters = compound;
+                }
             }
 
-            // Use compound directly (clipping is handled by border calculation)
-            let clippedCutters = compound;
-
-            // Perform batch boolean cut with clipped cutters
+            // Perform batch boolean cut with fused cutters
             const toolList = new oc.TopTools_ListOfShape_1();
-            toolList.Append_1(clippedCutters);
+            toolList.Append_1(fusedCutters);
 
             const argList = new oc.TopTools_ListOfShape_1();
             argList.Append_1(this._shape);
@@ -896,9 +970,31 @@ Workplane.prototype.cutPattern = function(options = {}) {
             cut.Build(new oc.Message_ProgressRange_1());
 
             if (cut.IsDone()) {
-                result._shape = cut.Shape();
+                const resultShape = cut.Shape();
+
+                // Check if result is null/invalid
+                if (!resultShape || resultShape.IsNull()) {
+                    console.error('[cutPattern] Boolean cut produced null shape');
+                    result._shape = this._shape;
+                } else {
+                    // Check if result has any content (not empty)
+                    const explorer = new oc.TopExp_Explorer_2(resultShape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+                    if (!explorer.More()) {
+                        console.error('[cutPattern] Boolean cut produced empty shape (no solids)');
+                        result._shape = this._shape;
+                    } else {
+                        result._shape = resultShape;
+                        console.log('[cutPattern] Boolean cut succeeded');
+                    }
+                    explorer.delete();
+                }
+
+                // Check for warnings
+                if (cut.HasWarnings && cut.HasWarnings()) {
+                    console.warn('[cutPattern] Boolean cut has warnings');
+                }
             } else {
-                console.error('[cutPattern] Boolean cut failed');
+                console.error('[cutPattern] Boolean cut failed (IsDone=false)');
                 result._shape = this._shape;
             }
 

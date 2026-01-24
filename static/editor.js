@@ -5,10 +5,11 @@
  * for live preview of CAD code.
  */
 
-import { CADViewer } from './viewer.js';
-import { initCAD, Workplane, Assembly, Profiler } from './cad.js';
-import { Gridfinity } from './gridfinity.js';
-import './patterns.js';  // Extends Workplane with unified cutPattern()
+// Use absolute paths so import map cache busters work
+import { CADViewer } from '/static/viewer.js';
+import { initCAD, Workplane, Assembly, Profiler } from '/static/cad.js';
+import { Gridfinity } from '/static/gridfinity.js';
+import '/static/patterns.js';  // Extends Workplane with unified cutPattern()
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
 import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
 
@@ -251,6 +252,9 @@ class CADEditor {
 
                             /** Fillet/round edges */
                             fillet(radius: number): Workplane;
+
+                            /** Clean and optimize geometry - merges coplanar faces, fixes issues */
+                            clean(options?: { unifyFaces?: boolean, unifyEdges?: boolean, fix?: boolean, rebuildSolid?: boolean }): Workplane;
 
                             /** Select faces by direction */
                             faces(selector: ">Z" | "<Z" | ">X" | "<X" | ">Y" | "<Y" | "|Z" | "|X" | "|Y"): Workplane;

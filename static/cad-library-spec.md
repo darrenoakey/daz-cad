@@ -52,6 +52,13 @@ new Workplane(plane)
 **fillet(radius)**
 - Applies fillet (rounded edge) to all edges (or selected edges)
 
+**clean(options?)**
+- Optimizes geometry after boolean operations
+- Merges coplanar faces and collinear edges
+- Fixes geometry issues
+- Options: `{ unifyFaces: true, unifyEdges: true, fix: true, rebuildSolid: false }`
+- Use after pattern cuts if geometry appears messy
+
 **cutPattern(options)**
 - Unified pattern cutting API - cuts lines, shapes, or grids into a face
 - Use `.faces(">Z")` to select a face first, or it defaults to top face

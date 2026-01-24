@@ -363,6 +363,34 @@ const chamfered = box.faces("<Z").edges().chamfer(1);
 
 ---
 
+## Geometry Optimization
+
+### clean(options?)
+
+Cleans and optimizes geometry after boolean operations. Merges coplanar faces, fixes geometry issues, and optionally rebuilds solids.
+
+**Parameters (all optional):**
+- `unifyFaces` - Merge adjacent faces on same surface (default: true)
+- `unifyEdges` - Merge adjacent edges on same curve (default: true)
+- `fix` - Run geometry repair (default: true)
+- `rebuildSolid` - Rebuild solid from shells, slower (default: false)
+
+**Example:**
+```javascript
+// Clean up after pattern cuts
+const cleaned = box.cutPattern({ shape: 'hexagon', width: 8, wallThickness: 1 }).clean();
+
+// Clean with specific options
+const optimized = complex.clean({ unifyFaces: true, unifyEdges: true, fix: true });
+```
+
+**When to Use:**
+- After boolean operations that create many internal edges
+- When exporting to STL/3MF and file size matters
+- When mesh visualization shows unnecessary triangulation
+
+---
+
 ## Patterns
 
 ### cutPattern(options)

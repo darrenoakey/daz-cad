@@ -16,7 +16,8 @@
  *       .cutCircleGrid({ diameter: 20, count: 4 });
  */
 
-import { Workplane, getOC } from './cad.js';
+// Absolute path for import map cache busting
+import { Workplane, getOC } from '/static/cad.js';
 
 // ============================================================
 // GRIDFINITY CONSTANTS

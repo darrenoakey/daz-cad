@@ -24,12 +24,20 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - X-aligned faces need extra 90° pre-rotation for lines (so length runs in Y)
 - `spacing` parameter = gap between shapes (not center-to-center)
 - Default spacing = width (50% solid, 50% cut)
+- **Cutters are fused before cutting** - eliminates internal faces when shapes overlap
+- This fixes hexagon patterns with thin wallThickness that would otherwise fail
+
+## Geometry Optimization
+- `clean()` method merges coplanar faces and collinear edges
+- Uses `ShapeUpgrade_UnifySameDomain` and `ShapeFix_Shape`
+- Call after complex boolean operations to simplify geometry
+- Options: `{ unifyFaces, unifyEdges, fix, rebuildSolid }`
 
 ## Common Issues
 - Face normal detection uses `BRepAdaptor_Surface.D1()` with cross product
 - Check `face.Orientation_1()` for reversed faces that need normal flip
 - Boolean cuts can fail silently - verify by checking mesh vertex counts
-- Browser caching: hard refresh (Cmd+Shift+R) after JS changes
+- Browser caching: handled by dynamic import map with cache busters
 
 ## Conventions
 - Dimensions in millimeters

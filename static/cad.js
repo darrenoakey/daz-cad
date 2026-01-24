@@ -12,8 +12,8 @@
  *     .chamfer(1);
  */
 
-// Import opentype.js for font parsing
-import * as opentype from './opentype.module.js';
+// Import opentype.js for font parsing (absolute path for import map cache busting)
+import * as opentype from '/static/opentype.module.js';
 
 // Import JSZip for 3MF export (using jsDelivr ESM conversion)
 import JSZip from 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm';
@@ -2981,6 +2981,126 @@ class Workplane {
         }
 
         return await ThreeMFExporter.generate([partData]);
+    }
+
+    /**
+     * Clean and optimize geometry
+     *
+     * Performs several cleanup operations:
+     * 1. UnifySameDomain - Merges adjacent faces on same surface, edges on same curve
+     * 2. ShapeFix - Repairs geometry issues (gaps, self-intersections, etc.)
+     * 3. MakeSolid - Rebuilds solid from shells if needed
+     *
+     * Useful after boolean operations that create unnecessary internal edges/faces.
+     *
+     * @param {Object} [options] - Cleanup options
+     * @param {boolean} [options.unifyFaces=true] - Merge coplanar adjacent faces
+     * @param {boolean} [options.unifyEdges=true] - Merge collinear adjacent edges
+     * @param {boolean} [options.fix=true] - Run shape repair
+     * @param {boolean} [options.rebuildSolid=false] - Rebuild solid from shells (slower)
+     * @returns {Workplane} - New Workplane with cleaned geometry
+     *
+     * @example
+     * // Clean up after boolean operations
+     * const cleaned = box.cut(cutter).clean();
+     *
+     * @example
+     * // Only unify faces, skip other operations
+     * const simplified = complex.clean({ unifyEdges: false, fix: false });
+     */
+    clean(options = {}) {
+        const {
+            unifyFaces = true,
+            unifyEdges = true,
+            fix = true,
+            rebuildSolid = false
+        } = options;
+
+        if (!this._shape) {
+            cadError('clean', 'Cannot clean: no shape exists');
+            return this;
+        }
+
+        const result = new Workplane(this._plane);
+        result._cloneProperties(this);
+
+        try {
+            let currentShape = this._shape;
+
+            // Step 1: UnifySameDomain - merge coplanar faces and collinear edges
+            if (unifyFaces || unifyEdges) {
+                try {
+                    const unifier = new oc.ShapeUpgrade_UnifySameDomain_2(currentShape, unifyEdges, unifyFaces, false);
+                    unifier.Build();
+                    const unifiedShape = unifier.Shape();
+                    if (unifiedShape && !unifiedShape.IsNull()) {
+                        currentShape = unifiedShape;
+                        console.log('[clean] UnifySameDomain succeeded');
+                    }
+                    unifier.delete();
+                } catch (e) {
+                    console.warn('[clean] UnifySameDomain failed:', e.message);
+                }
+            }
+
+            // Step 2: ShapeFix - repair geometry issues
+            if (fix) {
+                try {
+                    const fixer = new oc.ShapeFix_Shape_2(currentShape);
+                    fixer.Perform(new oc.Message_ProgressRange_1());
+                    const fixedShape = fixer.Shape();
+                    if (fixedShape && !fixedShape.IsNull()) {
+                        currentShape = fixedShape;
+                        console.log('[clean] ShapeFix succeeded');
+                    }
+                    fixer.delete();
+                } catch (e) {
+                    console.warn('[clean] ShapeFix failed:', e.message);
+                }
+            }
+
+            // Step 3: Rebuild solid from shells (optional, can be slow)
+            if (rebuildSolid) {
+                try {
+                    // Extract shells from the shape
+                    const shellExplorer = new oc.TopExp_Explorer_2(
+                        currentShape,
+                        oc.TopAbs_ShapeEnum.TopAbs_SHELL,
+                        oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+                    );
+
+                    if (shellExplorer.More()) {
+                        const solidMaker = new oc.BRepBuilderAPI_MakeSolid_1();
+
+                        while (shellExplorer.More()) {
+                            const shell = oc.TopoDS.Shell_1(shellExplorer.Current());
+                            solidMaker.Add(shell);
+                            shellExplorer.Next();
+                        }
+
+                        if (solidMaker.IsDone()) {
+                            const newSolid = solidMaker.Solid();
+                            if (newSolid && !newSolid.IsNull()) {
+                                currentShape = newSolid;
+                                console.log('[clean] MakeSolid succeeded');
+                            }
+                        }
+                        solidMaker.delete();
+                    }
+                    shellExplorer.delete();
+                } catch (e) {
+                    console.warn('[clean] MakeSolid failed:', e.message);
+                }
+            }
+
+            result._shape = currentShape;
+
+        } catch (e) {
+            console.error('[clean] Exception:', e);
+            result._shape = this._shape;
+        }
+
+        return result;
     }
 }
 

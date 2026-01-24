@@ -716,14 +716,29 @@
             text-align: right;
         }
     </style>
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-            "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"
-        }
-    }
+    <!-- Dynamic import map with cache busters for local modules -->
+    <script>
+        const cacheBuster = `?v=${Date.now()}`;
+        // Store globally so editor.js can use same cache buster
+        window.__cacheBuster = cacheBuster;
+        const importMap = {
+            imports: {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+                "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+                // Local modules with cache busters - use absolute paths
+                "/static/cad.js": `/static/cad.js${cacheBuster}`,
+                "/static/viewer.js": `/static/viewer.js${cacheBuster}`,
+                "/static/gridfinity.js": `/static/gridfinity.js${cacheBuster}`,
+                "/static/patterns.js": `/static/patterns.js${cacheBuster}`,
+                "/static/threemf.js": `/static/threemf.js${cacheBuster}`,
+                "/static/opentype.module.js": `/static/opentype.module.js${cacheBuster}`
+            }
+        };
+        const script = document.createElement('script');
+        script.type = 'importmap';
+        script.textContent = JSON.stringify(importMap);
+        document.currentScript.after(script);
     </script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
@@ -823,8 +838,20 @@
         </div>
     </div>
 
-    <script type="module" src="/static/editor.js"></script>
-    <script src="/static/cad-tests.js"></script>
+    <!-- Cache-busted module loading -->
+    <script type="module">
+        // Add cache buster to force fresh loads during development
+        const cacheBuster = `?v=${Date.now()}`;
+
+        // Dynamically import the main editor module with cache buster
+        import(`/static/editor.js${cacheBuster}`);
+    </script>
+    <script>
+        // Cache-busted non-module script
+        const testScript = document.createElement('script');
+        testScript.src = `/static/cad-tests.js?v=${Date.now()}`;
+        document.body.appendChild(testScript);
+    </script>
 
     <!-- Hot reload client -->
     <script>

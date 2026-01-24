@@ -1893,8 +1893,101 @@ def test_cut_pattern_hexagon_sizes(server):
                 status = "CUT" if r["didCut"] else "NO CUT"
                 print(f"  Size {r['size']}: {r['vertsBefore']} -> {r['vertsAfter']} ({status})")
 
+        # Always print variation results for debugging
+        print(f"\nHexagon test: vertsBefore={result.get('vertsBefore')}, vertsAfter={result.get('vertsAfter')}")
+        for v in result.get("variations", []):
+            status = "CUT" if v["didCut"] else "NO CUT"
+            print(f"  {v['label']}: {v['before']} -> {v['after']} ({status})")
+
         assert result["success"], f"Hexagon cutPattern failed: {result.get('error')}\nFailures: {result.get('failures')}"
         print("Hexagon sizes tested successfully")
+
+
+# ##################################################################
+# test clean() method for geometry optimization
+def test_clean_method(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        console_messages = []
+        page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
+
+        page.goto(f"{server}/")
+
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                // Create a box with pattern cuts (creates many internal edges)
+                const box = new Workplane('XY').box(30, 30, 10);
+                const cut = box.faces('>Z').cutPattern({
+                    shape: 'circle',
+                    width: 5,
+                    wallThickness: 2,
+                    border: 3
+                });
+
+                // Get mesh before clean
+                const meshBefore = cut.toMesh(0.1, 0.3);
+                const vertsBefore = meshBefore.vertices.length / 3;
+
+                // Clean the geometry
+                const cleaned = cut.clean();
+
+                if (!cleaned._shape) {
+                    return { success: false, error: 'clean() returned null shape' };
+                }
+
+                // Get mesh after clean
+                const meshAfter = cleaned.toMesh(0.1, 0.3);
+                const vertsAfter = meshAfter.vertices.length / 3;
+
+                // Also test with options
+                const cleanedWithOptions = cut.clean({
+                    unifyFaces: true,
+                    unifyEdges: true,
+                    fix: true,
+                    rebuildSolid: false
+                });
+
+                if (!cleanedWithOptions._shape) {
+                    return { success: false, error: 'clean() with options returned null shape' };
+                }
+
+                const meshOptions = cleanedWithOptions.toMesh(0.1, 0.3);
+                const vertsOptions = meshOptions.vertices.length / 3;
+
+                return {
+                    success: true,
+                    vertsBefore: vertsBefore,
+                    vertsAfter: vertsAfter,
+                    vertsOptions: vertsOptions,
+                    // Clean should not increase vertex count significantly
+                    reasonable: vertsAfter <= vertsBefore * 1.1
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        if not result.get("success"):
+            print("\n--- Browser console ---")
+            for msg in console_messages:
+                print(msg)
+            print("--- End console ---\n")
+
+        assert result["success"], f"clean() test failed: {result.get('error')}"
+        print(f"clean() test: before={result['vertsBefore']}, after={result['vertsAfter']}, withOptions={result['vertsOptions']}")
 
 
 # ##################################################################
@@ -1973,7 +2066,7 @@ def test_monaco_type_definitions_match_library(server):
                 // If a method is added to the library, it must also be added here and to editor.js type defs
                 const expectedWorkplaneMethods = [
                     'box', 'cylinder', 'sphere', 'polygonPrism', 'text',
-                    'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet',
+                    'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet', 'clean',
                     'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
                     'translate', 'rotate', 'color', 'cutPattern', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutLines', 'cutBelow', 'cutAbove',
                     'toSTL', 'to3MF', 'toMesh',
