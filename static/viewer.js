@@ -17,7 +17,7 @@ class CADViewer {
         this.controls = null;
         this.meshGroup = null;
         this._userHasInteracted = false; // Track if user has moved/zoomed the view
-        this._opacity = 0.9; // Global opacity for all parts (default 90%)
+        this._opacity = 1.0; // Global opacity for all parts (default 100%)
         this._materials = []; // Track materials for opacity updates
 
         this._init();

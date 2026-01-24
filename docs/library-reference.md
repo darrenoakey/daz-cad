@@ -365,43 +365,71 @@ const chamfered = box.faces("<Z").edges().chamfer(1);
 
 ## Patterns
 
-### pattern(options)
-
-Generates a regular pattern of polygons as a single shape.
-
-**Options:**
-- `type` - `"grid"`, `"square"`, `"hexagon"`, `"hex"`, or `"triangle"`
-- `sides` - Alternative to type: 3, 4, or 6
-- `wallThickness` - Space between shapes (default 0.6mm)
-- `border` - Solid border around edges (default 2mm)
-- `depth` - Prism height (default: shape thickness + 2)
-- `size` - Polygon size (null = auto-calculate)
-
-**Example:**
-```javascript
-const hexPattern = box.pattern({
-    type: 'hexagon',
-    wallThickness: 1,
-    border: 3
-});
-```
-
----
-
 ### cutPattern(options)
 
-Cuts a pattern of polygons through the shape.
+Unified pattern cutting API. Cuts lines, shapes, or grids into a selected face.
 
-**Options:** Same as `pattern()`, plus:
-- `cutFromZ` - Z position to cut from (null = auto from top)
+**Usage:** Select a face first with `.faces()`, or it defaults to the top face.
 
-**Example:**
+**Shape Options:**
+- `shape` - Shape type: `'line'`, `'rect'`, `'square'`, `'circle'`, `'hexagon'`, `'octagon'`, `'triangle'`, or a number for n-sided polygons (default `'line'`)
+- `width` - Primary dimension: line width, rect width, circle diameter, polygon flat-to-flat (default 1.0)
+- `height` - Secondary dimension for rectangles (defaults to width)
+- `length` - For lines: line length, null = auto-fill (default null)
+- `fillet` - Corner radius for rectangles/squares (default 0)
+- `roundEnds` - For lines: create stadium/pill shape (default false)
+- `shear` - Shear angle in degrees (default 0)
+- `rotation` - Rotate each individual shape in degrees (default 0)
+
+**Depth Options:**
+- `depth` - Cut depth in mm, null = through-cut (default null)
+
+**Spacing Options:**
+- `spacing` - Gap between shapes in mm (defaults to width, giving 50% solid / 50% cut)
+- `spacingX` / `spacingY` - Override per-axis gap
+- `wallThickness` - Alternative name for spacing: wall thickness between shapes
+
+**Border Options:**
+- `border` - Margin from face edges (default 2.0)
+- `borderX` / `borderY` - Override per-axis borders
+
+**Layout Options:**
+- `columns` - Split into N column groups (default 1)
+- `columnGap` - Gap between column groups (default 5.0)
+- `rows` / `rowGap` - Split into row groups
+- `stagger` - Offset alternate rows for brick/honeycomb layout (default false)
+- `staggerAmount` - Fraction of spacingX to offset (default 0.5)
+- `angle` - For lines: rotation angle in degrees (default 0). 0=horizontal, 90=vertical, 45=diagonal
+
+**Backward Compatibility:** `sides`, `type`, `size`, and `direction` parameters still work.
+
+**Examples:**
 ```javascript
-const honeycomb = box.cutPattern({
-    sides: 6,
-    wallThickness: 1,
-    border: 2,
-    size: 5
+// Horizontal grip lines
+const grooved = box.faces(">Z").cutPattern({
+    shape: 'line',
+    width: 1.0,
+    spacing: 2.5,
+    depth: 0.4,
+    border: 3
+});
+
+// Honeycomb through-cut
+const honeycomb = box.faces(">Z").cutPattern({
+    shape: 'hexagon',
+    width: 8,
+    wallThickness: 0.8,
+    stagger: true
+});
+
+// Rounded rectangle pattern
+const rounded = box.faces(">Z").cutPattern({
+    shape: 'rect',
+    width: 10,
+    height: 6,
+    fillet: 2,
+    spacing: 12,
+    depth: 2
 });
 ```
 

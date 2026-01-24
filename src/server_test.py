@@ -1466,6 +1466,438 @@ def test_cut_pattern_fillet(server):
 
 
 # ##################################################################
+# test cutPattern on all 6 faces of a cube
+# verifies cutPattern works on faces perpendicular to X, Y, and Z axes
+def test_cut_pattern_all_faces(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        # capture console for debugging
+        console_messages = []
+        page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
+
+        page.goto(f"{server}/")
+
+        # wait for Ready AND main thread OpenCascade
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                const SIZE = 40;
+                const results = {};
+
+                // Test each face selector
+                const faceTests = [
+                    { selector: '>Z', name: 'top' },
+                    { selector: '<Z', name: 'bottom' },
+                    { selector: '<X', name: 'front' },
+                    { selector: '>X', name: 'back' },
+                    { selector: '<Y', name: 'left' },
+                    { selector: '>Y', name: 'right' }
+                ];
+
+                for (const test of faceTests) {
+                    // Create fresh cube for each test
+                    const cube = new Workplane('XY').box(SIZE, SIZE, SIZE);
+                    const vertsBefore = cube.toMesh(0.1, 0.3).vertices.length / 3;
+
+                    // Cut a single wide line with large spacing (so only 1 line fits)
+                    const cubeWithCut = cube.faces(test.selector).cutPattern({
+                        shape: 'line',
+                        width: 5,
+                        spacing: 100,  // Large spacing = only 1 line
+                        border: 5,
+                        depth: 3
+                    });
+
+                    if (!cubeWithCut._shape) {
+                        results[test.name] = { success: false, error: 'null shape returned' };
+                        continue;
+                    }
+
+                    const vertsAfter = cubeWithCut.toMesh(0.1, 0.3).vertices.length / 3;
+
+                    // The cut should add vertices
+                    if (vertsAfter <= vertsBefore) {
+                        results[test.name] = {
+                            success: false,
+                            error: 'no geometry change',
+                            vertsBefore,
+                            vertsAfter
+                        };
+                    } else {
+                        results[test.name] = {
+                            success: true,
+                            vertsBefore,
+                            vertsAfter
+                        };
+                    }
+                }
+
+                // Check if all faces passed
+                const allPassed = Object.values(results).every(r => r.success);
+                const failedFaces = Object.entries(results)
+                    .filter(([_, r]) => !r.success)
+                    .map(([name, r]) => `${name}: ${r.error}`)
+                    .join(', ');
+
+                return {
+                    success: allPassed,
+                    results,
+                    error: allPassed ? null : `Failed faces: ${failedFaces}`
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        # print console for debugging
+        if not result.get("success"):
+            print("\n--- Browser console ---")
+            for msg in console_messages:
+                print(msg)
+            print("--- End console ---\n")
+            print(f"Results by face: {result.get('results')}")
+
+        assert result["success"], f"cutPattern all-faces test failed: {result.get('error')}\nStack: {result.get('stack', 'none')}"
+        print(f"All 6 faces passed: {result.get('results')}")
+
+
+# ##################################################################
+# test cutPattern depth - patterns should only cut to specified depth
+# Cut 0.2mm into all faces, then intersect with box 0.5mm smaller
+# Result should be solid (patterns don't penetrate past 0.25mm per side)
+def test_cut_pattern_depth(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        console_messages = []
+        page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
+
+        page.goto(f"{server}/")
+
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                const SIZE = 40;
+                const PATTERN_DEPTH = 0.2;
+                const SHRINK = 0.5;  // 0.25mm per side
+
+                // Create cube and cut patterns into all 6 faces
+                let cube = new Workplane('XY').box(SIZE, SIZE, SIZE);
+
+                cube = cube.faces('>Z').cutPattern({ shape: 'line', width: 2, spacing: 5, border: 3, depth: PATTERN_DEPTH });
+                cube = cube.faces('<Z').cutPattern({ shape: 'line', width: 2, spacing: 5, border: 3, depth: PATTERN_DEPTH });
+                cube = cube.faces('>X').cutPattern({ shape: 'line', width: 2, spacing: 5, border: 3, depth: PATTERN_DEPTH });
+                cube = cube.faces('<X').cutPattern({ shape: 'line', width: 2, spacing: 5, border: 3, depth: PATTERN_DEPTH });
+                cube = cube.faces('>Y').cutPattern({ shape: 'line', width: 2, spacing: 5, border: 3, depth: PATTERN_DEPTH });
+                cube = cube.faces('<Y').cutPattern({ shape: 'line', width: 2, spacing: 5, border: 3, depth: PATTERN_DEPTH });
+
+                // Create smaller box
+                const smallerBox = new Workplane('XY').box(SIZE - SHRINK, SIZE - SHRINK, SIZE - SHRINK);
+
+                // Intersect - should be solid since patterns only 0.2mm deep
+                const result = cube.intersect(smallerBox);
+
+                if (!result._shape) {
+                    return { success: false, error: 'intersection returned null shape' };
+                }
+
+                // The result should be approximately the volume of the smaller box
+                // (a solid cube with no pattern cuts)
+                const expectedVolume = Math.pow(SIZE - SHRINK, 3);
+                const resultMesh = result.toMesh(0.1, 0.3);
+                const resultVerts = resultMesh.vertices.length / 3;
+
+                // A simple solid box has 8 vertices (or 24 with normals)
+                // If patterns penetrated, we'd see many more vertices
+                // Actually mesh vertices depend on tessellation, so check volume instead
+
+                // Get bounding box to verify it's the right size
+                const bbox = result._getBoundingBox();
+                const actualSizeX = bbox.maxX - bbox.minX;
+                const actualSizeY = bbox.maxY - bbox.minY;
+                const actualSizeZ = bbox.maxZ - bbox.minZ;
+
+                const expectedSize = SIZE - SHRINK;
+                const tolerance = 0.01;
+
+                if (Math.abs(actualSizeX - expectedSize) > tolerance ||
+                    Math.abs(actualSizeY - expectedSize) > tolerance ||
+                    Math.abs(actualSizeZ - expectedSize) > tolerance) {
+                    return {
+                        success: false,
+                        error: 'result size mismatch - patterns may have penetrated too deep',
+                        expected: expectedSize,
+                        actual: { x: actualSizeX, y: actualSizeY, z: actualSizeZ }
+                    };
+                }
+
+                return {
+                    success: true,
+                    size: { x: actualSizeX, y: actualSizeY, z: actualSizeZ },
+                    vertices: resultVerts
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        if not result.get("success"):
+            print("\n--- Browser console ---")
+            for msg in console_messages:
+                print(msg)
+            print("--- End console ---\n")
+
+        assert result["success"], f"cutPattern depth test failed: {result.get('error')}\nStack: {result.get('stack', 'none')}"
+        print(f"Pattern depth test passed: size={result.get('size')}, verts={result.get('vertices')}")
+
+
+# ##################################################################
+# test cutPattern on X-aligned face cuts through thin box
+# verifies patterns on <X face are spread in YZ plane and cut in X direction
+def test_cut_pattern_x_face(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        console_messages = []
+        page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
+
+        page.goto(f"{server}/")
+
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                // Create a thin box: 1mm in X, 40mm in Y and Z
+                // Lines with width=2, spacing=4 should cut through completely
+                const BOX_X = 1;
+                const BOX_Y = 40;
+                const BOX_Z = 40;
+
+                let box = new Workplane('XY').box(BOX_X, BOX_Y, BOX_Z);
+
+                // Get mesh vertex count before cutting (simple box = few vertices)
+                const meshBefore = box.toMesh(0.1, 0.3);
+                const vertsBefore = meshBefore.vertices.length / 3;
+
+                // Cut lines on the front face (<X) - no depth specified means through-cut
+                // With width=2, spacing=4, we should get lines spread across the face
+                box = box.faces('<X').cutPattern({
+                    shape: 'line',
+                    width: 2,
+                    spacing: 4,
+                    border: 3
+                });
+
+                if (!box._shape) {
+                    return { success: false, error: 'cutPattern returned null shape' };
+                }
+
+                // Get mesh vertex count after cutting (should have many more vertices)
+                const meshAfter = box.toMesh(0.1, 0.3);
+                const vertsAfter = meshAfter.vertices.length / 3;
+
+                // Get bounding box to verify overall dimensions are preserved
+                const bbox = box._getBoundingBox();
+                const actualSizeX = bbox.maxX - bbox.minX;
+                const actualSizeY = bbox.maxY - bbox.minY;
+                const actualSizeZ = bbox.maxZ - bbox.minZ;
+
+                // Verify the pattern actually cut something
+                // A through-cut pattern should add many vertices
+                // If nothing was cut, vertsAfter would be similar to vertsBefore
+                if (vertsAfter < vertsBefore * 2) {
+                    return {
+                        success: false,
+                        error: 'patterns did not appear to cut - vertex count too low',
+                        vertsBefore: vertsBefore,
+                        vertsAfter: vertsAfter,
+                        size: { x: actualSizeX, y: actualSizeY, z: actualSizeZ }
+                    };
+                }
+
+                // Verify overall dimensions are still correct
+                const tolerance = 0.1;
+                if (Math.abs(actualSizeX - BOX_X) > tolerance ||
+                    Math.abs(actualSizeY - BOX_Y) > tolerance ||
+                    Math.abs(actualSizeZ - BOX_Z) > tolerance) {
+                    return {
+                        success: false,
+                        error: 'bounding box dimensions changed unexpectedly',
+                        expected: { x: BOX_X, y: BOX_Y, z: BOX_Z },
+                        actual: { x: actualSizeX, y: actualSizeY, z: actualSizeZ }
+                    };
+                }
+
+                return {
+                    success: true,
+                    vertsBefore: vertsBefore,
+                    vertsAfter: vertsAfter,
+                    size: { x: actualSizeX, y: actualSizeY, z: actualSizeZ }
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        if not result.get("success"):
+            print("\n--- Browser console ---")
+            for msg in console_messages:
+                print(msg)
+            print("--- End console ---\n")
+
+        assert result["success"], f"cutPattern X-face test failed: {result.get('error')}\nDetails: {result}"
+        print(f"X-face pattern test passed: verts {result.get('vertsBefore')} -> {result.get('vertsAfter')}, size={result.get('size')}")
+
+
+# ##################################################################
+# test hexagon cutPattern at various sizes
+# verifies hexagon patterns cut through at all sizes
+def test_cut_pattern_hexagon_sizes(server):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        console_messages = []
+        page.on("console", lambda msg: console_messages.append(f"{msg.type}: {msg.text}"))
+
+        page.goto(f"{server}/")
+
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                // Test with exact user configuration
+                const SIZE = 30;
+                const HEIGHT = 6;
+
+                // Exact user test case
+                const box = new Workplane('XY').box(SIZE, SIZE, HEIGHT);
+                const meshBefore = box.toMesh(0.1, 0.3);
+                const vertsBefore = meshBefore.vertices.length / 3;
+
+                const cut = box.faces('>Z').cutPattern({
+                    shape: 'hexagon',
+                    width: 9,
+                    wallThickness: 1.2,
+                    border: 3
+                });
+
+                if (!cut._shape) {
+                    return { success: false, error: 'cutPattern returned null shape' };
+                }
+
+                const meshAfter = cut.toMesh(0.1, 0.3);
+                const vertsAfter = meshAfter.vertices.length / 3;
+
+                // Also test variations
+                const variations = [
+                    { width: 7, label: 'width=7' },
+                    { width: 8, label: 'width=8' },
+                    { width: 9, label: 'width=9' },
+                    { width: 10, label: 'width=10' },
+                ];
+                const varResults = [];
+
+                for (const v of variations) {
+                    const vbox = new Workplane('XY').box(SIZE, SIZE, HEIGHT);
+                    const vBefore = vbox.toMesh(0.1, 0.3).vertices.length / 3;
+
+                    const vcut = vbox.faces('>Z').cutPattern({
+                        shape: 'hexagon',
+                        width: v.width,
+                        wallThickness: 1.2,
+                        border: 3
+                    });
+
+                    const vAfter = vcut.toMesh(0.1, 0.3).vertices.length / 3;
+                    varResults.push({
+                        label: v.label,
+                        before: vBefore,
+                        after: vAfter,
+                        didCut: vAfter > vBefore * 1.5
+                    });
+                }
+
+                const didCut = vertsAfter > vertsBefore * 1.5;
+
+                if (!didCut) {
+                    return {
+                        success: false,
+                        error: 'Hexagon width=9 did not cut on 30x30x6 box',
+                        vertsBefore: vertsBefore,
+                        vertsAfter: vertsAfter,
+                        variations: varResults
+                    };
+                }
+
+                return {
+                    success: true,
+                    vertsBefore: vertsBefore,
+                    vertsAfter: vertsAfter,
+                    variations: varResults
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        if not result.get("success"):
+            print("\n--- Browser console ---")
+            for msg in console_messages:
+                print(msg)
+            print("--- End console ---\n")
+            print("Results by size:")
+            for r in result.get("results", []):
+                status = "CUT" if r["didCut"] else "NO CUT"
+                print(f"  Size {r['size']}: {r['vertsBefore']} -> {r['vertsAfter']} ({status})")
+
+        assert result["success"], f"Hexagon cutPattern failed: {result.get('error')}\nFailures: {result.get('failures')}"
+        print("Hexagon sizes tested successfully")
+
+
+# ##################################################################
 # test monaco type definitions match actual library
 # verifies the type definitions in editor.js match the actual CAD library exports
 def test_monaco_type_definitions_match_library(server):

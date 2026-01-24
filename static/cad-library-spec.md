@@ -53,14 +53,89 @@ new Workplane(plane)
 - Applies fillet (rounded edge) to all edges (or selected edges)
 
 **cutPattern(options)**
-- Cuts a regular grid pattern of polygon holes through the shape
+- Unified pattern cutting API - cuts lines, shapes, or grids into a face
+- Use `.faces(">Z")` to select a face first, or it defaults to top face
 - Options object:
-  - `sides`: 3 (triangles), 4 (squares), or 6 (hexagons) - default 6
-  - `wallThickness`: thickness between shapes in mm - default 0.6
-  - `border`: solid border width around edges - default 2
-  - `depth`: cut depth in mm, null for through-cut - default null
-  - `size`: polygon size in mm (flat-to-flat), null for auto-calculate - default null
-- Performance note: Larger `size` = fewer holes = faster rendering
+
+  **Shape options:**
+  - `shape`: Shape type or number of polygon sides. String values:
+    - `'line'` - Rectangular groove (default)
+    - `'rect'` or `'rectangle'` - Rectangle
+    - `'square'` - Square
+    - `'circle'` - Circle
+    - `'hexagon'` or `'hex'` - Hexagon
+    - `'octagon'` or `'oct'` - Octagon
+    - `'triangle'` - Triangle
+    - Or a number (3, 4, 5, 6, etc.) for any n-sided polygon
+  - `width`: Primary dimension in mm - line width, rect width, circle diameter, polygon flat-to-flat (default 1.0)
+  - `height`: Secondary dimension for rectangles, defaults to width
+  - `length`: For lines only - line length, null = auto-fill face (default null)
+  - `fillet`: Corner radius for rectangles/squares (default 0)
+  - `roundEnds`: For lines - create stadium/pill shape with rounded ends (default false)
+  - `shear`: Shear angle in degrees for parallelograms (default 0)
+  - `rotation`: Rotate each individual shape by this angle in degrees (default 0)
+
+  **Depth options:**
+  - `depth`: Cut depth in mm, null = through-cut (default null)
+
+  **Spacing options:**
+  - `spacing`: Gap between shapes in mm (defaults to width, giving 50% solid / 50% cut)
+  - `spacingX`: Override X gap
+  - `spacingY`: Override Y gap
+  - `wallThickness`: Alternative name for spacing - specify wall thickness between shapes
+
+  **Border options:**
+  - `border`: Margin from face edges in mm (default 2.0)
+  - `borderX`: Override X border
+  - `borderY`: Override Y border
+
+  **Layout options:**
+  - `columns`: Split pattern into N column groups (default 1)
+  - `columnGap`: Gap between column groups in mm (default 5.0)
+  - `rows`: Split pattern into N row groups (default null = 1)
+  - `rowGap`: Gap between row groups in mm
+  - `stagger`: Offset alternate rows for brick/honeycomb layout (default false)
+  - `staggerAmount`: Fraction of spacingX to offset (default 0.5)
+  - `angle`: For lines - rotation angle in degrees (default 0). 0=horizontal, 90=vertical, 45=diagonal
+
+  **Backward compatibility:** `sides`, `type`, `size`, and `direction` still work
+
+- Examples:
+  ```javascript
+  // Horizontal grip lines
+  box.faces(">Z").cutPattern({
+      shape: 'line',
+      width: 1.0,
+      spacing: 2.5,
+      depth: 0.4,
+      border: 3
+  });
+
+  // Honeycomb pattern (through-cut)
+  box.faces(">Z").cutPattern({
+      shape: 'hexagon',
+      width: 8,
+      wallThickness: 0.8,
+      stagger: true
+  });
+
+  // Rounded rectangle grid
+  box.faces(">Z").cutPattern({
+      shape: 'rect',
+      width: 10,
+      height: 6,
+      fillet: 2,
+      spacing: 12
+  });
+
+  // Circle pattern
+  box.faces(">Z").cutPattern({
+      shape: 'circle',
+      width: 5,  // diameter
+      spacing: 8,
+      depth: 2
+  });
+  ```
 
 ### Boolean Operations
 
@@ -193,12 +268,30 @@ result;
 ```javascript
 const result = new Workplane("XY")
     .box(60, 40, 4)
-    .cutPattern({
-        sides: 6,          // hexagons
+    .faces(">Z").cutPattern({
+        shape: 'hexagon',
+        width: 8,
         wallThickness: 0.8,
-        border: 3
+        border: 3,
+        stagger: true
     })
     .color("#f39c12");
+result;
+```
+
+### Grip Lines on Surface
+```javascript
+const result = new Workplane("XY")
+    .box(80, 40, 5)
+    .faces(">Z").cutPattern({
+        shape: 'line',
+        width: 1.2,
+        spacing: 3,
+        depth: 0.5,
+        border: 5,
+        angle: 0  // horizontal lines (90 for vertical, 45 for diagonal)
+    })
+    .color("#3498db");
 result;
 ```
 

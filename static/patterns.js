@@ -222,7 +222,7 @@ function _createPolygonCutter(oc, sides, flatToFlat, depth) {
  */
 function _calculateGridPositions(options, faceWidth, faceHeight) {
     const {
-        spacing = 2.0,
+        spacing: rawSpacing = null,
         spacingX = null,
         spacingY = null,
         border = 2.0,
@@ -242,6 +242,8 @@ function _calculateGridPositions(options, faceWidth, faceHeight) {
         wallThickness = null
     } = options;
 
+    // Default spacing to width (50% solid, 50% gap)
+    const spacing = rawSpacing ?? width;
     const actualSpacingX = spacingX ?? spacing;
     const actualSpacingY = spacingY ?? spacing;
     const actualBorderX = borderX ?? border;
@@ -249,15 +251,21 @@ function _calculateGridPositions(options, faceWidth, faceHeight) {
     const actualRowGap = rowGap ?? columnGap;
     const actualRows = rows ?? 1;
 
-    // Calculate effective spacing if wallThickness is specified
-    let effectiveSpacingX = actualSpacingX;
-    let effectiveSpacingY = actualSpacingY;
+    // Calculate effective spacing (center-to-center distance)
+    // spacing parameter is the GAP between shapes, so add shape dimensions
+    const effectiveWidth = width;
+    const effectiveHeight = height ?? width;
+
+    let effectiveSpacingX, effectiveSpacingY;
 
     if (wallThickness !== null) {
-        const effectiveWidth = width;
-        const effectiveHeight = height ?? width;
+        // wallThickness overrides spacing - it's the wall between shapes
         effectiveSpacingX = effectiveWidth + wallThickness;
         effectiveSpacingY = effectiveHeight + wallThickness;
+    } else {
+        // spacing is the gap between shapes, add shape size for center-to-center
+        effectiveSpacingX = effectiveWidth + actualSpacingX;
+        effectiveSpacingY = effectiveHeight + actualSpacingY;
     }
 
     // Calculate usable area per column/row group
@@ -328,6 +336,184 @@ function _calculateGridPositions(options, faceWidth, faceHeight) {
 
 
 // ============================================================
+// FACE ANALYSIS HELPERS
+// ============================================================
+
+/**
+ * Get the normal vector and local coordinate system of a face
+ * @private
+ * @returns {Object} { normal: {x,y,z}, uAxis: {x,y,z}, vAxis: {x,y,z}, center: {x,y,z}, uSize, vSize }
+ */
+function _getFaceCoordinateSystem(oc, face, shape) {
+    // Get face bounding box for dimensions and center
+    const faceBbox = new oc.Bnd_Box_1();
+    oc.BRepBndLib.Add(face, faceBbox, false);
+    const fxMin = { current: 0 }, fyMin = { current: 0 }, fzMin = { current: 0 };
+    const fxMax = { current: 0 }, fyMax = { current: 0 }, fzMax = { current: 0 };
+    faceBbox.Get(fxMin, fyMin, fzMin, fxMax, fyMax, fzMax);
+
+    const sizeX = fxMax.current - fxMin.current;
+    const sizeY = fyMax.current - fyMin.current;
+    const sizeZ = fzMax.current - fzMin.current;
+
+    const centerX = (fxMin.current + fxMax.current) / 2;
+    const centerY = (fyMin.current + fyMax.current) / 2;
+    const centerZ = (fzMin.current + fzMax.current) / 2;
+
+    // Get the face's actual outward normal using BRepAdaptor_Surface
+    const adaptor = new oc.BRepAdaptor_Surface_2(face, true);
+
+    // Get UV bounds of the face
+    const uMin = adaptor.FirstUParameter();
+    const uMax = adaptor.LastUParameter();
+    const vMin = adaptor.FirstVParameter();
+    const vMax = adaptor.LastVParameter();
+
+    // Evaluate at center of the face in UV space
+    const uMid = (uMin + uMax) / 2;
+    const vMid = (vMin + vMax) / 2;
+
+    // Get point and derivatives at center
+    const pnt = new oc.gp_Pnt_1();
+    const d1u = new oc.gp_Vec_1();
+    const d1v = new oc.gp_Vec_1();
+    adaptor.D1(uMid, vMid, pnt, d1u, d1v);
+
+    // Compute normal from cross product of derivatives
+    let normalVec = d1u.Crossed(d1v);
+
+    // Check face orientation - if reversed, flip the normal
+    const orientation = face.Orientation_1();
+    if (orientation === oc.TopAbs_Orientation.TopAbs_REVERSED) {
+        normalVec.Reverse();
+    }
+
+    // Normalize
+    const mag = normalVec.Magnitude();
+    const normal = {
+        x: normalVec.X() / mag,
+        y: normalVec.Y() / mag,
+        z: normalVec.Z() / mag
+    };
+
+    // Determine face dimensions based on which axis the normal is closest to
+    const absNormal = { x: Math.abs(normal.x), y: Math.abs(normal.y), z: Math.abs(normal.z) };
+    let uSize, vSize;
+
+    if (absNormal.z > absNormal.x && absNormal.z > absNormal.y) {
+        // Face perpendicular to Z
+        uSize = sizeX;
+        vSize = sizeY;
+    } else if (absNormal.x > absNormal.y) {
+        // Face perpendicular to X
+        uSize = sizeY;
+        vSize = sizeZ;
+    } else {
+        // Face perpendicular to Y
+        uSize = sizeX;
+        vSize = sizeZ;
+    }
+
+    const center = { x: centerX, y: centerY, z: centerZ };
+
+    return { normal, center, uSize, vSize, absNormal };
+}
+
+/**
+ * Create a transformation matrix to position a cutter on a face
+ * @private
+ * Cutters are created in XY plane at Z=0, extending upward in +Z.
+ * This transforms them to cut into the selected face from outside.
+ */
+function _createFaceTransform(oc, faceInfo, localX, localY, cutDepth) {
+    const { normal, center, absNormal } = faceInfo;
+
+    // World position where the cutter center should end up
+    let worldX, worldY, worldZ;
+
+    // Rotation to orient the cutter perpendicular to the face
+    let rotationAxis = null;
+    let rotationAngle = 0;
+
+    if (absNormal.z > absNormal.x && absNormal.z > absNormal.y) {
+        // Face perpendicular to Z (horizontal face)
+        // localX -> world X, localY -> world Y
+        worldX = center.x + localX;
+        worldY = center.y + localY;
+
+        if (normal.z > 0) {
+            // Top face (+Z normal) - cutter at surface-depth, extends up through surface
+            worldZ = center.z - cutDepth;
+            // No rotation needed, cutter already extends in +Z
+        } else {
+            // Bottom face (-Z normal) - cutter at surface+depth, extends down through surface
+            worldZ = center.z + cutDepth;
+            // Rotate 180° around X to flip the cutter
+            rotationAxis = new oc.gp_Dir_4(1, 0, 0);
+            rotationAngle = Math.PI;
+        }
+    } else if (absNormal.x > absNormal.y) {
+        // Face perpendicular to X (front/back face)
+        // localX -> world Y, localY -> world Z
+        worldY = center.y + localX;
+        worldZ = center.z + localY;
+
+        if (normal.x > 0) {
+            // Back face (+X normal) - cutter at surface-depth, extends in +X through surface
+            worldX = center.x - cutDepth;
+            // Rotate +90° around Y: +Z becomes +X
+            rotationAxis = new oc.gp_Dir_4(0, 1, 0);
+            rotationAngle = Math.PI / 2;
+        } else {
+            // Front face (-X normal) - cutter at surface+depth, extends in -X through surface
+            worldX = center.x + cutDepth;
+            // Rotate -90° around Y: +Z becomes -X
+            rotationAxis = new oc.gp_Dir_4(0, 1, 0);
+            rotationAngle = -Math.PI / 2;
+        }
+    } else {
+        // Face perpendicular to Y (left/right face)
+        // localX -> world X, localY -> world Z
+        worldX = center.x + localX;
+        worldZ = center.z + localY;
+
+        if (normal.y > 0) {
+            // Right face (+Y normal) - cutter at surface-depth, extends in +Y through surface
+            worldY = center.y - cutDepth;
+            // Rotate -90° around X: +Z becomes +Y
+            rotationAxis = new oc.gp_Dir_4(1, 0, 0);
+            rotationAngle = -Math.PI / 2;
+        } else {
+            // Left face (-Y normal) - cutter at surface+depth, extends in -Y through surface
+            worldY = center.y + cutDepth;
+            // Rotate +90° around X: +Z becomes -Y
+            rotationAxis = new oc.gp_Dir_4(1, 0, 0);
+            rotationAngle = Math.PI / 2;
+        }
+    }
+
+    // Build transformation: first rotate (around origin), then translate
+    const trsf = new oc.gp_Trsf_1();
+
+    if (rotationAxis) {
+        const ax1 = new oc.gp_Ax1_2(new oc.gp_Pnt_3(0, 0, 0), rotationAxis);
+        trsf.SetRotation_1(ax1, rotationAngle);
+    }
+
+    // Create translation and compose: T * R (apply rotation first, then translation)
+    const transTrsf = new oc.gp_Trsf_1();
+    transTrsf.SetTranslation_1(new oc.gp_Vec_4(worldX, worldY, worldZ));
+
+    // trsf.Multiply(other) computes trsf = trsf * other
+    // We want final = T * R, so: start with R, multiply by T gives R * T
+    // But that applies T first then R - wrong order!
+    // We need to do: transTrsf.Multiply(trsf) to get T * R
+    transTrsf.Multiply(trsf);
+
+    return transTrsf;
+}
+
+// ============================================================
 // MAIN cutPattern() METHOD
 // ============================================================
 
@@ -338,6 +524,7 @@ function _calculateGridPositions(options, faceWidth, faceHeight) {
  * - Multiple shape types: line, rect, square, circle, hexagon, octagon, triangle, or any n-sided polygon
  * - Full layout control: spacing, borders, column/row groups, staggering, pattern rotation
  * - Shape modifiers: fillet, round ends, shear, individual rotation
+ * - Works on any face orientation (top, bottom, front, back, left, right)
  *
  * @param {Object} options - Configuration object
  * @param {string|number} [options.shape='line'] - Shape type or number of sides
@@ -349,10 +536,10 @@ function _calculateGridPositions(options, faceWidth, faceHeight) {
  * @param {number} [options.shear=0] - Shear angle in degrees (parallelograms)
  * @param {number} [options.rotation=0] - Rotate each individual shape by this angle
  * @param {number} [options.depth=null] - Cut depth in mm. null = through-cut
- * @param {number} [options.spacing=2.0] - Space between shape centers
- * @param {number} [options.spacingX=null] - Override X spacing
- * @param {number} [options.spacingY=null] - Override Y spacing
- * @param {number} [options.wallThickness=null] - Alternative: specify wall between shapes
+ * @param {number} [options.spacing=width] - Gap between shapes (defaults to width for 50% solid/50% cut)
+ * @param {number} [options.spacingX=null] - Override X gap
+ * @param {number} [options.spacingY=null] - Override Y gap
+ * @param {number} [options.wallThickness=null] - Alternative name for spacing: wall between shapes
  * @param {number} [options.border=2.0] - Margin from face edges
  * @param {number} [options.borderX=null] - Override X border
  * @param {number} [options.borderY=null] - Override Y border
@@ -367,13 +554,23 @@ function _calculateGridPositions(options, faceWidth, faceHeight) {
  * @returns {Workplane} - New Workplane with pattern cut
  *
  * @example
- * // Horizontal grip lines
+ * // Horizontal grip lines on top face
  * box.faces(">Z").cutPattern({
  *     shape: 'line',
  *     width: 1.0,
  *     spacing: 2.0,
  *     depth: 0.4,
  *     border: 3.0
+ * });
+ *
+ * @example
+ * // Vertical lines on front face
+ * box.faces("<X").cutPattern({
+ *     shape: 'line',
+ *     width: 1.5,
+ *     spacing: 8,
+ *     depth: 0.4,
+ *     direction: 'y'
  * });
  *
  * @example
@@ -413,7 +610,7 @@ Workplane.prototype.cutPattern = function(options = {}) {
         shear = 0,
         rotation = 0,
         depth = null,
-        spacing = 2.0,
+        spacing: rawSpacing = null,  // default to width if not specified
         spacingX = null,
         spacingY = null,
         wallThickness = null,
@@ -426,12 +623,25 @@ Workplane.prototype.cutPattern = function(options = {}) {
         rowGap = null,
         stagger = false,
         staggerAmount = 0.5,
-        angle = 0,
-        direction = 'x'
+        angle: rawAngle = null,
+        direction = null  // deprecated: use angle instead
     } = options;
 
     const shape = effectiveShape;
     const width = effectiveWidth;
+    // Default spacing to width if not specified (50% solid, 50% gap)
+    const spacing = rawSpacing ?? width;
+
+    // Backward compatibility: convert direction to angle
+    // 'x'/'horizontal' = 0°, 'y'/'vertical' = 90°
+    let angle = rawAngle ?? 0;
+    if (direction !== null && rawAngle === null) {
+        const d = direction.toLowerCase();
+        if (d === 'y' || d === 'vertical' || d === 'v') {
+            angle = 90;
+        }
+        // 'x', 'horizontal', 'h' all default to 0
+    }
 
     // Compute actual border values
     const actualBorderX = borderX ?? border;
@@ -452,39 +662,46 @@ Workplane.prototype.cutPattern = function(options = {}) {
     result._cloneProperties(this);
 
     try {
-        // Determine face bounds
-        let faceBbox;
-        let cutZ;
+        // Determine face info including normal and local coordinate system
+        let faceInfo;
+        let face;
 
         if (this._selectedFaces && this._selectedFaces.length > 0) {
             // Use selected face
-            const face = this._selectedFaces[0];
-            faceBbox = this._getFaceBoundingBox(face);
-            if (!faceBbox) {
-                console.error('[cutPattern] Could not get face bounding box');
+            face = this._selectedFaces[0];
+            faceInfo = _getFaceCoordinateSystem(oc, face, this._shape);
+            if (!faceInfo) {
+                console.error('[cutPattern] Could not get face coordinate system');
                 result._shape = this._shape;
                 return result;
             }
-            cutZ = faceBbox.maxZ;
         } else {
-            // Fall back to shape bounding box
-            faceBbox = this._getBoundingBox();
-            if (!faceBbox) {
+            // Fall back to top face of shape bounding box (legacy behavior)
+            const shapeBbox = this._getBoundingBox();
+            if (!shapeBbox) {
                 console.error('[cutPattern] Could not get bounding box');
                 result._shape = this._shape;
                 return result;
             }
-            cutZ = faceBbox.maxZ;
+            // Create a synthetic face info for XY-aligned top face
+            faceInfo = {
+                normal: { x: 0, y: 0, z: 1 },
+                absNormal: { x: 0, y: 0, z: 1 },
+                center: { x: shapeBbox.centerX, y: shapeBbox.centerY, z: shapeBbox.maxZ },
+                uSize: shapeBbox.sizeX,
+                vSize: shapeBbox.sizeY
+            };
         }
 
-        const faceWidth = faceBbox.sizeX;
-        const faceHeight = faceBbox.sizeY;
-        const faceCenterX = faceBbox.centerX;
-        const faceCenterY = faceBbox.centerY;
+        // Use face dimensions from coordinate system analysis
+        const faceWidth = faceInfo.uSize;
+        const faceHeight = faceInfo.vSize;
+
+        console.log(`[cutPattern] Face normal: (${faceInfo.normal.x.toFixed(2)}, ${faceInfo.normal.y.toFixed(2)}, ${faceInfo.normal.z.toFixed(2)}), size: ${faceWidth.toFixed(1)} x ${faceHeight.toFixed(1)}`);
 
         // Calculate cut depth
         const shapeBbox = this._getBoundingBox();
-        const maxDepth = shapeBbox ? shapeBbox.sizeZ + 2 : 100;
+        const maxDepth = shapeBbox ? Math.max(shapeBbox.sizeX, shapeBbox.sizeY, shapeBbox.sizeZ) + 2 : 100;
         const actualDepth = depth ?? maxDepth;
 
         // Resolve shape type to number of sides
@@ -525,69 +742,81 @@ Workplane.prototype.cutPattern = function(options = {}) {
         const cutterShapes = [];
 
         if (resolvedShape === 'line') {
-            // Lines are a special case - they span the face width/height
+            // Lines are positioned perpendicular to their direction
+            // angle=0: horizontal lines (run along U, positioned along V)
+            // angle=90: vertical lines (run along U rotated 90°, positioned along V)
+            // Any angle works for diagonal lines
             const lineWidth = width;
-            const lineLength = length ?? (direction === 'x' ? faceWidth - 2 * actualBorderX : faceHeight - 2 * actualBorderY);
 
-            // Calculate line positions
-            const startPos = direction === 'x' ? actualBorderY : actualBorderX;
-            const endPos = direction === 'x' ? faceHeight - actualBorderY : faceWidth - actualBorderX;
-            const actualSpacing = spacingX ?? spacingY ?? spacing;
+            // Line length: if not specified, calculate from face dimensions
+            // For diagonal lines, use the diagonal of the face
+            const angleRad = (angle * Math.PI) / 180;
+            const cosA = Math.cos(angleRad);
+            const sinA = Math.sin(angleRad);
+            const effectiveFaceWidth = Math.abs(cosA) * faceWidth + Math.abs(sinA) * faceHeight;
+            const lineLength = length ?? (effectiveFaceWidth - 2 * border);
 
-            const numLines = Math.floor((endPos - startPos) / actualSpacing);
-            const totalSpan = numLines * actualSpacing;
-            const offset = (endPos - startPos - totalSpan) / 2;
+            // Spacing is perpendicular to the lines
+            // For horizontal lines (angle=0), spacing is along Y (faceHeight direction)
+            // For vertical lines (angle=90), spacing is along X (faceWidth direction)
+            // spacing parameter is the GAP between lines, so center-to-center = lineWidth + spacing
+            const gapSpacing = spacingX ?? spacingY ?? spacing;
+            const effectiveSpacing = lineWidth + gapSpacing;
+
+            // Calculate number of lines based on the perpendicular dimension
+            const perpDimension = Math.abs(sinA) * faceWidth + Math.abs(cosA) * faceHeight;
+            const startPos = border;
+            const endPos = perpDimension - border;
+            const availableSpace = endPos - startPos;
+
+            const numLines = Math.max(0, Math.floor(availableSpace / effectiveSpacing));
+            const totalSpan = numLines * effectiveSpacing;
+            const offsetPos = (availableSpace - totalSpan) / 2;
 
             for (let i = 0; i <= numLines; i++) {
-                const pos = startPos + offset + i * actualSpacing;
+                const pos = startPos + offsetPos + i * effectiveSpacing;
 
-                // Create line cutter
+                // Create line cutter (in XY plane, will be transformed)
                 const lineCutter = _createLineCutter(oc, lineWidth, lineLength, actualDepth + 1, roundEnds);
 
-                // Position and orient the cutter
-                const trsf = new oc.gp_Trsf_1();
+                // Position in face-local coordinates
+                // Lines are centered on the face, offset perpendicular to their direction
+                const perpOffset = pos - perpDimension / 2;
+                const localX = -sinA * perpOffset;
+                const localY = cosA * perpOffset;
 
-                if (direction === 'x') {
-                    // Horizontal lines
-                    const x = faceCenterX;
-                    const y = faceBbox.minY + pos;
+                // Apply rotation for the line angle
+                // For X-aligned faces, we need an extra 90° rotation because the face transform
+                // maps X->Z, but we want lines to run in Y direction (across the face)
+                let cutterToPosition = lineCutter;
+                let effectiveAngle = angleRad;
 
-                    if (angle !== 0) {
-                        const rotTrsf = new oc.gp_Trsf_1();
-                        rotTrsf.SetRotation_1(
-                            new oc.gp_Ax1_2(new oc.gp_Pnt_3(0, 0, 0), new oc.gp_Dir_4(0, 0, 1)),
-                            (angle * Math.PI) / 180
-                        );
-                        trsf.Multiply(rotTrsf);
-                    }
+                // Check if face is X-aligned (front/back faces)
+                const isXAlignedFace = faceInfo.absNormal.x > faceInfo.absNormal.y &&
+                                       faceInfo.absNormal.x > faceInfo.absNormal.z;
+                if (isXAlignedFace) {
+                    // Add 90° to rotate line from X direction to Y direction
+                    effectiveAngle += Math.PI / 2;
+                }
 
-                    const transTrsf = new oc.gp_Trsf_1();
-                    transTrsf.SetTranslation_1(new oc.gp_Vec_4(x, y, cutZ - actualDepth));
-                    trsf.Multiply(transTrsf);
-                } else {
-                    // Vertical lines - rotate 90 degrees
-                    const x = faceBbox.minX + pos;
-                    const y = faceCenterY;
-
+                if (effectiveAngle !== 0) {
                     const rotTrsf = new oc.gp_Trsf_1();
                     rotTrsf.SetRotation_1(
                         new oc.gp_Ax1_2(new oc.gp_Pnt_3(0, 0, 0), new oc.gp_Dir_4(0, 0, 1)),
-                        Math.PI / 2 + (angle * Math.PI) / 180
+                        effectiveAngle
                     );
-                    trsf.Multiply(rotTrsf);
-
-                    const transTrsf = new oc.gp_Trsf_1();
-                    transTrsf.SetTranslation_1(new oc.gp_Vec_4(x, y, cutZ - actualDepth));
-                    trsf.Multiply(transTrsf);
+                    cutterToPosition = lineCutter.Moved(new oc.TopLoc_Location_2(rotTrsf), false);
                 }
 
+                // Transform cutter to face position
+                const trsf = _createFaceTransform(oc, faceInfo, localX, localY, actualDepth);
                 const loc = new oc.TopLoc_Location_2(trsf);
-                cutterShapes.push(lineCutter.Moved(loc, false));
+                cutterShapes.push(cutterToPosition.Moved(loc, false));
             }
         } else {
             // Grid-based patterns (rect, square, circle, polygons)
             const positions = _calculateGridPositions(
-                { ...options, width: effectiveWidth, height: effectiveHeight },
+                { ...options, spacing, width: effectiveWidth, height: effectiveHeight },
                 faceWidth, faceHeight
             );
 
@@ -609,58 +838,40 @@ Workplane.prototype.cutPattern = function(options = {}) {
 
             // Position cutters at each grid location
             for (const pos of positions) {
-                const trsf = new oc.gp_Trsf_1();
+                // pos.x and pos.y are in face-local coordinates (centered)
+                const localX = pos.x;
+                const localY = pos.y;
+
+                // Only include if within face bounds (with some tolerance)
+                const margin = Math.max(effectiveWidth, effectiveHeight) / 2;
+                const halfWidth = faceWidth / 2;
+                const halfHeight = faceHeight / 2;
+                if (localX - margin < -halfWidth - 0.1 || localX + margin > halfWidth + 0.1 ||
+                    localY - margin < -halfHeight - 0.1 || localY + margin > halfHeight + 0.1) {
+                    continue;
+                }
 
                 // Apply individual rotation if specified
+                let cutterToPosition = templateCutter;
                 if (rotation !== 0) {
                     const rotTrsf = new oc.gp_Trsf_1();
                     rotTrsf.SetRotation_1(
                         new oc.gp_Ax1_2(new oc.gp_Pnt_3(0, 0, 0), new oc.gp_Dir_4(0, 0, 1)),
                         (rotation * Math.PI) / 180
                     );
-                    trsf.Multiply(rotTrsf);
+                    cutterToPosition = templateCutter.Moved(new oc.TopLoc_Location_2(rotTrsf), false);
                 }
 
-                // Translate to position
-                const x = faceCenterX + pos.x;
-                const y = faceCenterY + pos.y;
-
-                // Only include if within face bounds (with some tolerance)
-                const margin = Math.max(effectiveWidth, effectiveHeight) / 2;
-                if (x - margin < faceBbox.minX - 0.1 || x + margin > faceBbox.maxX + 0.1 ||
-                    y - margin < faceBbox.minY - 0.1 || y + margin > faceBbox.maxY + 0.1) {
-                    continue;
-                }
-
-                const transTrsf = new oc.gp_Trsf_1();
-                transTrsf.SetTranslation_1(new oc.gp_Vec_4(x, y, cutZ - actualDepth));
-                trsf.Multiply(transTrsf);
-
+                // Transform cutter to face position
+                const trsf = _createFaceTransform(oc, faceInfo, localX, localY, actualDepth);
                 const loc = new oc.TopLoc_Location_2(trsf);
-                cutterShapes.push(templateCutter.Moved(loc, false));
+                cutterShapes.push(cutterToPosition.Moved(loc, false));
             }
         }
 
         console.log(`[cutPattern] Creating ${cutterShapes.length} cutters (${shape})`);
 
         if (cutterShapes.length > 0) {
-            // Create clipping box to trim cutters at border edges
-            // This ensures shapes don't extend past the border
-            const clipMinX = faceBbox.minX + actualBorderX;
-            const clipMaxX = faceBbox.maxX - actualBorderX;
-            const clipMinY = faceBbox.minY + actualBorderY;
-            const clipMaxY = faceBbox.maxY - actualBorderY;
-            const clipZ = cutZ - actualDepth - 1;
-            const clipHeight = actualDepth + 3;
-
-            const clipBox = new oc.BRepPrimAPI_MakeBox_3(
-                new oc.gp_Pnt_3(clipMinX, clipMinY, clipZ),
-                clipMaxX - clipMinX,
-                clipMaxY - clipMinY,
-                clipHeight
-            );
-            const clipShape = clipBox.Shape();
-
             // Create compound of all cutters
             const builder = new oc.BRep_Builder();
             const compound = new oc.TopoDS_Compound();
@@ -669,16 +880,8 @@ Workplane.prototype.cutPattern = function(options = {}) {
                 builder.Add(compound, cutter);
             }
 
-            // Intersect compound with clip box to trim at borders
-            const commonOp = new oc.BRepAlgoAPI_Common_3(compound, clipShape, new oc.Message_ProgressRange_1());
-            let clippedCutters;
-            if (commonOp.IsDone()) {
-                clippedCutters = commonOp.Shape();
-            } else {
-                console.warn('[cutPattern] Clipping failed, using unclipped cutters');
-                clippedCutters = compound;
-            }
-            commonOp.delete();
+            // Use compound directly (clipping is handled by border calculation)
+            let clippedCutters = compound;
 
             // Perform batch boolean cut with clipped cutters
             const toolList = new oc.TopTools_ListOfShape_1();
