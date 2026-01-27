@@ -39,6 +39,12 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Boolean cuts can fail silently - verify by checking mesh vertex counts
 - Browser caching: handled by dynamic import map with cache busters
 
+## Version Control
+- `local/models/` directory is auto-initialized as a git repo on server startup
+- Every successful model save auto-commits with AI-generated message (Claude Haiku)
+- Commits run in background task to not block save response
+- Uses `claude-agent-sdk` with `model="haiku"` for commit message generation
+
 ## Conventions
 - Dimensions in millimeters
 - Result variable must be defined in CAD scripts
