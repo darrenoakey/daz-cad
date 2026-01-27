@@ -3,6 +3,7 @@ import asyncio
 import threading
 import time
 import shutil
+import subprocess
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -10,7 +11,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 from pathlib import Path
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, AssistantMessage, TextBlock
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, AssistantMessage, TextBlock, query
 
 PORT = 8765
 BASE_DIR = Path(__file__).parent.parent
@@ -150,12 +151,116 @@ def setup_models_directory():
 
 
 # ##################################################################
+# init git repo
+# initializes git repo in models directory if not already initialized
+def init_git_repo():
+    git_dir = MODELS_DIR / ".git"
+    if not git_dir.exists():
+        subprocess.run(["git", "init"], cwd=MODELS_DIR, capture_output=True)
+        # create initial commit with all existing files
+        subprocess.run(["git", "add", "-A"], cwd=MODELS_DIR, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=MODELS_DIR,
+            capture_output=True
+        )
+
+
+# ##################################################################
+# generate commit message
+# uses claude haiku to generate a commit message from the diff
+async def generate_commit_message(filename: str) -> str:
+    # get the diff for this file
+    result = subprocess.run(
+        ["git", "diff", "--", filename],
+        cwd=MODELS_DIR,
+        capture_output=True,
+        text=True
+    )
+    diff = result.stdout
+
+    # if no diff (new file), get the file content
+    if not diff:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--", filename],
+            cwd=MODELS_DIR,
+            capture_output=True,
+            text=True
+        )
+        diff = result.stdout
+
+    if not diff:
+        # file might be untracked, just use a simple message
+        return f"Add {filename}"
+
+    # truncate diff if too long
+    diff = diff[:5000]
+
+    prompt = f"""Write a brief git commit message for this CAD model change.
+The file is: {filename}
+
+Requirements:
+- Use imperative mood (e.g., "Add hole to base", "Increase height")
+- Be concise (under 50 characters if possible)
+- Focus on what changed in the 3D model, not code details
+- Return ONLY the commit message, nothing else
+
+Diff:
+{diff}"""
+
+    response = ""
+    async for message in query(
+        prompt=prompt,
+        options=ClaudeAgentOptions(
+            allowed_tools=[],
+            permission_mode="bypassPermissions",
+            model="haiku"
+        )
+    ):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    response += block.text
+
+    return response.strip() or f"Update {filename}"
+
+
+# ##################################################################
+# commit changes
+# stages and commits changes to a file with AI-generated message
+async def commit_changes(filename: str):
+    # check if there are changes to commit
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--", filename],
+        cwd=MODELS_DIR,
+        capture_output=True,
+        text=True
+    )
+    if not result.stdout.strip():
+        return  # no changes
+
+    # stage the file
+    subprocess.run(["git", "add", "--", filename], cwd=MODELS_DIR, capture_output=True)
+
+    # generate commit message
+    message = await generate_commit_message(filename)
+
+    # commit
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=MODELS_DIR,
+        capture_output=True
+    )
+
+
+# ##################################################################
 # lifespan
 # manages startup and shutdown events for the application
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global agent_client
     setup_models_directory()
+    init_git_repo()
     start_file_watcher()
     yield
     if file_watcher:
@@ -274,6 +379,10 @@ async def save_model(filename: str, request: FileSaveRequest):
     file_path = MODELS_DIR / safe_name
 
     file_path.write_text(request.content)
+
+    # commit changes with AI-generated message
+    asyncio.create_task(commit_changes(safe_name))
+
     return {"filename": safe_name, "saved": True}
 
 
