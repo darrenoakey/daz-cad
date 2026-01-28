@@ -356,6 +356,319 @@ function _calculateGridPositions(options, faceWidth, faceHeight) {
 
 
 // ============================================================
+// FACE BOUNDARY AND CLIPPING HELPERS
+// ============================================================
+
+/**
+ * Create an inset face by offsetting the boundary inward
+ * @private
+ * For circles: creates a smaller circle
+ * For polygons: offsets each vertex along bisector of adjacent edges
+ */
+function _createOffsetFace(oc, face, border, faceInfo) {
+    try {
+        const outerWire = oc.BRepTools.OuterWire(face);
+        if (!outerWire || outerWire.IsNull()) {
+            return null;
+        }
+
+        // Collect vertices and their positions
+        const vertices = [];
+        const edgeExplorer = new oc.TopExp_Explorer_2(
+            outerWire,
+            oc.TopAbs_ShapeEnum.TopAbs_VERTEX,
+            oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+        );
+
+        const seenHashes = new Set();
+        while (edgeExplorer.More()) {
+            const vertex = oc.TopoDS.Vertex_1(edgeExplorer.Current());
+            const hash = vertex.HashCode(1000000);
+            if (!seenHashes.has(hash)) {
+                seenHashes.add(hash);
+                const pnt = oc.BRep_Tool.Pnt(vertex);
+                vertices.push({ x: pnt.X(), y: pnt.Y(), z: pnt.Z() });
+                pnt.delete();
+            }
+            edgeExplorer.Next();
+        }
+        edgeExplorer.delete();
+
+        // Check if it's a circular face (single curved edge)
+        const edges = [];
+        const edgeExp = new oc.TopExp_Explorer_2(
+            outerWire,
+            oc.TopAbs_ShapeEnum.TopAbs_EDGE,
+            oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+        );
+        while (edgeExp.More()) {
+            edges.push(oc.TopoDS.Edge_1(edgeExp.Current()));
+            edgeExp.Next();
+        }
+        edgeExp.delete();
+
+        // If single edge and few vertices, might be a circle
+        if (edges.length === 1 && vertices.length <= 2) {
+            // Check if it's a circle
+            const curve = new oc.BRepAdaptor_Curve_2(edges[0]);
+            const curveType = curve.GetType();
+            if (curveType === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+                const circle = curve.Circle();
+                const radius = circle.Radius();
+                const center = circle.Location();
+                const axis = circle.Axis();
+
+                if (radius > border) {
+                    // Create smaller circle
+                    const newCircle = new oc.Geom_Circle_2(
+                        new oc.gp_Ax2_3(center, axis.Direction()),
+                        radius - border
+                    );
+                    const newEdge = new oc.BRepBuilderAPI_MakeEdge_24(
+                        new oc.Handle_Geom_Curve_2(newCircle)
+                    ).Edge();
+                    const newWire = new oc.BRepBuilderAPI_MakeWire_2(newEdge).Wire();
+                    const newFace = new oc.BRepBuilderAPI_MakeFace_15(newWire, true);
+                    if (newFace.IsDone()) {
+                        console.log(`[_createOffsetFace] Created offset circle, radius ${radius.toFixed(1)} -> ${(radius-border).toFixed(1)}`);
+                        curve.delete();
+                        return newFace.Face();
+                    }
+                }
+            }
+            curve.delete();
+        }
+
+        // For polygonal faces, offset each vertex
+        if (vertices.length >= 3) {
+            // Calculate centroid
+            let cx = 0, cy = 0, cz = 0;
+            for (const v of vertices) {
+                cx += v.x;
+                cy += v.y;
+                cz += v.z;
+            }
+            cx /= vertices.length;
+            cy /= vertices.length;
+            cz /= vertices.length;
+
+            // Move each vertex toward centroid by border distance
+            const offsetVertices = [];
+            for (const v of vertices) {
+                const dx = cx - v.x;
+                const dy = cy - v.y;
+                const dz = cz - v.z;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                if (dist > 0.001) {
+                    const scale = border / dist;
+                    offsetVertices.push({
+                        x: v.x + dx * scale,
+                        y: v.y + dy * scale,
+                        z: v.z + dz * scale
+                    });
+                } else {
+                    offsetVertices.push(v);
+                }
+            }
+
+            // Build wire from offset vertices
+            if (offsetVertices.length >= 3) {
+                const wireBuilder = new oc.BRepBuilderAPI_MakeWire_1();
+                for (let i = 0; i < offsetVertices.length; i++) {
+                    const p1 = offsetVertices[i];
+                    const p2 = offsetVertices[(i + 1) % offsetVertices.length];
+                    const edge = new oc.BRepBuilderAPI_MakeEdge_3(
+                        new oc.gp_Pnt_3(p1.x, p1.y, p1.z),
+                        new oc.gp_Pnt_3(p2.x, p2.y, p2.z)
+                    ).Edge();
+                    wireBuilder.Add_1(edge);
+                }
+
+                if (wireBuilder.IsDone()) {
+                    const newWire = wireBuilder.Wire();
+                    const newFace = new oc.BRepBuilderAPI_MakeFace_15(newWire, true);
+                    if (newFace.IsDone()) {
+                        console.log(`[_createOffsetFace] Created offset polygon with ${offsetVertices.length} vertices`);
+                        return newFace.Face();
+                    }
+                }
+            }
+        }
+
+        console.warn('[_createOffsetFace] Could not create offset face');
+        return null;
+
+    } catch (e) {
+        console.warn('[_createOffsetFace] Exception:', e.message);
+        return null;
+    }
+}
+
+
+/**
+ * Get the outer wire of a face, offset it inward, and create a clipping solid
+ * @private
+ * @param {Object} oc - OpenCascade instance
+ * @param {TopoDS_Face} face - The face to get boundary from
+ * @param {number} border - Inward offset distance
+ * @param {number} depth - Extrusion depth for clipping solid
+ * @param {Object} faceInfo - Face coordinate system info
+ * @returns {Object} { clipSolid, clipWire, success }
+ */
+function _createClipBoundary(oc, face, border, depth, faceInfo) {
+    try {
+        let clipFace = face;
+
+        // If border > 0, create an inset face by offsetting the boundary
+        if (border > 0.001) {
+            clipFace = _createOffsetFace(oc, face, border, faceInfo) || face;
+        }
+
+        // Extrude the face in BOTH directions to fully contain the cutters
+        // Cutters extend both above and below the face
+        const { normal } = faceInfo;
+
+        // First, extrude downward (into the solid)
+        const downVec = new oc.gp_Vec_4(
+            -normal.x * (depth + 5),
+            -normal.y * (depth + 5),
+            -normal.z * (depth + 5)
+        );
+        const downPrism = new oc.BRepPrimAPI_MakePrism_1(clipFace, downVec, false, true);
+
+        if (!downPrism.IsDone()) {
+            console.warn('[_createClipBoundary] Could not extrude clip face downward');
+            return { success: false };
+        }
+
+        // Then extrude upward (above the face) and union
+        const upVec = new oc.gp_Vec_4(
+            normal.x * 5,
+            normal.y * 5,
+            normal.z * 5
+        );
+        const upPrism = new oc.BRepPrimAPI_MakePrism_1(clipFace, upVec, false, true);
+
+        let clipSolid;
+        if (upPrism.IsDone()) {
+            // Union the two extrusions
+            const fused = new oc.BRepAlgoAPI_Fuse_3(
+                downPrism.Shape(),
+                upPrism.Shape(),
+                new oc.Message_ProgressRange_1()
+            );
+            if (fused.IsDone()) {
+                clipSolid = fused.Shape();
+            } else {
+                clipSolid = downPrism.Shape();  // Fallback to just downward
+            }
+        } else {
+            clipSolid = downPrism.Shape();
+        }
+
+        console.log('[_createClipBoundary] Created clip boundary solid');
+
+        return {
+            success: true,
+            clipSolid
+        };
+
+    } catch (e) {
+        console.error('[_createClipBoundary] Exception:', e.message);
+        return { success: false };
+    }
+}
+
+/**
+ * Check if a shape is fully contained within another shape
+ * @private
+ */
+function _isFullyContained(oc, shape, container) {
+    try {
+        // Compute common (intersection)
+        const common = new oc.BRepAlgoAPI_Common_3(
+            shape,
+            container,
+            new oc.Message_ProgressRange_1()
+        );
+
+        if (!common.IsDone()) {
+            common.delete();
+            return false;
+        }
+
+        const intersection = common.Shape();
+        common.delete();
+
+        if (!intersection || intersection.IsNull()) {
+            return false;
+        }
+
+        // Compare volumes - if intersection volume equals original, it's fully contained
+        const originalProps = new oc.GProp_GProps_1();
+        oc.BRepGProp.VolumeProperties_1(shape, originalProps, true, false, false);
+        const originalVol = originalProps.Mass();
+        originalProps.delete();
+
+        const intersectProps = new oc.GProp_GProps_1();
+        oc.BRepGProp.VolumeProperties_1(intersection, intersectProps, true, false, false);
+        const intersectVol = intersectProps.Mass();
+        intersectProps.delete();
+
+        // Allow 1% tolerance for numerical precision
+        const ratio = intersectVol / originalVol;
+        return ratio > 0.99;
+
+    } catch (e) {
+        console.warn('[_isFullyContained] Exception:', e.message);
+        return false;
+    }
+}
+
+/**
+ * Clip a shape to a boundary (intersection)
+ * @private
+ */
+function _clipToBoundary(oc, shape, boundary) {
+    try {
+        const common = new oc.BRepAlgoAPI_Common_3(
+            shape,
+            boundary,
+            new oc.Message_ProgressRange_1()
+        );
+
+        if (!common.IsDone()) {
+            common.delete();
+            return null;
+        }
+
+        const result = common.Shape();
+        common.delete();
+
+        if (!result || result.IsNull()) {
+            return null;
+        }
+
+        // Check if result has volume
+        const props = new oc.GProp_GProps_1();
+        oc.BRepGProp.VolumeProperties_1(result, props, true, false, false);
+        const vol = props.Mass();
+        props.delete();
+
+        if (vol < 0.001) {
+            return null;  // Too small, skip
+        }
+
+        return result;
+
+    } catch (e) {
+        console.warn('[_clipToBoundary] Exception:', e.message);
+        return null;
+    }
+}
+
+
+// ============================================================
 // FACE ANALYSIS HELPERS
 // ============================================================
 
@@ -571,6 +884,10 @@ function _createFaceTransform(oc, faceInfo, localX, localY, cutDepth) {
  * @param {number} [options.staggerAmount=0.5] - Fraction of spacingX to offset
  * @param {number} [options.angle=0] - Rotate entire pattern (degrees)
  * @param {string} [options.direction='x'] - For lines: 'x' (horizontal) or 'y' (vertical)
+ * @param {string} [options.clip='none'] - Clip mode for non-rectangular faces:
+ *   - 'none': No clipping (default, backward compatible)
+ *   - 'partial': Clip shapes to face boundary (partial shapes at edges)
+ *   - 'whole': Only keep shapes fully inside boundary (no partial shapes)
  * @returns {Workplane} - New Workplane with pattern cut
  *
  * @example
@@ -584,23 +901,25 @@ function _createFaceTransform(oc, faceInfo, localX, localY, cutDepth) {
  * });
  *
  * @example
- * // Vertical lines on front face
- * box.faces("<X").cutPattern({
- *     shape: 'line',
- *     width: 1.5,
- *     spacing: 8,
- *     depth: 0.4,
- *     direction: 'y'
+ * // Hex pattern on circular face with partial clipping
+ * cylinder.faces(">Z").cutPattern({
+ *     shape: 'hexagon',
+ *     width: 5,
+ *     wallThickness: 1,
+ *     stagger: true,
+ *     clip: 'partial',  // Clips hexagons at circle edge
+ *     border: 2
  * });
  *
  * @example
- * // Hex pattern holes
- * box.faces(">Z").cutPattern({
+ * // Hex pattern on circular face - whole shapes only
+ * cylinder.faces(">Z").cutPattern({
  *     shape: 'hexagon',
  *     width: 5,
- *     wallThickness: 0.6,
+ *     wallThickness: 1,
  *     stagger: true,
- *     depth: null  // through
+ *     clip: 'whole',  // Only full hexagons, none cut off
+ *     border: 2
  * });
  */
 Workplane.prototype.cutPattern = function(options = {}) {
@@ -644,7 +963,8 @@ Workplane.prototype.cutPattern = function(options = {}) {
         stagger = false,
         staggerAmount = 0.5,
         angle: rawAngle = null,
-        direction = null  // deprecated: use angle instead
+        direction = null,  // deprecated: use angle instead
+        clip = 'none'  // 'none', 'partial', 'whole'
     } = options;
 
     const shape = effectiveShape;
@@ -723,6 +1043,17 @@ Workplane.prototype.cutPattern = function(options = {}) {
         const shapeBbox = this._getBoundingBox();
         const maxDepth = shapeBbox ? Math.max(shapeBbox.sizeX, shapeBbox.sizeY, shapeBbox.sizeZ) + 2 : 100;
         const actualDepth = depth ?? maxDepth;
+
+        // Create clip boundary if clipping is enabled and we have a face
+        let clipBoundary = null;
+        if (clip !== 'none' && face) {
+            clipBoundary = _createClipBoundary(oc, face, border, actualDepth, faceInfo);
+            if (clipBoundary.success) {
+                console.log(`[cutPattern] Created clip boundary for mode: ${clip}`);
+            } else {
+                console.warn('[cutPattern] Could not create clip boundary, falling back to no clipping');
+            }
+        }
 
         // Resolve shape type to number of sides
         let sides = null;
@@ -894,11 +1225,21 @@ Workplane.prototype.cutPattern = function(options = {}) {
                 // Transform cutter to face position
                 const trsf = _createFaceTransform(oc, faceInfo, localX, localY, actualDepth);
                 const loc = new oc.TopLoc_Location_2(trsf);
-                cutterShapes.push(cutterToPosition.Moved(loc, false));
+                const positionedCutter = cutterToPosition.Moved(loc, false);
+
+                // For 'whole' mode, check if cutter is fully contained before adding
+                if (clip === 'whole' && clipBoundary && clipBoundary.success) {
+                    if (_isFullyContained(oc, positionedCutter, clipBoundary.clipSolid)) {
+                        cutterShapes.push(positionedCutter);
+                    }
+                    // Skip cutters not fully contained
+                } else {
+                    cutterShapes.push(positionedCutter);
+                }
             }
         }
 
-        console.log(`[cutPattern] Creating ${cutterShapes.length} cutters (${shape})`);
+        console.log(`[cutPattern] Creating ${cutterShapes.length} cutters (${shape})${clip === 'whole' ? ' (filtered for whole mode)' : ''}`);
 
         if (cutterShapes.length > 0) {
             // Fuse all cutters together to eliminate internal faces
@@ -957,9 +1298,37 @@ Workplane.prototype.cutPattern = function(options = {}) {
                 }
             }
 
+            // Apply clipping if enabled
+            let clippedCutters = fusedCutters;
+            if (clipBoundary && clipBoundary.success && clip !== 'none') {
+                if (clip === 'partial') {
+                    // Intersect cutters with clip boundary
+                    const clipped = _clipToBoundary(oc, fusedCutters, clipBoundary.clipSolid);
+                    if (clipped) {
+                        clippedCutters = clipped;
+                        console.log('[cutPattern] Applied partial clipping');
+                    } else {
+                        console.warn('[cutPattern] Partial clipping failed, using unclipped cutters');
+                    }
+                } else if (clip === 'whole') {
+                    // For whole mode, we need to filter individual cutters
+                    // If we already fused, we can still clip and the result will only
+                    // include the parts that were fully inside
+                    // But for true "whole shapes only", we should have filtered before fusing
+                    // For now, use intersection as an approximation
+                    const clipped = _clipToBoundary(oc, fusedCutters, clipBoundary.clipSolid);
+                    if (clipped) {
+                        clippedCutters = clipped;
+                        console.log('[cutPattern] Applied whole clipping (intersection mode)');
+                    } else {
+                        console.warn('[cutPattern] Whole clipping failed, using unclipped cutters');
+                    }
+                }
+            }
+
             // Perform batch boolean cut with fused cutters
             const toolList = new oc.TopTools_ListOfShape_1();
-            toolList.Append_1(fusedCutters);
+            toolList.Append_1(clippedCutters);
 
             const argList = new oc.TopTools_ListOfShape_1();
             argList.Append_1(this._shape);

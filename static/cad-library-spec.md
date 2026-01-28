@@ -105,6 +105,12 @@ new Workplane(plane)
   - `staggerAmount`: Fraction of spacingX to offset (default 0.5)
   - `angle`: For lines - rotation angle in degrees (default 0). 0=horizontal, 90=vertical, 45=diagonal
 
+  **Clipping options (for non-rectangular faces):**
+  - `clip`: How to handle shapes at face boundaries. Values:
+    - `'none'` - No clipping (default, backward compatible)
+    - `'partial'` - Clip shapes at face boundary, creating partial shapes at edges
+    - `'whole'` - Only keep shapes fully inside boundary, no partial shapes
+
   **Backward compatibility:** `sides`, `type`, `size`, and `direction` still work
 
 - Examples:
@@ -141,6 +147,26 @@ new Workplane(plane)
       width: 5,  // diameter
       spacing: 8,
       depth: 2
+  });
+
+  // Hex pattern on circular face with partial clipping
+  cylinder.faces(">Z").cutPattern({
+      shape: 'hexagon',
+      width: 6,
+      wallThickness: 1,
+      stagger: true,
+      clip: 'partial',  // Clips hexagons at circular boundary
+      border: 2
+  });
+
+  // Hex pattern on circular face - whole shapes only
+  cylinder.faces(">Z").cutPattern({
+      shape: 'hexagon',
+      width: 6,
+      wallThickness: 1,
+      stagger: true,
+      clip: 'whole',  // Only complete hexagons, no partial shapes
+      border: 2
   });
   ```
 
