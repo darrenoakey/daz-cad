@@ -2653,3 +2653,113 @@ def test_cut_pattern_clip_demo_irregular_shape(server):
         print(f"  Base vertices: {result.get('baseVertexCount')}")
         print(f"  Cut vertices: {result.get('cutVertexCount')}")
         print(f"  Vertex ratio: {result.get('vertexRatio')}")
+
+
+# ##################################################################
+# test border-demo - verifies polygon offset on multiple shape types
+# uses BRepTools_WireExplorer to get vertices in correct order
+def test_border_demo_wire_explorer(server):
+    """
+    Test that BRepTools_WireExplorer correctly extracts vertices in order
+    for various polygon shapes. This is the foundation of the polygon
+    offset algorithm.
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(f"{server}/")
+
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""async () => {
+            try {
+                const { getOC } = await import('/static/cad.js');
+                const SIZE = 20;
+                const HEIGHT = 4;
+                const oc = getOC();
+
+                // Test shapes with known vertex counts
+                const testCases = [
+                    { name: "Square", shape: new Workplane("XY").box(SIZE, SIZE, HEIGHT), expectedVerts: 4 },
+                    { name: "Hexagon", shape: new Workplane("XY").polygonPrism(6, SIZE, HEIGHT), expectedVerts: 6 },
+                    { name: "Triangle", shape: new Workplane("XY").polygonPrism(3, SIZE, HEIGHT), expectedVerts: 3 },
+                    { name: "Pentagon", shape: new Workplane("XY").polygonPrism(5, SIZE, HEIGHT), expectedVerts: 5 },
+                    { name: "Octagon", shape: new Workplane("XY").polygonPrism(8, SIZE, HEIGHT), expectedVerts: 8 },
+                ];
+
+                const results = [];
+
+                for (const { name, shape, expectedVerts } of testCases) {
+                    const topFace = shape.faces(">Z");
+                    const faceShape = topFace._selectedFaces[0];
+                    const outerWire = oc.BRepTools.OuterWire(faceShape);
+
+                    // Get vertices using WireExplorer
+                    const vertices = [];
+                    const wireExplorer = new oc.BRepTools_WireExplorer_1();
+                    wireExplorer.Init_1(outerWire);
+                    while (wireExplorer.More()) {
+                        const vertex = wireExplorer.CurrentVertex();
+                        const pnt = oc.BRep_Tool.Pnt(vertex);
+                        vertices.push({ x: pnt.X(), y: pnt.Y() });
+                        pnt.delete();
+                        wireExplorer.Next();
+                    }
+                    wireExplorer.delete();
+
+                    // Verify vertex count matches expected
+                    const vertexCount = vertices.length;
+                    const correct = vertexCount === expectedVerts;
+
+                    // Verify vertices form a valid polygon (signed area non-zero)
+                    let signedArea = 0;
+                    for (let i = 0; i < vertices.length; i++) {
+                        const v1 = vertices[i];
+                        const v2 = vertices[(i + 1) % vertices.length];
+                        signedArea += (v2.x - v1.x) * (v2.y + v1.y);
+                    }
+
+                    results.push({
+                        name,
+                        expectedVerts,
+                        actualVerts: vertexCount,
+                        correct,
+                        signedArea: Math.abs(signedArea).toFixed(1),
+                        validPolygon: Math.abs(signedArea) > 1
+                    });
+                }
+
+                // Check all passed
+                const allCorrect = results.every(r => r.correct && r.validPolygon);
+
+                return {
+                    success: allCorrect,
+                    results,
+                    error: allCorrect ? null : 'Some shapes have incorrect vertex counts or invalid polygons'
+                };
+
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        # Log results
+        print(f"\nWire Explorer test results:")
+        for r in result.get('results', []):
+            status = "OK" if r['correct'] and r['validPolygon'] else "FAIL"
+            print(f"  {r['name']}: {r['actualVerts']}/{r['expectedVerts']} verts, area={r['signedArea']} [{status}]")
+
+        assert result["success"], (
+            f"Wire explorer test failed: {result.get('error')}\n"
+            f"Stack: {result.get('stack', 'none')}"
+        )
