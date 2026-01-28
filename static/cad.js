@@ -1778,13 +1778,48 @@ class Workplane {
     }
 
     /**
-     * Filter edges based on selector
-     * "|X", "|Y", "|Z" - parallel to axis
-     * ">X", ">Y", ">Z" - max position on axis
-     * "<X", "<Y", "<Z" - min position on axis
+     * Get edge geometry info (direction and midpoint coordinates)
      */
-    _filterEdges(edges, selector) {
-        const match = selector.match(/^([|><])([XYZ])$/i);
+    _getEdgeInfo(edge) {
+        try {
+            const curve = new oc.BRepAdaptor_Curve_2(edge);
+            const first = curve.FirstParameter();
+            const last = curve.LastParameter();
+
+            // Get start and end points
+            const p1 = curve.Value(first);
+            const p2 = curve.Value(last);
+
+            // Direction vector
+            const dx = p2.X() - p1.X();
+            const dy = p2.Y() - p1.Y();
+            const dz = p2.Z() - p1.Z();
+            const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+            // Midpoint
+            const mid = curve.Value((first + last) / 2);
+            const midCoords = [mid.X(), mid.Y(), mid.Z()];
+
+            // Normalized direction
+            const dir = len > 1e-6 ? [dx/len, dy/len, dz/len] : [0, 0, 0];
+
+            curve.delete();
+            p1.delete();
+            p2.delete();
+            mid.delete();
+
+            return { dir, midCoords };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Apply a single edge selector (no compound logic)
+     * Returns filtered edges
+     */
+    _filterEdgesSingle(edges, selector) {
+        const match = selector.trim().match(/^([|><])([XYZ])$/i);
         if (!match) {
             console.warn(`[CAD] Unknown edge selector: ${selector}`);
             return edges;
@@ -1794,50 +1829,13 @@ class Workplane {
         const axis = match[2].toUpperCase();
         const axisIndex = { 'X': 0, 'Y': 1, 'Z': 2 }[axis];
 
-        // Helper to get edge direction and midpoint
-        const getEdgeInfo = (edge) => {
-            try {
-                const curve = new oc.BRepAdaptor_Curve_2(edge);
-                const first = curve.FirstParameter();
-                const last = curve.LastParameter();
-
-                // Get start and end points
-                const p1 = curve.Value(first);
-                const p2 = curve.Value(last);
-
-                // Direction vector
-                const dx = p2.X() - p1.X();
-                const dy = p2.Y() - p1.Y();
-                const dz = p2.Z() - p1.Z();
-                const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
-
-                // Midpoint for position-based selection
-                const mid = curve.Value((first + last) / 2);
-                const midCoord = [mid.X(), mid.Y(), mid.Z()][axisIndex];
-
-                // Normalized direction
-                const dir = len > 1e-6 ? [dx/len, dy/len, dz/len] : [0, 0, 0];
-
-                curve.delete();
-                p1.delete();
-                p2.delete();
-                mid.delete();
-
-                return { dir, midCoord };
-            } catch (e) {
-                return null;
-            }
-        };
-
         if (op === '|') {
             // Parallel to axis - direction should be mostly along that axis
-            const tolerance = 0.1; // Allow small deviation
+            const tolerance = 0.1;
             return edges.filter(edge => {
-                const info = getEdgeInfo(edge);
+                const info = this._getEdgeInfo(edge);
                 if (!info) return false;
-                const { dir } = info;
-                // Check if edge is parallel to axis (direction component ~1 or ~-1)
-                const axisComponent = Math.abs(dir[axisIndex]);
+                const axisComponent = Math.abs(info.dir[axisIndex]);
                 return axisComponent > (1 - tolerance);
             });
         } else if (op === '>' || op === '<') {
@@ -1846,9 +1844,9 @@ class Workplane {
             let bestValue = op === '>' ? -Infinity : Infinity;
 
             for (const edge of edges) {
-                const info = getEdgeInfo(edge);
+                const info = this._getEdgeInfo(edge);
                 if (!info) continue;
-                const { midCoord } = info;
+                const midCoord = info.midCoords[axisIndex];
 
                 if (op === '>') {
                     if (midCoord > bestValue + 1e-6) {
@@ -1870,6 +1868,43 @@ class Workplane {
         }
 
         return edges;
+    }
+
+    /**
+     * Filter edges based on selector
+     * Simple: "|X", "|Y", "|Z" - parallel to axis
+     *         ">X", ">Y", ">Z" - max position on axis
+     *         "<X", "<Y", "<Z" - min position on axis
+     * Compound: "<X and <Y" - intersection (edges matching both)
+     *           "<X or |Z" - union (edges matching either)
+     */
+    _filterEdges(edges, selector) {
+        // Check for compound selectors with "and" or "or"
+        const andParts = selector.toLowerCase().split(/\s+and\s+/i);
+        if (andParts.length > 1) {
+            // AND: intersection - edges must match ALL selectors
+            let result = edges;
+            for (const part of andParts) {
+                result = this._filterEdgesSingle(result, part.trim());
+            }
+            return result;
+        }
+
+        const orParts = selector.toLowerCase().split(/\s+or\s+/i);
+        if (orParts.length > 1) {
+            // OR: union - edges matching ANY selector
+            const resultSet = new Set();
+            for (const part of orParts) {
+                const partEdges = this._filterEdgesSingle(edges, part.trim());
+                for (const edge of partEdges) {
+                    resultSet.add(edge.HashCode(1000000));
+                }
+            }
+            return edges.filter(e => resultSet.has(e.HashCode(1000000)));
+        }
+
+        // Simple selector
+        return this._filterEdgesSingle(edges, selector);
     }
 
     /**

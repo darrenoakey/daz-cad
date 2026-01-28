@@ -5,9 +5,10 @@ import time
 import shutil
 import subprocess
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import uvicorn
 from pathlib import Path
@@ -208,49 +209,59 @@ Requirements:
 Diff:
 {diff}"""
 
-    response = ""
-    async for message in query(
-        prompt=prompt,
-        options=ClaudeAgentOptions(
-            allowed_tools=[],
-            permission_mode="bypassPermissions",
-            model="haiku"
-        )
-    ):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    response += block.text
+    try:
+        response = ""
+        async for message in query(
+            prompt=prompt,
+            options=ClaudeAgentOptions(
+                allowed_tools=[],
+                permission_mode="bypassPermissions",
+                model="haiku"
+            )
+        ):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        response += block.text
 
-    return response.strip() or f"Update {filename}"
+        return response.strip() or f"Update {filename}"
+    except Exception as e:
+        # Claude SDK failed - fall back to simple message
+        print(f"[auto-commit] Claude SDK error, using fallback message: {e}")
+        return f"Update {filename}"
 
 
 # ##################################################################
 # commit changes
 # stages and commits changes to a file with AI-generated message
 async def commit_changes(filename: str):
-    # check if there are changes to commit
-    result = subprocess.run(
-        ["git", "status", "--porcelain", "--", filename],
-        cwd=MODELS_DIR,
-        capture_output=True,
-        text=True
-    )
-    if not result.stdout.strip():
-        return  # no changes
+    try:
+        # check if there are changes to commit
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--", filename],
+            cwd=MODELS_DIR,
+            capture_output=True,
+            text=True
+        )
+        if not result.stdout.strip():
+            return  # no changes
 
-    # stage the file
-    subprocess.run(["git", "add", "--", filename], cwd=MODELS_DIR, capture_output=True)
+        # stage the file
+        subprocess.run(["git", "add", "--", filename], cwd=MODELS_DIR, capture_output=True)
 
-    # generate commit message
-    message = await generate_commit_message(filename)
+        # generate commit message
+        message = await generate_commit_message(filename)
 
-    # commit
-    subprocess.run(
-        ["git", "commit", "-m", message],
-        cwd=MODELS_DIR,
-        capture_output=True
-    )
+        # commit
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=MODELS_DIR,
+            capture_output=True
+        )
+        print(f"[auto-commit] Committed {filename}: {message}")
+    except Exception as e:
+        # Log but don't propagate - this is a background task
+        print(f"[auto-commit] Failed to commit {filename}: {e}")
 
 
 # ##################################################################
@@ -271,6 +282,23 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="CAD Editor", lifespan=lifespan)
+
+
+# ##################################################################
+# no-cache middleware
+# prevents browser caching of static files during development
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        # Add no-cache headers for static files
+        if request.url.path.startswith("/static"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+
+app.add_middleware(NoCacheMiddleware)
 
 # mount static files for javascript and css assets
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")

@@ -178,6 +178,16 @@ new Workplane(plane)
 **edges(selector = null)**
 - Selects edges of currently selected faces
 - If no faces selected, selects all edges
+- Selectors:
+  - `"|Z"` - edges parallel to Z axis (vertical)
+  - `"|X"`, `"|Y"` - edges parallel to X/Y axis
+  - `">Z"` - edges at maximum Z position (top)
+  - `"<Z"` - edges at minimum Z position (bottom)
+  - `">X"`, `"<X"`, `">Y"`, `"<Y"` - edges at max/min on X/Y axis
+- Compound selectors:
+  - `"<X and <Y"` - edges matching BOTH conditions (intersection)
+  - `"<X or |Z"` - edges matching EITHER condition (union)
+  - Example: `edges("<X and <Y")` selects the single corner edge at min X and min Y
 
 ### Appearance
 

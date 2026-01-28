@@ -262,8 +262,8 @@ class CADEditor {
                             /** Exclude faces */
                             facesNot(selector: string): Workplane;
 
-                            /** Select edges */
-                            edges(selector?: "|Z" | "|X" | "|Y" | ">Z" | "<Z"): Workplane;
+                            /** Select edges. Supports compound selectors: "<X and <Y", "|Z or <X" */
+                            edges(selector?: "|Z" | "|X" | "|Y" | ">Z" | "<Z" | ">X" | "<X" | ">Y" | "<Y" | string): Workplane;
 
                             /** Exclude edges */
                             edgesNot(selector: string): Workplane;
