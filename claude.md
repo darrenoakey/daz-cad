@@ -33,17 +33,25 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Call after complex boolean operations to simplify geometry
 - Options: `{ unifyFaces, unifyEdges, fix, rebuildSolid }`
 
+## Edge Selectors
+- Simple: `|Z` (parallel to Z), `<X` (min X), `>Y` (max Y)
+- Compound with "and": `edges("<X and <Y")` - intersection (edges matching ALL)
+- Compound with "or": `edges("<X or |Z")` - union (edges matching ANY)
+- Use `edgesNot()` to exclude: `edgesNot("|Z")` gets all non-vertical edges
+- Chain operations: `box.edges("|Z").fillet(3).edgesNot("|Z").fillet(1)`
+
 ## Common Issues
 - Face normal detection uses `BRepAdaptor_Surface.D1()` with cross product
 - Check `face.Orientation_1()` for reversed faces that need normal flip
 - Boolean cuts can fail silently - verify by checking mesh vertex counts
-- Browser caching: handled by dynamic import map with cache busters
+- Browser caching: NoCacheMiddleware adds no-cache headers to all /static/* files
 
 ## Version Control
 - `local/models/` directory is auto-initialized as a git repo on server startup
 - Every successful model save auto-commits with AI-generated message (Claude Haiku)
 - Commits run in background task to not block save response
 - Uses `claude-agent-sdk` with `model="haiku"` for commit message generation
+- Error handling: falls back to simple "Update filename" message if Claude SDK fails
 
 ## Conventions
 - Dimensions in millimeters
