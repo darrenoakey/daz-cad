@@ -303,6 +303,9 @@ app.add_middleware(NoCacheMiddleware)
 # mount static files for javascript and css assets
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
+# mount examples directory for demo files
+app.mount("/examples", StaticFiles(directory=BASE_DIR / "examples"), name="examples")
+
 
 # ##################################################################
 # root endpoint

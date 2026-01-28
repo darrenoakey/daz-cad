@@ -338,6 +338,17 @@ class CADEditor {
                                 direction?: 'x' | 'y';
                             }): Workplane;
 
+                            /**
+                             * Cut the center out of a face, leaving a border frame
+                             * Uses polygon offset algorithm for accurate borders
+                             */
+                            cutBorder(options: {
+                                /** Border width in mm */
+                                width?: number;
+                                /** Cut depth. null = through-cut */
+                                depth?: number;
+                            }): Workplane;
+
                             /** Cut optimized rectangular grid */
                             cutRectGrid(options: { width: number; height: number; count?: number; fillet?: number; depth?: number; minBorder?: number; minSpacing?: number }): Workplane;
 

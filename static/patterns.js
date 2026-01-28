@@ -1454,6 +1454,292 @@ Workplane.prototype.cutPattern = function(options = {}) {
 
 
 // ============================================================
+// cutBorder() - Cut out the center of a face, leaving a border frame
+// ============================================================
+
+/**
+ * Cut the center out of the selected face, leaving a border frame.
+ * Uses polygon offset algorithm internally.
+ *
+ * @param {Object} options - Cut options
+ * @param {number} options.width - Border width in mm
+ * @param {number} [options.depth=null] - Cut depth, null = through-cut
+ * @returns {Workplane} New workplane with border cut
+ *
+ * @example
+ *   // Create a 3mm border frame on a box
+ *   box.faces(">Z").cutBorder({ width: 3 });
+ *
+ *   // Hexagon with 2mm border, 5mm deep
+ *   hex.faces(">Z").cutBorder({ width: 2, depth: 5 });
+ */
+Workplane.prototype.cutBorder = function(options = {}) {
+    const {
+        width: borderWidth = 3,
+        depth = null,
+    } = options;
+
+    if (!this._shape) {
+        console.error('[cutBorder] No shape to cut');
+        return this;
+    }
+
+    const oc = getOC();
+    if (!oc) {
+        console.error('[cutBorder] OpenCascade not initialized');
+        return this;
+    }
+
+    const result = new Workplane(this._plane);
+    result._cloneProperties(this);
+
+    try {
+        // Get the face to cut
+        let face;
+        if (this._selectedFaces && this._selectedFaces.length > 0) {
+            face = this._selectedFaces[0];
+        } else {
+            // Default to top face
+            const topFaceWp = this.faces(">Z");
+            if (topFaceWp._selectedFaces && topFaceWp._selectedFaces.length > 0) {
+                face = topFaceWp._selectedFaces[0];
+            }
+        }
+
+        if (!face) {
+            console.error('[cutBorder] No face selected');
+            result._shape = this._shape;
+            return result;
+        }
+
+        // Get face info for coordinate system
+        const faceInfo = _getFaceCoordinateSystem(oc, face, this._shape);
+        if (!faceInfo) {
+            console.error('[cutBorder] Could not get face coordinate system');
+            result._shape = this._shape;
+            return result;
+        }
+
+        // Get the outer wire and vertices in order
+        const outerWire = oc.BRepTools.OuterWire(face);
+        if (!outerWire || outerWire.IsNull()) {
+            console.error('[cutBorder] Could not get outer wire');
+            result._shape = this._shape;
+            return result;
+        }
+
+        // Collect vertices using WireExplorer for proper ordering
+        const vertices = [];
+        const wireExplorer = new oc.BRepTools_WireExplorer_1();
+        wireExplorer.Init_1(outerWire);
+        while (wireExplorer.More()) {
+            const vertex = wireExplorer.CurrentVertex();
+            const pnt = oc.BRep_Tool.Pnt(vertex);
+            vertices.push({ x: pnt.X(), y: pnt.Y(), z: pnt.Z() });
+            pnt.delete();
+            wireExplorer.Next();
+        }
+        wireExplorer.delete();
+
+        // Determine cut depth
+        const bounds = this._getBoundingBox();
+        const shapeHeight = bounds ? (bounds.zMax - bounds.zMin) : 10;
+        const cutDepth = depth ?? (shapeHeight + 2);
+
+        // Handle circles (single curved edge)
+        const edges = [];
+        const edgeExp = new oc.TopExp_Explorer_2(outerWire, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+        while (edgeExp.More()) {
+            edges.push(oc.TopoDS.Edge_1(edgeExp.Current()));
+            edgeExp.Next();
+        }
+        edgeExp.delete();
+
+        let cutterShape = null;
+
+        if (edges.length === 1 && vertices.length <= 2) {
+            // Likely a circle
+            const curve = new oc.BRepAdaptor_Curve_2(edges[0]);
+            if (curve.GetType() === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+                const circle = curve.Circle();
+                const radius = circle.Radius();
+                const center = circle.Location();
+                const innerRadius = radius - borderWidth;
+
+                if (innerRadius > 0.1) {
+                    // Create cylinder cutter
+                    const cyl = new oc.BRepPrimAPI_MakeCylinder_1(innerRadius, cutDepth);
+                    const trsf = new oc.gp_Trsf_1();
+                    trsf.SetTranslation_1(new oc.gp_Vec_4(center.X(), center.Y(), faceInfo.center.z - 1));
+                    cutterShape = cyl.Shape().Moved(new oc.TopLoc_Location_2(trsf), false);
+                }
+            }
+            curve.delete();
+        }
+
+        // Handle polygons
+        if (!cutterShape && vertices.length >= 3) {
+            // Calculate polygon offset using edge-based algorithm
+            let signedArea = 0;
+            for (let i = 0; i < vertices.length; i++) {
+                const v1 = vertices[i];
+                const v2 = vertices[(i + 1) % vertices.length];
+                signedArea += (v2.x - v1.x) * (v2.y + v1.y);
+            }
+            const cwFactor = signedArea > 0 ? 1 : -1;
+
+            // Calculate inward normal for each edge
+            const edgeNormals = [];
+            for (let i = 0; i < vertices.length; i++) {
+                const v1 = vertices[i];
+                const v2 = vertices[(i + 1) % vertices.length];
+                const dx = v2.x - v1.x;
+                const dy = v2.y - v1.y;
+                const len = Math.sqrt(dx*dx + dy*dy);
+                if (len > 0.0001) {
+                    edgeNormals.push({
+                        x: cwFactor * dy / len,
+                        y: cwFactor * -dx / len
+                    });
+                } else {
+                    edgeNormals.push({ x: 0, y: 0 });
+                }
+            }
+
+            // Find offset vertices
+            const offsetVertices = [];
+            for (let i = 0; i < vertices.length; i++) {
+                const prevIdx = (i - 1 + vertices.length) % vertices.length;
+                const v0 = vertices[prevIdx];
+                const v1 = vertices[i];
+                const n0 = edgeNormals[prevIdx];
+                const nextIdx = (i + 1) % vertices.length;
+                const v2 = vertices[nextIdx];
+                const n1 = edgeNormals[i];
+
+                const p1 = { x: v0.x + n0.x * borderWidth, y: v0.y + n0.y * borderWidth };
+                const p2 = { x: v1.x + n0.x * borderWidth, y: v1.y + n0.y * borderWidth };
+                const p3 = { x: v1.x + n1.x * borderWidth, y: v1.y + n1.y * borderWidth };
+                const p4 = { x: v2.x + n1.x * borderWidth, y: v2.y + n1.y * borderWidth };
+
+                const d1x = p2.x - p1.x;
+                const d1y = p2.y - p1.y;
+                const d2x = p4.x - p3.x;
+                const d2y = p4.y - p3.y;
+
+                const cross = d1x * d2y - d1y * d2x;
+
+                if (Math.abs(cross) > 0.0001) {
+                    const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / cross;
+                    offsetVertices.push({
+                        x: p1.x + t * d1x,
+                        y: p1.y + t * d1y
+                    });
+                } else {
+                    offsetVertices.push({
+                        x: (p2.x + p3.x) / 2,
+                        y: (p2.y + p3.y) / 2
+                    });
+                }
+            }
+
+            // For rectangular shapes, use a simple box cutter (more reliable)
+            if (offsetVertices.length === 4) {
+                // Find bounding box of offset vertices
+                let minX = Infinity, maxX = -Infinity;
+                let minY = Infinity, maxY = -Infinity;
+                for (const v of offsetVertices) {
+                    minX = Math.min(minX, v.x);
+                    maxX = Math.max(maxX, v.x);
+                    minY = Math.min(minY, v.y);
+                    maxY = Math.max(maxY, v.y);
+                }
+                const innerWidth = maxX - minX;
+                const innerHeight = maxY - minY;
+                const centerX = (minX + maxX) / 2;
+                const centerY = (minY + maxY) / 2;
+
+                // Create box cutter
+                const box = new oc.BRepPrimAPI_MakeBox_3(
+                    new oc.gp_Pnt_3(minX, minY, faceInfo.center.z - cutDepth),
+                    innerWidth, innerHeight, cutDepth * 2
+                );
+                cutterShape = box.Shape();
+            } else if (offsetVertices.length >= 3) {
+                // Build inner polygon wire for non-rectangular shapes
+                const wireBuilder = new oc.BRepBuilderAPI_MakeWire_1();
+                for (let i = 0; i < offsetVertices.length; i++) {
+                    const p1 = offsetVertices[i];
+                    const p2 = offsetVertices[(i + 1) % offsetVertices.length];
+                    const edge = new oc.BRepBuilderAPI_MakeEdge_3(
+                        new oc.gp_Pnt_3(p1.x, p1.y, 0),
+                        new oc.gp_Pnt_3(p2.x, p2.y, 0)
+                    ).Edge();
+                    wireBuilder.Add_1(edge);
+                }
+
+                if (wireBuilder.IsDone()) {
+                    const innerWire = wireBuilder.Wire();
+                    const innerFace = new oc.BRepBuilderAPI_MakeFace_15(innerWire, true);
+                    if (innerFace.IsDone()) {
+                        // Extrude to create cutter
+                        const prism = new oc.BRepPrimAPI_MakePrism_1(
+                            innerFace.Face(),
+                            new oc.gp_Vec_4(0, 0, cutDepth),
+                            false, true
+                        );
+                        // Position the cutter
+                        const trsf = new oc.gp_Trsf_1();
+                        trsf.SetTranslation_1(new oc.gp_Vec_4(0, 0, faceInfo.center.z - 1));
+                        cutterShape = prism.Shape().Moved(new oc.TopLoc_Location_2(trsf), false);
+                    }
+                }
+            }
+        }
+
+        if (cutterShape) {
+            // Perform the cut using the same approach as cutPattern
+            const toolList = new oc.TopTools_ListOfShape_1();
+            toolList.Append_1(cutterShape);
+
+            const argList = new oc.TopTools_ListOfShape_1();
+            argList.Append_1(this._shape);
+
+            const cut = new oc.BRepAlgoAPI_Cut_1();
+            cut.SetArguments(argList);
+            cut.SetTools(toolList);
+            cut.Build(new oc.Message_ProgressRange_1());
+
+            if (cut.IsDone()) {
+                const cutResult = cut.Shape();
+                if (cutResult && !cutResult.IsNull()) {
+                    result._shape = cutResult;
+                } else {
+                    console.error('[cutBorder] Cut result is null');
+                    result._shape = this._shape;
+                }
+            } else {
+                console.error('[cutBorder] Boolean cut failed (IsDone=false)');
+                result._shape = this._shape;
+            }
+            cut.delete();
+            toolList.delete();
+            argList.delete();
+        } else {
+            console.error('[cutBorder] Could not create cutter shape');
+            result._shape = this._shape;
+        }
+
+    } catch (e) {
+        console.error('[cutBorder] Exception:', e);
+        result._shape = this._shape;
+    }
+
+    return result;
+};
+
+
+// ============================================================
 // EXPORTS
 // ============================================================
 
