@@ -16,6 +16,7 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Tests use Playwright and require a running server (pytest fixture handles this)
 - Tests use `page.evaluate()` to run JavaScript in browser context
 - Pattern tests verify cutting by comparing mesh vertex counts before/after
+- **Mesh format:** `toMesh()` returns `{ vertices, indices, color, isModifier }` (not `position`)
 
 ## cutPattern() Architecture
 - Cutters are created at Z=0 extending in +Z direction
@@ -29,7 +30,10 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - **Clipping for non-rectangular faces:**
   - `clip: 'partial'` - clips shapes at face boundary (partial shapes at edges)
   - `clip: 'whole'` - only keeps shapes fully inside (volume comparison check)
-  - `_createOffsetFace()` handles border inset: circles shrink radius, polygons move vertices toward centroid
+  - `_createOffsetFace()` handles border inset:
+    - Circles: shrinks radius by border distance
+    - Polygons: edge-based offset using `BRepTools_WireExplorer` for vertex ordering,
+      computes inward normals per edge, finds intersections of adjacent offset edges
   - Clip solid extends both above and below face to fully contain cutters
 
 ## Geometry Optimization
