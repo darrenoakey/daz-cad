@@ -26,6 +26,11 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Default spacing = width (50% solid, 50% cut)
 - **Cutters are fused before cutting** - eliminates internal faces when shapes overlap
 - This fixes hexagon patterns with thin wallThickness that would otherwise fail
+- **Clipping for non-rectangular faces:**
+  - `clip: 'partial'` - clips shapes at face boundary (partial shapes at edges)
+  - `clip: 'whole'` - only keeps shapes fully inside (volume comparison check)
+  - `_createOffsetFace()` handles border inset: circles shrink radius, polygons move vertices toward centroid
+  - Clip solid extends both above and below face to fully contain cutters
 
 ## Geometry Optimization
 - `clean()` method merges coplanar faces and collinear edges
