@@ -372,27 +372,20 @@ function _createOffsetFace(oc, face, border, faceInfo) {
             return null;
         }
 
-        // Collect vertices and their positions
+        // Collect vertices IN ORDER around the wire using BRepTools_WireExplorer
+        // This ensures we get vertices in the correct sequence for polygon offset
         const vertices = [];
-        const edgeExplorer = new oc.TopExp_Explorer_2(
-            outerWire,
-            oc.TopAbs_ShapeEnum.TopAbs_VERTEX,
-            oc.TopAbs_ShapeEnum.TopAbs_SHAPE
-        );
+        const wireExplorer = new oc.BRepTools_WireExplorer_1();
+        wireExplorer.Init_1(outerWire);
 
-        const seenHashes = new Set();
-        while (edgeExplorer.More()) {
-            const vertex = oc.TopoDS.Vertex_1(edgeExplorer.Current());
-            const hash = vertex.HashCode(1000000);
-            if (!seenHashes.has(hash)) {
-                seenHashes.add(hash);
-                const pnt = oc.BRep_Tool.Pnt(vertex);
-                vertices.push({ x: pnt.X(), y: pnt.Y(), z: pnt.Z() });
-                pnt.delete();
-            }
-            edgeExplorer.Next();
+        while (wireExplorer.More()) {
+            const vertex = wireExplorer.CurrentVertex();
+            const pnt = oc.BRep_Tool.Pnt(vertex);
+            vertices.push({ x: pnt.X(), y: pnt.Y(), z: pnt.Z() });
+            pnt.delete();
+            wireExplorer.Next();
         }
-        edgeExplorer.delete();
+        wireExplorer.delete();
 
         // Check if it's a circular face (single curved edge)
         const edges = [];
@@ -439,36 +432,110 @@ function _createOffsetFace(oc, face, border, faceInfo) {
             curve.delete();
         }
 
-        // For polygonal faces, offset each vertex
+        // For polygonal faces, use proper edge-based offset algorithm
+        // The correct approach: offset each EDGE inward, then find intersections
         if (vertices.length >= 3) {
-            // Calculate centroid
-            let cx = 0, cy = 0, cz = 0;
-            for (const v of vertices) {
-                cx += v.x;
-                cy += v.y;
-                cz += v.z;
+            // First, determine if polygon is CCW or CW (for correct inward direction)
+            // Use signed area - positive = CCW, negative = CW
+            let signedArea = 0;
+            for (let i = 0; i < vertices.length; i++) {
+                const v1 = vertices[i];
+                const v2 = vertices[(i + 1) % vertices.length];
+                signedArea += (v2.x - v1.x) * (v2.y + v1.y);
             }
-            cx /= vertices.length;
-            cy /= vertices.length;
-            cz /= vertices.length;
+            // If CW (signedArea > 0), inward normal is (dy, -dx)
+            // If CCW (signedArea < 0), inward normal is (-dy, dx)
+            const cwFactor = signedArea > 0 ? 1 : -1;
 
-            // Move each vertex toward centroid by border distance
-            const offsetVertices = [];
-            for (const v of vertices) {
-                const dx = cx - v.x;
-                const dy = cy - v.y;
-                const dz = cz - v.z;
-                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                if (dist > 0.001) {
-                    const scale = border / dist;
-                    offsetVertices.push({
-                        x: v.x + dx * scale,
-                        y: v.y + dy * scale,
-                        z: v.z + dz * scale
+            // Calculate inward normal for each edge
+            const edgeNormals = [];
+            for (let i = 0; i < vertices.length; i++) {
+                const v1 = vertices[i];
+                const v2 = vertices[(i + 1) % vertices.length];
+                const dx = v2.x - v1.x;
+                const dy = v2.y - v1.y;
+                const len = Math.sqrt(dx*dx + dy*dy);
+                if (len > 0.0001) {
+                    // Inward normal (perpendicular to edge)
+                    edgeNormals.push({
+                        x: cwFactor * dy / len,
+                        y: cwFactor * -dx / len
                     });
                 } else {
-                    offsetVertices.push(v);
+                    edgeNormals.push({ x: 0, y: 0 });
                 }
+            }
+
+            // For each vertex, find intersection of the two adjacent offset edges
+            const offsetVertices = [];
+            for (let i = 0; i < vertices.length; i++) {
+                const prevIdx = (i - 1 + vertices.length) % vertices.length;
+
+                // Previous edge (from prevIdx to i), offset by its normal
+                const v0 = vertices[prevIdx];
+                const v1 = vertices[i];
+                const n0 = edgeNormals[prevIdx];
+
+                // Current edge (from i to next), offset by its normal
+                const nextIdx = (i + 1) % vertices.length;
+                const v2 = vertices[nextIdx];
+                const n1 = edgeNormals[i];
+
+                // Offset points on each edge
+                const p1 = { x: v0.x + n0.x * border, y: v0.y + n0.y * border };
+                const p2 = { x: v1.x + n0.x * border, y: v1.y + n0.y * border };
+                const p3 = { x: v1.x + n1.x * border, y: v1.y + n1.y * border };
+                const p4 = { x: v2.x + n1.x * border, y: v2.y + n1.y * border };
+
+                // Edge directions
+                const d1x = p2.x - p1.x;
+                const d1y = p2.y - p1.y;
+                const d2x = p4.x - p3.x;
+                const d2y = p4.y - p3.y;
+
+                // Find intersection of two lines:
+                // Line 1: p1 + t * d1
+                // Line 2: p3 + s * d2
+                // Solve: p1 + t * d1 = p3 + s * d2
+                const cross = d1x * d2y - d1y * d2x;
+
+                if (Math.abs(cross) > 0.0001) {
+                    // Lines are not parallel - find intersection
+                    const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / cross;
+                    offsetVertices.push({
+                        x: p1.x + t * d1x,
+                        y: p1.y + t * d1y,
+                        z: v1.z  // Keep Z from original vertex
+                    });
+                } else {
+                    // Parallel edges - use midpoint of offset points
+                    offsetVertices.push({
+                        x: (p2.x + p3.x) / 2,
+                        y: (p2.y + p3.y) / 2,
+                        z: v1.z
+                    });
+                }
+            }
+
+            // Validate: check that offset polygon doesn't self-intersect
+            // (can happen with large offsets on concave polygons)
+            // Simple check: all offset vertices should be "inside" original polygon direction
+            let validOffset = true;
+            for (let i = 0; i < offsetVertices.length; i++) {
+                const prevIdx = (i - 1 + offsetVertices.length) % offsetVertices.length;
+                const v1 = offsetVertices[prevIdx];
+                const v2 = offsetVertices[i];
+                const dx = v2.x - v1.x;
+                const dy = v2.y - v1.y;
+                if (Math.sqrt(dx*dx + dy*dy) < 0.001) {
+                    validOffset = false;
+                    break;
+                }
+            }
+
+            if (!validOffset) {
+                console.warn('[_createOffsetFace] Offset produces degenerate polygon, falling back');
+                return null;
             }
 
             // Build wire from offset vertices

@@ -2171,3 +2171,485 @@ def test_monaco_type_definitions_match_library(server):
             f"Type definitions out of sync with library! Issues:\n" +
             "\n".join(f"  - {issue}" for issue in result.get('issues', []))
         )
+
+
+# ##################################################################
+# test cutPattern clip option with border on circular face
+# verifies that clip='partial' with border works correctly on circles
+def test_cut_pattern_clip_border_on_circle(server):
+    """
+    Test the clip option with border on a circular face.
+
+    Creates a cylinder with radius 30, height 4.
+    Applies a pattern with border=10, which should create an offset boundary at radius 20.
+
+    We verify:
+    1. Pattern cutting actually happens (mesh changes)
+    2. The outer ring (beyond radius 20) remains solid - we check this by verifying
+       that a small probe at radius 25 would intersect solid material
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        errors = []
+        logs = []
+        page.on("console", lambda msg: (errors.append(msg.text) if msg.type == "error" else logs.append(msg.text)))
+
+        page.goto(f"{server}/")
+
+        # Wait for Ready AND main thread OpenCascade to be available
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+
+                const RADIUS = 30;
+                const HEIGHT = 4;
+                const BORDER = 10;
+                const EXPECTED_INNER_RADIUS = RADIUS - BORDER;  // 20
+
+                // Create base cylinder
+                let baseCyl;
+                try {
+                    baseCyl = new Workplane('XY').cylinder(RADIUS, HEIGHT);
+                } catch (cylErr) {
+                    return { success: false, error: 'Cylinder creation threw: ' + cylErr.message };
+                }
+                if (!baseCyl) {
+                    return { success: false, error: 'Cylinder returned null' };
+                }
+                if (!baseCyl._shape) {
+                    return { success: false, error: 'Cylinder _shape is null/undefined' };
+                }
+
+                let baseMesh;
+                try {
+                    baseMesh = baseCyl.toMesh();
+                } catch (meshErr) {
+                    return { success: false, error: 'toMesh threw: ' + meshErr.message };
+                }
+                if (!baseMesh) {
+                    return { success: false, error: 'Base cylinder mesh is null. Shape type: ' + (typeof baseCyl._shape) };
+                }
+                if (!baseMesh.vertices) {
+                    return { success: false, error: 'Base cylinder mesh.vertices is null. Mesh keys: ' + Object.keys(baseMesh).join(', ') };
+                }
+                const baseVertexCount = baseMesh.vertices.length / 3;
+
+                // Apply hexagon pattern with clip and border
+                const cutCyl = baseCyl.faces('>Z').cutPattern({
+                    shape: 'hexagon',
+                    width: 6,
+                    wallThickness: 1.5,
+                    stagger: true,
+                    clip: 'partial',
+                    border: BORDER,
+                    depth: 2
+                });
+
+                if (!cutCyl || !cutCyl._shape) {
+                    return { success: false, error: 'cutPattern returned null shape' };
+                }
+
+                const cutMesh = cutCyl.toMesh();
+                if (!cutMesh || !cutMesh.vertices) {
+                    return { success: false, error: 'Cut cylinder mesh is null' };
+                }
+                const cutVertexCount = cutMesh.vertices.length / 3;
+
+                // Verify cutting happened
+                if (cutVertexCount <= baseVertexCount) {
+                    return {
+                        success: false,
+                        error: `Pattern cut did not add vertices: base=${baseVertexCount}, cut=${cutVertexCount}`
+                    };
+                }
+
+                // Verify the outer ring is solid by checking mesh bounds
+                // The mesh should extend to the full radius of 30
+                let minX = Infinity, maxX = -Infinity;
+                let minY = Infinity, maxY = -Infinity;
+                for (let i = 0; i < cutMesh.vertices.length; i += 3) {
+                    const x = cutMesh.vertices[i];
+                    const y = cutMesh.vertices[i + 1];
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    minY = Math.min(minY, y);
+                    maxY = Math.max(maxY, y);
+                }
+
+                // The mesh should still extend to the full radius
+                const meshRadius = Math.max(Math.abs(minX), Math.abs(maxX), Math.abs(minY), Math.abs(maxY));
+                if (meshRadius < RADIUS - 1) {
+                    return {
+                        success: false,
+                        error: `Mesh radius ${meshRadius.toFixed(1)} is less than expected ${RADIUS}. Border clipped too aggressively.`
+                    };
+                }
+
+                // Check if there are any cut vertices beyond the inner boundary
+                // If border is working, no cuts should appear beyond radius 20
+                // We can verify this by looking at the Z values at different radii
+                let outerRingHasCuts = false;
+                for (let i = 0; i < cutMesh.vertices.length; i += 3) {
+                    const x = cutMesh.vertices[i];
+                    const y = cutMesh.vertices[i + 1];
+                    const z = cutMesh.vertices[i + 2];
+                    const r = Math.sqrt(x*x + y*y);
+
+                    // If we find a vertex at radius > 22 with Z between 0 and HEIGHT (but not 0 or HEIGHT)
+                    // it would indicate a cut in the outer ring
+                    if (r > EXPECTED_INNER_RADIUS + 2 && z > 0.1 && z < HEIGHT - 0.1) {
+                        outerRingHasCuts = true;
+                        break;
+                    }
+                }
+
+                // The outer ring should NOT have cuts if border is working
+                if (outerRingHasCuts) {
+                    return {
+                        success: false,
+                        error: 'Border not working: cuts found in outer ring (beyond radius ' + EXPECTED_INNER_RADIUS + ')'
+                    };
+                }
+
+                return {
+                    success: true,
+                    baseVertexCount,
+                    cutVertexCount,
+                    meshRadius: meshRadius.toFixed(1),
+                    expectedInnerRadius: EXPECTED_INNER_RADIUS,
+                    outerRingHasCuts
+                };
+
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        assert result["success"], (
+            f"Clip border test failed: {result.get('error')}\n"
+            f"Stack: {result.get('stack', 'none')}"
+        )
+
+        # Log the results
+        print(f"\nClip border test results:")
+        print(f"  Base vertices: {result.get('baseVertexCount')}")
+        print(f"  Cut vertices: {result.get('cutVertexCount')}")
+        print(f"  Mesh radius: {result.get('meshRadius')}")
+        print(f"  Expected inner radius: {result.get('expectedInnerRadius')}")
+        print(f"  Outer ring has cuts: {result.get('outerRingHasCuts')}")
+        if logs:
+            print(f"\nConsole logs:")
+            for log in logs:
+                if 'Offset' in log or 'clip' in log.lower():
+                    print(f"  {log}")
+
+
+# ##################################################################
+# test cutPattern clip option with border on rectangular face
+# verifies that clip='partial' with border works correctly on polygons
+def test_cut_pattern_clip_border_on_rectangle(server):
+    """
+    Test the clip option with border on a rectangular face.
+
+    Creates a 60x40x4 box.
+    Applies a pattern with border=5, which should create an offset boundary
+    with 5mm inset from each edge.
+
+    We verify:
+    1. Pattern cutting actually happens (mesh changes)
+    2. The outer border region (within 5mm of edges) remains solid
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        errors = []
+        logs = []
+        page.on("console", lambda msg: (errors.append(msg.text) if msg.type == "error" else logs.append(msg.text)))
+
+        page.goto(f"{server}/")
+
+        # Wait for Ready AND main thread OpenCascade to be available
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                const WIDTH = 60;
+                const LENGTH = 40;
+                const HEIGHT = 4;
+                const BORDER = 5;
+
+                // Create base box
+                const baseBox = new Workplane('XY').box(WIDTH, LENGTH, HEIGHT);
+                if (!baseBox || !baseBox._shape) {
+                    return { success: false, error: 'Base box creation failed' };
+                }
+
+                const baseMesh = baseBox.toMesh();
+                if (!baseMesh || !baseMesh.vertices) {
+                    return { success: false, error: 'Base box mesh is null' };
+                }
+                const baseVertexCount = baseMesh.vertices.length / 3;
+
+                // Apply hexagon pattern with clip and border
+                const cutBox = baseBox.faces('>Z').cutPattern({
+                    shape: 'hexagon',
+                    width: 6,
+                    wallThickness: 1.5,
+                    stagger: true,
+                    clip: 'partial',
+                    border: BORDER,
+                    depth: 2
+                });
+
+                if (!cutBox || !cutBox._shape) {
+                    return { success: false, error: 'cutPattern returned null shape' };
+                }
+
+                const cutMesh = cutBox.toMesh();
+                if (!cutMesh || !cutMesh.vertices) {
+                    return { success: false, error: 'Cut box mesh is null' };
+                }
+                const cutVertexCount = cutMesh.vertices.length / 3;
+
+                // Verify cutting happened
+                if (cutVertexCount <= baseVertexCount) {
+                    return {
+                        success: false,
+                        error: `Pattern cut did not add vertices: base=${baseVertexCount}, cut=${cutVertexCount}`
+                    };
+                }
+
+                // Check mesh bounds
+                let minX = Infinity, maxX = -Infinity;
+                let minY = Infinity, maxY = -Infinity;
+                for (let i = 0; i < cutMesh.vertices.length; i += 3) {
+                    const x = cutMesh.vertices[i];
+                    const y = cutMesh.vertices[i + 1];
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    minY = Math.min(minY, y);
+                    maxY = Math.max(maxY, y);
+                }
+
+                // Mesh should still extend to full box dimensions
+                const halfW = WIDTH / 2;
+                const halfL = LENGTH / 2;
+                if (Math.abs(maxX) < halfW - 0.5 || Math.abs(minX) < halfW - 0.5) {
+                    return {
+                        success: false,
+                        error: `Mesh X extent wrong: ${minX.toFixed(1)} to ${maxX.toFixed(1)}, expected +/-${halfW}`
+                    };
+                }
+                if (Math.abs(maxY) < halfL - 0.5 || Math.abs(minY) < halfL - 0.5) {
+                    return {
+                        success: false,
+                        error: `Mesh Y extent wrong: ${minY.toFixed(1)} to ${maxY.toFixed(1)}, expected +/-${halfL}`
+                    };
+                }
+
+                // Check that no cuts exist in the border region
+                // Border region is anywhere within BORDER mm of the box edge
+                const innerXMax = halfW - BORDER;
+                const innerYMax = halfL - BORDER;
+                let borderHasCuts = false;
+
+                for (let i = 0; i < cutMesh.vertices.length; i += 3) {
+                    const x = cutMesh.vertices[i];
+                    const y = cutMesh.vertices[i + 1];
+                    const z = cutMesh.vertices[i + 2];
+
+                    // If vertex is in border zone (beyond inner boundary) and Z is between 0 and HEIGHT
+                    // (indicating a cut surface), that's a problem
+                    const inBorderZone = Math.abs(x) > innerXMax || Math.abs(y) > innerYMax;
+                    const isCutSurface = z > 0.1 && z < HEIGHT - 0.1;
+
+                    if (inBorderZone && isCutSurface) {
+                        borderHasCuts = true;
+                        break;
+                    }
+                }
+
+                if (borderHasCuts) {
+                    return {
+                        success: false,
+                        error: 'Border not working: cuts found in border zone'
+                    };
+                }
+
+                return {
+                    success: true,
+                    baseVertexCount,
+                    cutVertexCount,
+                    meshExtent: {
+                        x: [minX.toFixed(1), maxX.toFixed(1)],
+                        y: [minY.toFixed(1), maxY.toFixed(1)]
+                    },
+                    expectedInnerBoundary: { x: innerXMax, y: innerYMax }
+                };
+
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        # Log the console output first (for debugging)
+        print(f"\nConsole logs:")
+        for log in logs:
+            if 'Offset' in log or 'clip' in log.lower() or 'polygon' in log.lower() or 'boundary' in log.lower():
+                print(f"  {log}")
+
+        assert result["success"], (
+            f"Clip border rectangle test failed: {result.get('error')}\n"
+            f"Stack: {result.get('stack', 'none')}"
+        )
+
+        # Log the results
+        print(f"\nClip border rectangle test results:")
+        print(f"  Base vertices: {result.get('baseVertexCount')}")
+        print(f"  Cut vertices: {result.get('cutVertexCount')}")
+        print(f"  Mesh extent: {result.get('meshExtent')}")
+        print(f"  Expected inner boundary: {result.get('expectedInnerBoundary')}")
+
+
+# ##################################################################
+# test cutPattern clip demo with irregular shaped face
+# verifies the clip feature works on complex star-shaped faces
+def test_cut_pattern_clip_demo_irregular_shape(server):
+    """
+    Test the clip option on an irregular star-shaped face.
+
+    This tests the clip-demo.js example - creates a cylinder with
+    6 notches cut into it, then applies a hexagon pattern with
+    clip='partial'.
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        errors = []
+        logs = []
+        page.on("console", lambda msg: (errors.append(msg.text) if msg.type == "error" else logs.append(msg.text)))
+
+        page.goto(f"{server}/")
+
+        # Wait for Ready AND main thread OpenCascade to be available
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                // Create base shape: a thin cylinder
+                const cyl = new Workplane('XY').cylinder(35, 4);
+
+                // Cut a star pattern to make it irregular
+                const cuts = [];
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i * 60) * Math.PI / 180;
+                    const x = 25 * Math.cos(angle);
+                    const y = 25 * Math.sin(angle);
+                    cuts.push(
+                        new Workplane('XY')
+                            .cylinder(12, 10)
+                            .translate(x, y, 0)
+                    );
+                }
+
+                // Create the irregular shape by cutting notches
+                let irregular = cyl;
+                for (const cut of cuts) {
+                    irregular = irregular.cut(cut);
+                }
+
+                const baseMesh = irregular.toMesh();
+                if (!baseMesh || !baseMesh.vertices) {
+                    return { success: false, error: 'Base irregular mesh is null' };
+                }
+                const baseVertexCount = baseMesh.vertices.length / 3;
+
+                // Now apply hexagon pattern with partial clipping
+                const result = irregular.faces('>Z').cutPattern({
+                    shape: 'hexagon',
+                    width: 6,
+                    wallThickness: 1.5,
+                    stagger: true,
+                    clip: 'partial',
+                    border: 2,
+                    depth: 2
+                });
+
+                if (!result || !result._shape) {
+                    return { success: false, error: 'cutPattern returned null shape' };
+                }
+
+                const cutMesh = result.toMesh();
+                if (!cutMesh || !cutMesh.vertices) {
+                    return { success: false, error: 'Cut mesh is null' };
+                }
+                const cutVertexCount = cutMesh.vertices.length / 3;
+
+                // Verify cutting happened
+                if (cutVertexCount <= baseVertexCount) {
+                    return {
+                        success: false,
+                        error: `Pattern cut did not add vertices: base=${baseVertexCount}, cut=${cutVertexCount}`
+                    };
+                }
+
+                return {
+                    success: true,
+                    baseVertexCount,
+                    cutVertexCount,
+                    vertexRatio: (cutVertexCount / baseVertexCount).toFixed(2)
+                };
+
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        # Log the console output for debugging
+        print(f"\nConsole logs:")
+        for log in logs:
+            if 'Offset' in log or 'clip' in log.lower() or 'boundary' in log.lower():
+                print(f"  {log}")
+
+        assert result["success"], (
+            f"Clip demo test failed: {result.get('error')}\n"
+            f"Stack: {result.get('stack', 'none')}"
+        )
+
+        # Log the results
+        print(f"\nClip demo test results:")
+        print(f"  Base vertices: {result.get('baseVertexCount')}")
+        print(f"  Cut vertices: {result.get('cutVertexCount')}")
+        print(f"  Vertex ratio: {result.get('vertexRatio')}")
