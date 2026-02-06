@@ -374,6 +374,176 @@ const result = shell
 result;
 ```
 
+## Gridfinity Module
+
+The Gridfinity module provides standardized gridfinity-compatible bins, plugs, baseplates, and optimized cutout grids. **Always use these when the user asks for gridfinity anything** — do not manually create gridfinity shapes with box/translate.
+
+The module is automatically available (imported by the worker). Use `Gridfinity.bin()`, `Gridfinity.plug()`, etc. directly.
+
+### Gridfinity.bin(options)
+
+Creates a solid gridfinity bin with standardized stepped base profile (compatible with gridfinity baseplates).
+
+- `x`: X dimension in grid units (1 unit = 42mm)
+- `y`: Y dimension in grid units
+- `z`: Z dimension in height units (1 unit = 7mm)
+- `stackable` (optional, default false): Include stacking lip at top
+- `solid` (optional, default true): If false, creates hollow shell with 1.2mm walls
+
+Returns a Workplane with gridfinity metadata (infill settings, minCutZ for automatic cut depth).
+
+```javascript
+// Basic 2x1 bin, 5 units high
+const result = Gridfinity.bin({ x: 2, y: 1, z: 5 })
+    .color("#3498db");
+result;
+```
+
+### Gridfinity.plug(options)
+
+Creates a solid insert plug that fits inside a gridfinity bin (with proper clearances).
+
+- `x`: X dimension in grid units
+- `y`: Y dimension in grid units
+- `z`: Z dimension in height units
+- `tolerance` (optional, default 0.30): Wall clearance in mm
+- `stackable` (optional, default true): Account for stacking lip gap
+
+```javascript
+// Insert plug for a 2x3 bin
+const result = Gridfinity.plug({ x: 2, y: 3, z: 3 })
+    .cutCircleGrid({ diameter: 20, count: 4 })
+    .color("#2ecc71");
+result;
+```
+
+### Gridfinity.baseplate(options)
+
+Creates a minimal gridfinity baseplate (open grid frame, no solid floor).
+
+- `x`: X dimension in grid units
+- `y`: Y dimension in grid units
+- `fillet` (optional, default true): Round outer corners
+- `chamfer` (optional, default true): Chamfer bottom edge for bed adhesion
+
+```javascript
+const result = Gridfinity.baseplate({ x: 3, y: 2 })
+    .color("#95a5a6");
+result;
+```
+
+### Gridfinity.fitBin(options)
+
+Creates a bin with multiple custom-sized cutouts, automatically finding the smallest bin that fits all cuts. Uses shelf-packing with centering.
+
+- `cuts`: Array of `[width, height]` or `{width, height, fillet?}` objects
+- `z`: Height in gridfinity height units
+- `spacing` (optional, default 1.5): Minimum spacing between cuts in mm
+- `fillet` (optional, default 3): Default corner fillet radius in mm
+
+```javascript
+// Three different compartments, auto-sized bin
+const result = Gridfinity.fitBin({
+    cuts: [[80, 40], [30, 20], [35, 20]],
+    z: 3
+}).color("#e67e22");
+result;
+
+// With custom fillets per cut
+const result = Gridfinity.fitBin({
+    cuts: [
+        { width: 80, height: 40, fillet: 5 },
+        { width: 30, height: 20 },
+        { width: 35, height: 20, fillet: 0 }
+    ],
+    z: 4,
+    spacing: 2
+}).color("#3498db");
+result;
+```
+
+### .cutRectGrid(options)
+
+Workplane method. Cuts an optimized grid of rectangular pockets into a shape. Automatically calculates optimal layout and spacing. Respects gridfinity `minCutZ` metadata (won't cut into the base).
+
+- `width`: Pocket width in mm
+- `height`: Pocket height in mm
+- `count` (optional, default null): Target count (null = maximize)
+- `fillet` (optional, default 0): Corner fillet radius in mm
+- `depth` (optional, default null): Cut depth (null = auto from shape height or minCutZ)
+- `minBorder` (optional, default 2.0): Minimum shell thickness in mm
+- `minSpacing` (optional, default 0.6): Minimum spacing between cutouts in mm
+
+```javascript
+const result = Gridfinity.bin({ x: 3, y: 2, z: 5 })
+    .cutRectGrid({ width: 30, height: 40, count: 2, fillet: 3 })
+    .color("#3498db");
+result;
+```
+
+### .cutCircleGrid(options)
+
+Workplane method. Cuts an optimized grid of circular pockets. Same auto-layout behavior as cutRectGrid.
+
+- `radius`: Circle radius in mm (or use `diameter`)
+- `diameter`: Circle diameter in mm (alternative to radius)
+- `count` (optional, default null): Target count (null = maximize)
+- `depth` (optional, default null): Cut depth (null = auto)
+- `minBorder` (optional, default 2.0): Minimum shell thickness in mm
+- `minSpacing` (optional, default 2.0): Minimum spacing between circles in mm
+
+```javascript
+const result = Gridfinity.bin({ x: 2, y: 2, z: 4 })
+    .cutCircleGrid({ diameter: 25 })
+    .color("#9b59b6");
+result;
+```
+
+### .addBaseplate(options)
+
+Workplane method. Adds a gridfinity baseplate onto a selected face (or top face). Auto-calculates how many grid cells fit.
+
+- `fillet` (optional, default true): Round outer corners
+
+```javascript
+// Box with baseplate on top
+const result = new Workplane("XY")
+    .box(150, 100, 10)
+    .faces(">Z")
+    .addBaseplate()
+    .color("#3498db");
+result;
+```
+
+### Gridfinity Examples
+
+```javascript
+// Pen holder: 2x1 bin with circle grid
+const result = Gridfinity.bin({ x: 2, y: 1, z: 5 })
+    .cutCircleGrid({ diameter: 14 })
+    .color("#2ecc71");
+result;
+```
+
+```javascript
+// Tool organizer with custom compartments
+const result = Gridfinity.fitBin({
+    cuts: [[60, 35], [25, 25], [25, 25], [40, 35]],
+    z: 4
+}).color("#e74c3c");
+result;
+```
+
+```javascript
+// Bin with ellipsoid scoop cutout
+const bin = Gridfinity.bin({ x: 2, y: 1, z: 5 });
+const cutter = new Workplane("XY")
+    .ellipsoid(34, 19, 30)
+    .translate(0, 0, 49);  // position at top
+const result = bin.cut(cutter).color("#3498db");
+result;
+```
+
 ## Tips
 
 1. Always end with `result;` to return the final shape
@@ -381,3 +551,4 @@ result;
 3. Use Assembly for multi-color prints
 4. Shapes are positioned for 3D printing by default (bottom at Z=0)
 5. Boolean operations create new shapes - assign to variables
+6. **For gridfinity items, always use the Gridfinity module** — never manually build gridfinity geometry with boxes
