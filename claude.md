@@ -49,6 +49,11 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Use `edgesNot()` to exclude: `edgesNot("|Z")` gets all non-vertical edges
 - Chain operations: `box.edges("|Z").fillet(3).edgesNot("|Z").fillet(1)`
 
+## Non-Uniform Scaling (Ellipsoid Pattern)
+- `gp_GTrsf` + `BRepBuilderAPI_GTransform` for non-uniform scaling of shapes
+- Used by `ellipsoid()`: creates unit sphere, scales by (rx, ry, rz)
+- This pattern works for any shape that needs independent axis scaling
+
 ## Common Issues
 - Face normal detection uses `BRepAdaptor_Surface.D1()` with cross product
 - Check `face.Orientation_1()` for reversed faces that need normal flip
