@@ -33,6 +33,13 @@ new Workplane(plane)
 **sphere(radius)**
 - Creates a sphere centered at origin
 
+**ellipsoid(rx, ry, rz)**
+- Creates an ellipsoid centered at origin (non-uniformly scaled sphere)
+- `rx`: Semi-axis length in X (total X diameter = 2*rx)
+- `ry`: Semi-axis length in Y (total Y diameter = 2*ry)
+- `rz`: Semi-axis length in Z (total Z diameter = 2*rz)
+- Use as a cutter with `.cut()` to carve elliptical bowls, indentations, etc.
+
 **polygonPrism(sides, flatToFlat, height)**
 - Creates a regular polygon extruded to a prism
 - `sides`: Number of sides (3=triangle, 4=square, 6=hexagon, etc.)
@@ -334,6 +341,18 @@ const result = new Workplane("XY")
         border: 5,
         angle: 0  // horizontal lines (90 for vertical, 45 for diagonal)
     })
+    .color("#3498db");
+result;
+```
+
+### Elliptical Bowl
+```javascript
+// Carve an elliptical bowl into a block
+const block = new Workplane("XY").box(70, 45, 15);
+const cutter = new Workplane("XY")
+    .ellipsoid(32, 18.5, 10)   // 64mm x 37mm x 20mm
+    .translate(0, 0, 15);       // position at top of block
+const result = block.cut(cutter)
     .color("#3498db");
 result;
 ```

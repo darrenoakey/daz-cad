@@ -918,6 +918,54 @@ class Workplane {
     }
 
     /**
+     * Create an ellipsoid (non-uniformly scaled sphere)
+     * Centered at origin like sphere().
+     * @param {number} rx - Semi-axis length in X
+     * @param {number} ry - Semi-axis length in Y
+     * @param {number} rz - Semi-axis length in Z
+     */
+    ellipsoid(rx, ry, rz) {
+        const result = new Workplane(this._plane);
+
+        if (typeof rx !== 'number' || rx <= 0) {
+            cadError('ellipsoid', `Invalid rx: ${rx} (must be positive number)`);
+            return result;
+        }
+        if (typeof ry !== 'number' || ry <= 0) {
+            cadError('ellipsoid', `Invalid ry: ${ry} (must be positive number)`);
+            return result;
+        }
+        if (typeof rz !== 'number' || rz <= 0) {
+            cadError('ellipsoid', `Invalid rz: ${rz} (must be positive number)`);
+            return result;
+        }
+
+        try {
+            // Create unit sphere, then scale non-uniformly
+            const sphere = new oc.BRepPrimAPI_MakeSphere_1(1);
+            const unitSphere = sphere.Shape();
+            sphere.delete();
+
+            const gtrsf = new oc.gp_GTrsf_1();
+            gtrsf.SetValue(1, 1, rx);
+            gtrsf.SetValue(2, 2, ry);
+            gtrsf.SetValue(3, 3, rz);
+
+            const transformer = new oc.BRepBuilderAPI_GTransform_2(unitSphere, gtrsf, true);
+            result._shape = transformer.Shape();
+            transformer.delete();
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('ellipsoid', 'Failed to create ellipsoid shape (result is null)');
+            }
+        } catch (e) {
+            cadError('ellipsoid', 'Exception creating ellipsoid', e);
+        }
+
+        return result;
+    }
+
+    /**
      * Create 3D text using opentype.js for font parsing
      * @param {string} textString - The text to render
      * @param {number} fontSize - Height of the text (font size in model units)

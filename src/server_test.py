@@ -2786,3 +2786,72 @@ def test_example_files_accessible(server):
         assert len(response.text) > 100, f"{filename} is too short: {len(response.text)} bytes"
         assert "Workplane" in response.text, f"{filename} doesn't reference Workplane"
         print(f"  {filename}: OK ({len(response.text)} bytes)")
+
+
+def test_ellipsoid(server):
+    """Test ellipsoid primitive creates a non-uniformly scaled sphere."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(f"{server}/")
+
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=300000
+        )
+
+        result = page.evaluate("""() => {
+            try {
+                // Create ellipsoid with different radii in each axis
+                const e = new Workplane('XY').ellipsoid(32, 18.5, 10);
+                if (!e._shape || e._shape.IsNull()) {
+                    return { success: false, error: 'Shape is null' };
+                }
+
+                const mesh = e.toMesh(0.1, 0.3);
+                if (!mesh || !mesh.vertices || mesh.vertices.length === 0) {
+                    return { success: false, error: 'Mesh is empty' };
+                }
+
+                // Verify bounding box matches expected dimensions
+                const verts = mesh.vertices;
+                let minX = Infinity, maxX = -Infinity;
+                let minY = Infinity, maxY = -Infinity;
+                let minZ = Infinity, maxZ = -Infinity;
+                for (let i = 0; i < verts.length; i += 3) {
+                    minX = Math.min(minX, verts[i]);
+                    maxX = Math.max(maxX, verts[i]);
+                    minY = Math.min(minY, verts[i+1]);
+                    maxY = Math.max(maxY, verts[i+1]);
+                    minZ = Math.min(minZ, verts[i+2]);
+                    maxZ = Math.max(maxZ, verts[i+2]);
+                }
+
+                const dx = maxX - minX;
+                const dy = maxY - minY;
+                const dz = maxZ - minZ;
+
+                return {
+                    success: true,
+                    vertices: verts.length / 3,
+                    dx: dx, dy: dy, dz: dz
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        print(f"Ellipsoid result: {result}")
+        assert result["success"], f"Ellipsoid test failed: {result.get('error')}"
+        assert result["vertices"] > 10, f"Too few vertices: {result['vertices']}"
+
+        # Check dimensions are approximately correct (64 x 37 x 20 diameters)
+        assert abs(result["dx"] - 64) < 2, f"X dimension wrong: {result['dx']} (expected ~64)"
+        assert abs(result["dy"] - 37) < 2, f"Y dimension wrong: {result['dy']} (expected ~37)"
+        assert abs(result["dz"] - 20) < 2, f"Z dimension wrong: {result['dz']} (expected ~20)"
+
+        browser.close()
