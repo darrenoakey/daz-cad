@@ -34,6 +34,13 @@ def css() -> str:
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
+.hero-tagline {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    color: var(--accent-cyan);
+    margin-bottom: var(--space-md);
+    font-weight: 600;
+}
 .hero p {
     font-size: 1.25rem;
     color: var(--text-secondary);
@@ -46,6 +53,15 @@ def css() -> str:
     justify-content: center;
     flex-wrap: wrap;
 }
+/* Hero always has dark background - force light text regardless of theme */
+.hero .btn-secondary {
+    color: #F1F5F9;
+    border-color: rgba(255, 255, 255, 0.3);
+}
+.hero .btn-secondary:hover {
+    border-color: var(--accent-blue);
+    color: white;
+}
 @media (max-width: 768px) {
     .hero h1 { font-size: 2rem; }
     .hero p { font-size: 1rem; }
@@ -53,15 +69,16 @@ def css() -> str:
 """
 
 
-def html(tagline: str, subtitle: str, hero_image: str = "images/hero.jpg") -> str:
+def html(name: str, tagline: str, subtitle: str, hero_image: str = "images/hero.jpg") -> str:
     return f"""<section class="hero">
     <div class="hero-bg" style="background-image: url('{hero_image}');"></div>
     <div class="hero-content">
-        <h1>{tagline}</h1>
+        <h1>{name}</h1>
+        <p class="hero-tagline">{tagline}</p>
         <p>{subtitle}</p>
         <div class="hero-buttons">
-            <a href="/editor" class="btn btn-primary">Try It Now</a>
-            <a href="/docs" class="btn btn-secondary">Documentation</a>
+            <a href="/editor.html" class="btn btn-primary">Try It Now</a>
+            <a href="/docs.html" class="btn btn-secondary">Documentation</a>
         </div>
     </div>
 </section>

@@ -42,9 +42,9 @@ def html(github_url: str = "") -> str:
         <div class="footer-content">
             <div class="footer-brand">daz-cad</div>
             <ul class="footer-links">
-                <li><a href="/docs">Documentation</a></li>
-                <li><a href="/examples">Examples</a></li>
-                <li><a href="/editor">Editor</a></li>
+                <li><a href="/docs.html">Documentation</a></li>
+                <li><a href="/examples.html">Examples</a></li>
+                <li><a href="/editor.html">Editor</a></li>
                 {github_link}
             </ul>
         </div>

@@ -337,6 +337,8 @@ def generate_docs_html(docs_dir: Path, spec_path: Path) -> str:
         md_parts.append(spec_path.read_text())
 
     md_text = '\n\n'.join(md_parts)
+    # Rewrite internal doc links to site pages
+    md_text = md_text.replace('./user-guide.md', '/editor.html')
     content_html, headings = _render_markdown(md_text)
     sidebar_html = _build_sidebar(headings)
 

@@ -26,6 +26,7 @@ def generate_index(config: dict) -> str:
     body_css = hero.css() + features.css() + examples_gallery.css() + footer.css()
     body_html = (
         hero.html(
+            name=site.get("name", "daz-cad"),
             tagline=site.get("tagline", "Browser-Based Parametric CAD"),
             subtitle="Design 3D models with code. Export to your 3D printer.",
         )
@@ -104,6 +105,24 @@ def generate_editor(config: dict) -> str:
     )
 
 
+def generate_feature_page(config: dict, feature: dict) -> str:
+    """Generate an individual feature detail page."""
+    site = config.get("site", {})
+    github_url = config.get("github", "")
+
+    body_css = features.detail_css() + footer.css()
+    body_html = features.generate_detail_page(feature) + footer.html(github_url)
+
+    return _common.page_wrapper(
+        title=f"{feature['title']} - {site.get('name', 'daz-cad')}",
+        description=feature["desc"],
+        active="",
+        github_url=github_url,
+        body_css=body_css,
+        body_html=body_html,
+    )
+
+
 def generate_error() -> str:
     """Generate a simple error page."""
     return """<!DOCTYPE html>
@@ -161,7 +180,7 @@ def generate_site(site_root: Path, project_root: Path) -> Path:
     web_path = site_root / "local" / "web"
     web_path.mkdir(parents=True, exist_ok=True)
 
-    # Generate pages
+    # Generate main pages
     pages = {
         "index.html": generate_index(config),
         "docs.html": generate_docs(config, project_root),
@@ -172,6 +191,13 @@ def generate_site(site_root: Path, project_root: Path) -> Path:
 
     for filename, content in pages.items():
         (web_path / filename).write_text(content)
+
+    # Generate feature detail pages
+    features_dir = web_path / "features"
+    features_dir.mkdir(exist_ok=True)
+    for feature in features.FEATURES:
+        content = generate_feature_page(config, feature)
+        (features_dir / f"{feature['slug']}.html").write_text(content)
 
     # Create directories for assets
     (web_path / "images").mkdir(exist_ok=True)

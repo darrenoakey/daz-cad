@@ -68,6 +68,25 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Uses `claude-agent-sdk` with `model="haiku"` for commit message generation
 - Error handling: falls back to simple "Update filename" message if Claude SDK fails
 
+## Marketing Website (site/)
+- Static site at `dazcad.insidemind.com.au` (S3 + CloudFront)
+- Generator: `site/src/sitegen/` - Python modules producing HTML/CSS/JS
+- CLI: `site/run generate|deploy|setup|publish|test|screenshots`
+- Standalone editor: `site/src/standalone/bundler.py` packages editor.js for serverless use
+- AWS infra: uses `~/src/aws-web/` shared library (S3Manager, CloudFrontManager, ACMManager)
+- Config: `site/local/config.json` (subdomain, domain, bucket_suffix)
+- Output: `site/local/web/` (gitignored, has its own git repo for delta deploy)
+- Images: `~/bin/generate_image` outputs JPG not PNG despite --output extension
+
+## Standalone Editor Mode
+- `window.DAZ_CAD_STANDALONE = true` flag in editor.js
+- Server-dependent methods have `if (STANDALONE)` guards
+- File storage: localStorage instead of server API
+- Chat pane: hidden via `display: none` in standalone HTML
+- File watchers and hot reload: disabled
+- Bundled examples via `window.DAZ_CAD_EXAMPLES` object
+- URL params: `?file=demo_patterns.js` to select example
+
 ## Conventions
 - Dimensions in millimeters
 - Result variable must be defined in CAD scripts

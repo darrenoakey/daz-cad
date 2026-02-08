@@ -98,10 +98,19 @@ def _build_editor_html(source_html: str, examples: dict[str, str]) -> str:
         flags=re.DOTALL,
     )
 
-    # Hide the chat pane
-    html = html.replace(
-        '<div class="chat-pane">',
-        '<div class="chat-pane" style="display: none;">',
+    # Replace chat pane content with "AI not available" image
+    html = re.sub(
+        r'<div class="chat-pane">.*?</div>\s*</div>\s*</div>',
+        '<div class="chat-pane" style="display: flex; flex-direction: column; align-items: center; '
+        'justify-content: center; background: #0B1120; padding: 20px;">'
+        '<img src="images/feature-ai-unavailable.jpg" alt="AI Assistant not available in web version" '
+        'style="max-width: 100%; border-radius: 12px; margin-bottom: 12px;">'
+        '<p style="color: #94A3B8; font-size: 0.8rem; text-align: center; line-height: 1.4;">'
+        'Run <code style="color: #06B6D4;">./run serve</code> locally for AI-assisted modeling</p>'
+        '</div></div></div>',
+        html,
+        count=1,
+        flags=re.DOTALL,
     )
 
     # Add a subtle "Back to site" link

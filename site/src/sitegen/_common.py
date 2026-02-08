@@ -151,9 +151,9 @@ def nav(active: str = "", github_url: str = "") -> str:
         <button class="nav-toggle" aria-label="Menu">&#9776;</button>
         <ul class="nav-links">
             <li>{link("/", "Home", "home")}</li>
-            <li>{link("/docs", "Docs", "docs")}</li>
-            <li>{link("/examples", "Examples", "examples")}</li>
-            <li>{link("/editor", "Editor", "editor")}</li>
+            <li>{link("/docs.html", "Docs", "docs")}</li>
+            <li>{link("/examples.html", "Examples", "examples")}</li>
+            <li>{link("/editor.html", "Editor", "editor")}</li>
             <li>{github_link}</li>
             <li><button class="theme-toggle" aria-label="Toggle theme">&#9790;</button></li>
         </ul>

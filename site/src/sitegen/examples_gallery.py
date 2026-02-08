@@ -90,7 +90,7 @@ def html_section(limit: int = 6) -> str:
                 <h3>{ex["title"]}</h3>
                 <p>{ex["desc"]}</p>
                 <div class="example-card-actions">
-                    <a href="/editor?file={ex['file']}" class="btn btn-primary">Open in Editor</a>
+                    <a href="/editor.html?file={ex['file']}" class="btn btn-primary">Open in Editor</a>
                 </div>
             </div>
         </div>""")
@@ -102,7 +102,7 @@ def html_section(limit: int = 6) -> str:
             {"".join(cards)}
         </div>
         <div style="text-align: center; margin-top: var(--space-xl);">
-            <a href="/examples" class="btn btn-secondary">View All Examples</a>
+            <a href="/examples.html" class="btn btn-secondary">View All Examples</a>
         </div>
     </div>
 </section>
@@ -120,7 +120,7 @@ def html_page() -> str:
                 <h3>{ex["title"]}</h3>
                 <p>{ex["desc"]}</p>
                 <div class="example-card-actions">
-                    <a href="/editor?file={ex['file']}" class="btn btn-primary">Open in Editor</a>
+                    <a href="/editor.html?file={ex['file']}" class="btn btn-primary">Open in Editor</a>
                 </div>
             </div>
         </div>""")
