@@ -190,6 +190,14 @@ def command_build_opencascade(_: argparse.Namespace) -> int:
 
 
 # ##################################################################
+# command publish-site
+# delegates to site/run publish for the marketing website
+def command_publish_site(_: argparse.Namespace) -> int:
+    site_run = PROJECT_ROOT / "site" / "run"
+    return subprocess.call([_venv_python(), str(site_run), "publish"])
+
+
+# ##################################################################
 # main
 # parses arguments and dispatches to appropriate command handler
 def main(argv: list[str]) -> int:
@@ -214,6 +222,9 @@ def main(argv: list[str]) -> int:
 
     p_build_oc = sub.add_parser("build-opencascade", help="Build custom opencascade.js with FreeType")
     p_build_oc.set_defaults(func=command_build_opencascade)
+
+    p_pub_site = sub.add_parser("publish-site", help="Publish the marketing website")
+    p_pub_site.set_defaults(func=command_publish_site)
 
     args = parser.parse_args(argv)
     return args.func(args)

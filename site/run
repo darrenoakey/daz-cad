@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""daz-cad site CLI - generate, deploy, and publish the marketing website."""
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+SITE_ROOT = Path(__file__).parent
+PROJECT_ROOT = SITE_ROOT.parent
+AWS_WEB_ROOT = PROJECT_ROOT.parent / "aws-web"
+
+
+def _add_paths():
+    """Add source directories to Python path."""
+    sys.path.insert(0, str(SITE_ROOT / "src"))
+    sys.path.insert(0, str(AWS_WEB_ROOT / "src"))
+
+
+def _load_config() -> dict:
+    """Load site configuration."""
+    config_path = SITE_ROOT / "local" / "config.json"
+    return json.loads(config_path.read_text())
+
+
+def cmd_generate(args: argparse.Namespace) -> int:
+    """Generate the static site."""
+    _add_paths()
+    from sitegen.generator import generate_site
+    from standalone.bundler import bundle
+
+    print("Generating site...")
+    web_path = generate_site(SITE_ROOT, PROJECT_ROOT)
+    print(f"  Generated pages to {web_path}")
+
+    print("Bundling standalone editor...")
+    bundle(PROJECT_ROOT, web_path)
+    print("  Bundled standalone editor")
+
+    # Copy favicon if it exists
+    favicon_src = PROJECT_ROOT / "static" / "favicon.png"
+    if favicon_src.exists():
+        shutil.copy2(favicon_src, web_path / "favicon-32.png")
+
+    print("Done!")
+    return 0
+
+
+def cmd_screenshots(args: argparse.Namespace) -> int:
+    """Capture screenshots of example models."""
+    _add_paths()
+    from screenshots import capture_screenshots, capture_editor_screenshot
+
+    web_path = SITE_ROOT / "local" / "web"
+    screenshots_dir = web_path / "screenshots"
+
+    server_url = "http://127.0.0.1:8765"
+
+    # Check if server is running
+    import requests
+    try:
+        requests.get(f"{server_url}/health", timeout=2)
+    except (requests.ConnectionError, requests.Timeout):
+        print(f"Error: daz-cad server not running at {server_url}")
+        print("Start it with: ./run serve")
+        return 1
+
+    print("Capturing example screenshots...")
+    capture_screenshots(server_url, screenshots_dir)
+
+    print("Capturing editor screenshot...")
+    capture_editor_screenshot(server_url, web_path / "images" / "editor-full.png")
+
+    print("Done!")
+    return 0
+
+
+def cmd_deploy(args: argparse.Namespace) -> int:
+    """Deploy to S3 using delta sync."""
+    _add_paths()
+    from output import Output
+    from config import WebConfig
+    from deploy import Deployer
+
+    output = Output()
+    config_path = SITE_ROOT / "local" / "config.json"
+    config = WebConfig.load(config_path, project_root=SITE_ROOT)
+
+    output.header("Deploying to S3")
+    output.success(f"Hostname: {config.hostname}")
+    output.success(f"Bucket: {config.bucket_name}")
+
+    deployer = Deployer(config, output)
+    deployer.init_web_directory()
+    deployer.sync()
+
+    output.header("Deploy Complete")
+    return 0
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Set up AWS infrastructure (S3, ACM, CloudFront)."""
+    _add_paths()
+    from output import Output
+    from config import WebConfig
+    from s3 import S3Manager
+    from acm import ACMManager
+    from cloudfront import CloudFrontManager
+
+    output = Output()
+    config_path = SITE_ROOT / "local" / "config.json"
+    config = WebConfig.load(config_path, project_root=SITE_ROOT)
+
+    output.header("AWS Infrastructure Setup")
+    output.success(f"Hostname: {config.hostname}")
+    output.success(f"Bucket: {config.bucket_name}")
+
+    # S3
+    output.section("S3 Bucket")
+    s3 = S3Manager(config, output)
+    s3.ensure_bucket()
+
+    # ACM Certificate
+    output.section("SSL Certificate")
+    acm = ACMManager(config, output)
+    cert_arn = acm.ensure_certificate()
+
+    # CloudFront
+    output.section("CloudFront Distribution")
+    cf = CloudFrontManager(config, output)
+    cf_domain = cf.ensure_distribution(cert_arn)
+
+    output.section("DNS Configuration")
+    output.dns_instructions(
+        website_name=config.subdomain,
+        cloudfront_domain=cf_domain,
+    )
+
+    output.header("Setup Complete")
+    return 0
+
+
+def cmd_publish(args: argparse.Namespace) -> int:
+    """Full publish pipeline: generate, screenshots, deploy."""
+    _add_paths()
+
+    print("=== daz-cad Site Publish ===\n")
+
+    # Step 1: Generate site
+    print("[1/4] Generating site...")
+    result = cmd_generate(argparse.Namespace())
+    if result != 0:
+        return result
+
+    # Step 2: Try to capture screenshots (skip if server not running)
+    print("\n[2/4] Screenshots...")
+    import requests
+    try:
+        requests.get("http://127.0.0.1:8765/health", timeout=2)
+        cmd_screenshots(argparse.Namespace())
+    except (requests.ConnectionError, requests.Timeout):
+        print("  Skipping screenshots (server not running)")
+
+    # Step 3: Generate images (skip if already exist)
+    print("\n[3/4] Images...")
+    web_path = SITE_ROOT / "local" / "web"
+    images_dir = web_path / "images"
+    if (images_dir / "hero.png").exists():
+        print("  Images already exist, skipping generation")
+    else:
+        print("  No images found - run image generation separately")
+
+    # Step 4: Deploy
+    print("\n[4/4] Deploying...")
+    result = cmd_deploy(argparse.Namespace())
+    if result != 0:
+        return result
+
+    print("\n=== Publish Complete ===")
+    return 0
+
+
+def cmd_test(args: argparse.Namespace) -> int:
+    """Test site generation by building and serving locally."""
+    _add_paths()
+
+    # Generate
+    result = cmd_generate(argparse.Namespace())
+    if result != 0:
+        return result
+
+    web_path = SITE_ROOT / "local" / "web"
+    print(f"\nServing from {web_path}")
+    print("Open http://localhost:8000 to preview")
+    print("Press Ctrl+C to stop\n")
+
+    return subprocess.call(
+        [sys.executable, "-m", "http.server", "8000", "--directory", str(web_path)]
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="site",
+        description="daz-cad marketing website CLI",
+    )
+    sub = parser.add_subparsers(dest="command", help="Commands")
+
+    sub.add_parser("generate", help="Generate the static site").set_defaults(func=cmd_generate)
+    sub.add_parser("screenshots", help="Capture example screenshots").set_defaults(func=cmd_screenshots)
+    sub.add_parser("deploy", help="Deploy to S3").set_defaults(func=cmd_deploy)
+    sub.add_parser("setup", help="Set up AWS infrastructure").set_defaults(func=cmd_setup)
+    sub.add_parser("publish", help="Full publish pipeline").set_defaults(func=cmd_publish)
+    sub.add_parser("test", help="Generate and serve locally").set_defaults(func=cmd_test)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

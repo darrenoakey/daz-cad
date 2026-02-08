@@ -1,0 +1,3 @@
+local/web/
+__pycache__/
+*.pyc

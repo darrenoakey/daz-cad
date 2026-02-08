@@ -13,6 +13,9 @@ import '/static/patterns.js';  // Extends Workplane with unified cutPattern()
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
 import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
 
+// Standalone mode flag (set by standalone HTML before loading this module)
+const STANDALONE = window.DAZ_CAD_STANDALONE === true;
+
 // Fallback code in case server load fails
 const FALLBACK_CODE = `// CAD Example - Create a simple box
 const result = new Workplane("XY").box(20, 20, 20);
@@ -765,6 +768,10 @@ class CADEditor {
     }
 
     async _loadDefaultFile() {
+        if (STANDALONE) {
+            return this._loadDefaultFileStandalone();
+        }
+
         try {
             // Priority 1: Check URL path for model name (e.g., /anker_holder → anker_holder.js)
             const pathModel = this._getModelFromPath();
@@ -822,6 +829,38 @@ class CADEditor {
         }
     }
 
+    _loadDefaultFileStandalone() {
+        const examples = window.DAZ_CAD_EXAMPLES || {};
+        const exampleNames = Object.keys(examples);
+
+        // Check URL params for file selection (e.g., ?file=demo_patterns.js)
+        const params = new URLSearchParams(window.location.search);
+        const requestedFile = params.get('file');
+
+        // Check localStorage for last edited standalone file
+        const lastFile = localStorage.getItem('cad-standalone-last-file');
+
+        // Priority: URL param > localStorage > first example > fallback
+        let targetFile = requestedFile || lastFile || exampleNames[0];
+
+        // Check localStorage for user-edited version first
+        const savedContent = localStorage.getItem(`cad-standalone-${targetFile}`);
+        if (savedContent) {
+            this._currentFile = targetFile;
+            this.editor.setValue(savedContent);
+        } else if (examples[targetFile]) {
+            this._currentFile = targetFile;
+            this.editor.setValue(examples[targetFile]);
+        } else {
+            this._currentFile = 'default.js';
+            this.editor.setValue(FALLBACK_CODE);
+        }
+
+        this._fileMtime = null;
+        this._updateFilenameDisplay();
+        localStorage.setItem('cad-standalone-last-file', this._currentFile);
+    }
+
     _getModelFromPath() {
         // Extract model name from URL path (e.g., /anker_holder → anker_holder.js)
         const path = window.location.pathname;
@@ -861,6 +900,14 @@ class CADEditor {
             return;
         }
 
+        if (STANDALONE) {
+            // In standalone, "template" means the bundled example exists
+            const examples = window.DAZ_CAD_EXAMPLES || {};
+            this._hasTemplate = !!examples[this._currentFile];
+            this._resetFileBtn.style.display = this._hasTemplate ? 'flex' : 'none';
+            return;
+        }
+
         try {
             const response = await fetch(`/api/models/${this._currentFile}/has-template`);
             if (response.ok) {
@@ -878,6 +925,21 @@ class CADEditor {
         if (!this._currentFile || !this._hasTemplate) return;
 
         if (!confirm(`Reset "${this._currentFile}" to its original template? This will overwrite your changes.`)) {
+            return;
+        }
+
+        if (STANDALONE) {
+            const examples = window.DAZ_CAD_EXAMPLES || {};
+            if (examples[this._currentFile]) {
+                localStorage.removeItem(`cad-standalone-${this._currentFile}`);
+                this._skipSave = true;
+                this.editor.setValue(examples[this._currentFile]);
+                if (this.debounceTimer) {
+                    clearTimeout(this.debounceTimer);
+                    this.debounceTimer = null;
+                }
+                this._render();
+            }
             return;
         }
 
@@ -912,6 +974,8 @@ class CADEditor {
     }
 
     _startFileWatcher() {
+        if (STANDALONE) return; // No hot reload in standalone mode
+
         // Poll for file changes every 2 seconds
         this._fileWatchInterval = setInterval(() => {
             this._checkFileChanged();
@@ -1022,6 +1086,10 @@ class CADEditor {
     }
 
     async _loadFileList() {
+        if (STANDALONE) {
+            return this._loadFileListStandalone();
+        }
+
         try {
             const response = await fetch('/api/models');
             if (!response.ok) throw new Error('Failed to list models');
@@ -1029,24 +1097,45 @@ class CADEditor {
             const data = await response.json();
             this._availableFiles = data.files || [];
 
-            // Render file list
-            this._fileList.innerHTML = '';
-            for (const filename of this._availableFiles) {
-                const item = document.createElement('div');
-                item.className = 'file-item' + (filename === this._currentFile ? ' active' : '');
-                item.innerHTML = `
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                    </svg>
-                    <span>${filename}</span>
-                `;
-                item.addEventListener('click', () => this._selectFile(filename));
-                this._fileList.appendChild(item);
-            }
+            this._renderFileList();
         } catch (error) {
             console.error('Failed to load file list:', error);
             this._fileList.innerHTML = '<div class="file-item">Error loading files</div>';
+        }
+    }
+
+    _loadFileListStandalone() {
+        const examples = window.DAZ_CAD_EXAMPLES || {};
+        this._availableFiles = Object.keys(examples);
+
+        // Also include any localStorage-saved files not in examples
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key.startsWith('cad-standalone-') && key !== 'cad-standalone-last-file') {
+                const filename = key.replace('cad-standalone-', '');
+                if (!this._availableFiles.includes(filename)) {
+                    this._availableFiles.push(filename);
+                }
+            }
+        }
+
+        this._renderFileList();
+    }
+
+    _renderFileList() {
+        this._fileList.innerHTML = '';
+        for (const filename of this._availableFiles) {
+            const item = document.createElement('div');
+            item.className = 'file-item' + (filename === this._currentFile ? ' active' : '');
+            item.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span>${filename}</span>
+            `;
+            item.addEventListener('click', () => this._selectFile(filename));
+            this._fileList.appendChild(item);
         }
     }
 
@@ -1054,6 +1143,10 @@ class CADEditor {
         if (filename === this._currentFile) {
             this._closeFileDropdown();
             return;
+        }
+
+        if (STANDALONE) {
+            return this._selectFileStandalone(filename);
         }
 
         try {
@@ -1079,6 +1172,29 @@ class CADEditor {
         }
     }
 
+    _selectFileStandalone(filename) {
+        const examples = window.DAZ_CAD_EXAMPLES || {};
+
+        // Check localStorage first for user edits
+        const savedContent = localStorage.getItem(`cad-standalone-${filename}`);
+        if (savedContent) {
+            this._currentFile = filename;
+            this.editor.setValue(savedContent);
+        } else if (examples[filename]) {
+            this._currentFile = filename;
+            this.editor.setValue(examples[filename]);
+        } else {
+            this._showError(`File not found: ${filename}`);
+            return;
+        }
+
+        this._fileMtime = null;
+        this._updateFilenameDisplay();
+        this._closeFileDropdown();
+        localStorage.setItem('cad-standalone-last-file', this._currentFile);
+        this._render();
+    }
+
     async _createNewFile() {
         let filename = this._newFileInput.value.trim();
         if (!filename) return;
@@ -1100,15 +1216,27 @@ class CADEditor {
             return;
         }
 
-        try {
-            // Create new file with template content
-            const templateContent = `// ${filename.replace('.js', '')}
+        const templateContent = `// ${filename.replace('.js', '')}
 // New CAD model - edit this code to create 3D shapes
 
 const result = new Workplane("XY").box(20, 20, 20);
 result;
 `;
 
+        if (STANDALONE) {
+            // Save to localStorage
+            localStorage.setItem(`cad-standalone-${filename}`, templateContent);
+            this._currentFile = filename;
+            this.editor.setValue(templateContent);
+            this._updateFilenameDisplay();
+            this._newFileInput.value = '';
+            this._closeFileDropdown();
+            localStorage.setItem('cad-standalone-last-file', this._currentFile);
+            this._render();
+            return;
+        }
+
+        try {
             const response = await fetch(`/api/models/${filename}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1142,6 +1270,13 @@ result;
         // Skip save if file update came from agent
         if (this._skipSave) {
             this._skipSave = false;
+            return;
+        }
+
+        if (STANDALONE) {
+            // Save to localStorage
+            const content = this.editor.getValue();
+            localStorage.setItem(`cad-standalone-${this._currentFile}`, content);
             return;
         }
 
@@ -1458,6 +1593,7 @@ result;
     }
 
     _enableChat() {
+        if (STANDALONE) return; // Chat disabled in standalone mode
         this._chatInput.disabled = false;
         this._chatSendBtn.disabled = false;
         this._chatInput.placeholder = 'Ask to modify the model...';
