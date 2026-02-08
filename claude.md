@@ -1,4 +1,4 @@
-# daz-cad-2 Project Guide
+# daz-cad Project Guide
 
 ## Overview
 Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript CAD library with CadQuery-like API.
@@ -8,7 +8,8 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - `static/cad.js` - Core Workplane class and CAD operations
 - `static/viewer.js` - Three.js 3D viewer
 - `static/editor.js` - Monaco editor integration
-- `static/cad-library-spec.md` - API docs sent to Claude agent for code generation
+- `static/gridfinity.js` - Gridfinity module (bin, plug, baseplate, fitBin, cutRectGrid, cutCircleGrid)
+- `static/cad-library-spec.md` - **CRITICAL: sole API doc sent to AI agent** — any API not documented here is invisible to the in-app assistant
 - `src/server_test.py` - Playwright-based E2E tests
 
 ## Testing

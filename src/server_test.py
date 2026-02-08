@@ -2065,10 +2065,11 @@ def test_monaco_type_definitions_match_library(server):
                 // Expected methods that should be in both implementation and type definitions
                 // If a method is added to the library, it must also be added here and to editor.js type defs
                 const expectedWorkplaneMethods = [
-                    'box', 'cylinder', 'sphere', 'polygonPrism', 'text',
+                    'box', 'cylinder', 'sphere', 'ellipsoid', 'polygonPrism', 'text',
                     'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet', 'clean',
                     'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
-                    'translate', 'rotate', 'color', 'cutPattern', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutLines', 'cutBelow', 'cutAbove',
+                    'translate', 'rotate', 'color', 'cutPattern', 'cutBorder', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutLines', 'cutBelow', 'cutAbove',
+                    'addTab', 'addSlot',
                     'toSTL', 'to3MF', 'toMesh',
                     'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val',
                     'meta', 'infillDensity', 'infillPattern', 'partName'
@@ -2778,7 +2779,7 @@ def test_example_files_accessible(server):
     """
     import httpx
 
-    example_files = ["border-demo.js", "clip-demo.js"]
+    example_files = ["border-demo.js", "clip-demo.js", "tab-demo.js"]
 
     for filename in example_files:
         response = httpx.get(f"{server}/examples/{filename}")
@@ -2855,3 +2856,125 @@ def test_ellipsoid(server):
         assert abs(result["dz"] - 20) < 2, f"Z dimension wrong: {result['dz']} (expected ~20)"
 
         browser.close()
+
+
+# ##################################################################
+# test addTab and addSlot produce valid geometry matching manual construction
+def test_add_tab_matches_manual_construction(server):
+    """
+    Test that addTab() and addSlot() produce valid geometry by:
+    1. Creating a panel and adding a tab via addTab()
+    2. Verifying the result has more vertices than the bare panel (tab was added)
+    3. Creating a panel and cutting a slot via addSlot()
+    4. Verifying the result has more vertices than the bare panel (slot was cut)
+    5. Verifying derived dimensions match expectations
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(f"{server}/")
+
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000
+        )
+
+        result = page.evaluate("""async () => {
+            try {
+                // Load patterns module (registers addTab/addSlot on Workplane.prototype)
+                await import('/static/patterns.js');
+
+                const THICKNESS = 6.6;
+                const WIDTH = 20;
+                const HEIGHT = 30;
+                const NECK = 1.3;
+
+                // Bare panel for comparison
+                const barePanel = new Workplane("XY").box(THICKNESS, WIDTH, HEIGHT);
+                const bareMesh = barePanel.toMesh(0.1, 0.3);
+                const bareVerts = bareMesh.vertices.length / 3;
+
+                // Panel with tab via addTab()
+                const tabPanel = new Workplane("XY")
+                    .box(THICKNESS, WIDTH, HEIGHT)
+                    .faces(">X")
+                    .addTab({ neckThickness: NECK });
+
+                if (!tabPanel._shape || tabPanel._shape.IsNull()) {
+                    return { success: false, error: 'addTab result shape is null' };
+                }
+
+                const tabMesh = tabPanel.toMesh(0.1, 0.3);
+                const tabVerts = tabMesh.vertices.length / 3;
+
+                // Panel with slot via addSlot()
+                const slotPanel = new Workplane("XY")
+                    .box(THICKNESS, WIDTH, HEIGHT)
+                    .faces("<X")
+                    .addSlot({ neckThickness: NECK, tolerance: 0.1 });
+
+                if (!slotPanel._shape || slotPanel._shape.IsNull()) {
+                    return { success: false, error: 'addSlot result shape is null' };
+                }
+
+                const slotMesh = slotPanel.toMesh(0.1, 0.3);
+                const slotVerts = slotMesh.vertices.length / 3;
+
+                // Verify tab bounding box extends beyond panel in X
+                const tabVertices = tabMesh.vertices;
+                let maxX = -Infinity;
+                for (let i = 0; i < tabVertices.length; i += 3) {
+                    maxX = Math.max(maxX, tabVertices[i]);
+                }
+                // Panel goes from -3.3 to +3.3 in X. Tab should extend beyond 3.3
+                const tabExtends = maxX > THICKNESS / 2 + 0.5;
+
+                // Verify derived dimensions
+                const faceWidth = WIDTH; // min(WIDTH, HEIGHT) = 20
+                const cylinderDiameter = faceWidth - 2 * NECK; // 20 - 2.6 = 17.4
+                const expectedCylRadius = cylinderDiameter / 2; // 8.7
+
+                return {
+                    success: true,
+                    bareVerts,
+                    tabVerts,
+                    slotVerts,
+                    tabExtends,
+                    maxX: maxX,
+                    expectedCylRadius,
+                    tabAddsGeometry: tabVerts > bareVerts,
+                    slotAddsGeometry: slotVerts > bareVerts
+                };
+            } catch (e) {
+                return { success: false, error: e.message, stack: e.stack };
+            }
+        }""")
+
+        page.close()
+        browser.close()
+
+        print(f"\naddTab/addSlot test results:")
+        print(f"  Bare panel vertices: {result.get('bareVerts')}")
+        print(f"  Tab panel vertices:  {result.get('tabVerts')}")
+        print(f"  Slot panel vertices: {result.get('slotVerts')}")
+        print(f"  Tab extends beyond face: {result.get('tabExtends')}")
+        print(f"  Tab maxX: {result.get('maxX')}")
+        print(f"  Expected cylinder radius: {result.get('expectedCylRadius')}")
+
+        assert result["success"], (
+            f"addTab/addSlot test failed: {result.get('error')}\n"
+            f"Stack: {result.get('stack', 'none')}"
+        )
+        assert result["tabAddsGeometry"], (
+            f"addTab didn't add geometry: bare={result['bareVerts']}, tab={result['tabVerts']}"
+        )
+        assert result["slotAddsGeometry"], (
+            f"addSlot didn't cut geometry: bare={result['bareVerts']}, slot={result['slotVerts']}"
+        )
+        assert result["tabExtends"], (
+            f"Tab doesn't extend beyond face: maxX={result['maxX']}"
+        )

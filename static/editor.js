@@ -229,6 +229,9 @@ class CADEditor {
                             /** Create a sphere */
                             sphere(radius: number): Workplane;
 
+                            /** Create an ellipsoid with independent radii */
+                            ellipsoid(rx: number, ry: number, rz: number): Workplane;
+
                             /** Create a polygon prism (3=triangle, 4=square, 6=hexagon) */
                             polygonPrism(sides: number, flatToFlat: number, height: number): Workplane;
 
@@ -357,6 +360,12 @@ class CADEditor {
 
                             /** Add gridfinity baseplate onto top face, auto-sized to fit */
                             addBaseplate(options?: { fillet?: boolean }): Workplane;
+
+                            /** Add a male snap-fit tab extending outward from the selected face */
+                            addTab(options?: { neckThickness?: number; tolerance?: number }): Workplane;
+
+                            /** Cut a female snap-fit slot into the selected face */
+                            addSlot(options?: { neckThickness?: number; tolerance?: number }): Workplane;
 
                             /** Cut away everything below the origin plane on specified axis */
                             cutBelow(axis: "X" | "Y" | "Z"): Workplane;

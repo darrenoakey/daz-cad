@@ -1,5 +1,5 @@
 /**
- * patterns.js - Unified pattern cutting API for daz-cad-2
+ * patterns.js - Unified pattern cutting API for daz-cad
  *
  * Provides a single cutPattern() method that can generate thousands of pattern variations:
  * - Shape types: line, rect, square, circle, hexagon, octagon, triangle, or any n-sided polygon
@@ -1732,6 +1732,396 @@ Workplane.prototype.cutBorder = function(options = {}) {
 
     } catch (e) {
         console.error('[cutBorder] Exception:', e);
+        result._shape = this._shape;
+    }
+
+    return result;
+};
+
+
+// ============================================================
+// addTab() / addSlot() - Face-based snap-fit connectors
+// ============================================================
+
+/**
+ * Build tab connector geometry (neck + cylinder) aligned to a face.
+ * @private
+ * @param {Object} faceInfo - Result from _getFaceCoordinateSystem()
+ * @param {number} neckThickness - Width of the neck bridge (mm)
+ * @param {number} tolerance - Clearance added to female slot (mm)
+ * @param {boolean} isMale - true for tab (additive), false for slot (subtractive)
+ * @returns {Workplane} The connector geometry as a Workplane
+ */
+function _buildTabGeometry(faceInfo, neckThickness, tolerance, isMale) {
+    const { normal, center, uSize, vSize, absNormal } = faceInfo;
+
+    // tabLength = longer face dimension, faceWidth = shorter
+    const tabLength = Math.max(uSize, vSize);
+    const faceWidth = Math.min(uSize, vSize);
+
+    const cylinderRadius = (faceWidth - 2 * neckThickness) / 2;
+    const neckHeight = neckThickness;
+
+    if (cylinderRadius <= 0) {
+        console.error('[addTab] Face too narrow for neckThickness:', faceWidth, neckThickness);
+        return null;
+    }
+
+    // Determine which world axes correspond to normal, tab, and width directions
+    let normalAxis, tabAxis, widthAxis;
+    if (absNormal.z > absNormal.x && absNormal.z > absNormal.y) {
+        normalAxis = 'Z';
+        if (uSize >= vSize) { tabAxis = 'X'; widthAxis = 'Y'; }
+        else { tabAxis = 'Y'; widthAxis = 'X'; }
+    } else if (absNormal.x > absNormal.y) {
+        normalAxis = 'X';
+        if (uSize >= vSize) { tabAxis = 'Y'; widthAxis = 'Z'; }
+        else { tabAxis = 'Z'; widthAxis = 'Y'; }
+    } else {
+        normalAxis = 'Y';
+        if (uSize >= vSize) { tabAxis = 'X'; widthAxis = 'Z'; }
+        else { tabAxis = 'Z'; widthAxis = 'X'; }
+    }
+
+    // Normal direction sign (outward from face)
+    const normalSign = (normalAxis === 'X' ? normal.x : normalAxis === 'Y' ? normal.y : normal.z) > 0 ? 1 : -1;
+
+    // Build geometry offset vector components
+    // Neck: centered on face, extends outward by (neckHeight + cylinderRadius) in normal direction
+    // Cylinder: at neckHeight + cylinderRadius from face surface, along tab axis
+
+    const neckDepth = neckHeight + cylinderRadius;
+
+    let neckW, neckL, neckD; // width, length (tab axis), depth (normal axis)
+    let cylR, cylLen;
+
+    if (isMale) {
+        neckW = neckThickness;
+        neckL = tabLength;
+        neckD = neckDepth;
+        cylR = cylinderRadius;
+        cylLen = tabLength;
+    } else {
+        // Female: add tolerance, extend 1mm past boundaries for clean cuts
+        neckW = neckThickness + 2 * tolerance;
+        neckL = tabLength + 2; // 1mm extra each end
+        neckD = neckDepth + tolerance;
+        cylR = cylinderRadius + tolerance;
+        cylLen = tabLength + 2;
+    }
+
+    // Build neck box and cylinder at origin, then position
+    // Strategy: build everything axis-aligned, then translate to world position
+
+    // Face surface position along normal axis
+    const faceSurfaceNormal = normalAxis === 'X' ? center.x : normalAxis === 'Y' ? center.y : center.z;
+
+    // Compute positions along each axis
+    // Normal axis: neck goes from face surface outward
+    let neckNormalStart, neckNormalSize;
+    let cylNormalCenter;
+
+    if (isMale) {
+        // Male: extends outward from face surface
+        neckNormalStart = faceSurfaceNormal;
+        neckNormalSize = neckD * normalSign;
+        cylNormalCenter = faceSurfaceNormal + (neckHeight + cylinderRadius) * normalSign;
+    } else {
+        // Female: extends inward from face surface + 1mm past surface for clean cut
+        const extra = 1;
+        neckNormalStart = faceSurfaceNormal + extra * normalSign;
+        neckNormalSize = -(neckD + extra) * normalSign;
+        cylNormalCenter = faceSurfaceNormal - (neckHeight + cylinderRadius) * normalSign;
+    }
+
+    // Tab axis: centered on face center along tab axis
+    const faceCenterTab = tabAxis === 'X' ? center.x : tabAxis === 'Y' ? center.y : center.z;
+    const faceCenterWidth = widthAxis === 'X' ? center.x : widthAxis === 'Y' ? center.y : center.z;
+
+    // Build neck box: positioned in world coordinates
+    // Box corner point + dimensions along each axis
+    let nx, ny, nz, ndx, ndy, ndz;
+
+    function setAxis(axis, startVal, sizeVal) {
+        if (axis === 'X') { nx = startVal; ndx = sizeVal; }
+        else if (axis === 'Y') { ny = startVal; ndy = sizeVal; }
+        else { nz = startVal; ndz = sizeVal; }
+    }
+
+    // Initialize
+    nx = 0; ny = 0; nz = 0; ndx = 0; ndy = 0; ndz = 0;
+
+    // Normal axis: from neckNormalStart extending by neckNormalSize
+    setAxis(normalAxis, neckNormalStart, neckNormalSize);
+
+    // Tab axis: centered, full length
+    setAxis(tabAxis, faceCenterTab - neckL / 2, neckL);
+
+    // Width axis: centered, neckW wide
+    setAxis(widthAxis, faceCenterWidth - neckW / 2, neckW);
+
+    const neck = new Workplane("XY").box(1, 1, 1); // placeholder, we'll build with raw OC
+    const oc = getOC();
+
+    // Create neck box using raw OpenCascade (BRepPrimAPI_MakeBox_3 allows negative dimensions via two points)
+    const neckBox = new oc.BRepPrimAPI_MakeBox_3(
+        new oc.gp_Pnt_3(nx, ny, nz),
+        ndx, ndy, ndz
+    );
+    const neckShape = neckBox.Shape();
+    neckBox.delete();
+
+    // Create cylinder along tab axis
+    // Cylinder is created along Z by default, then rotated to tab axis
+    const cylMaker = new oc.BRepPrimAPI_MakeCylinder_1(cylR, cylLen);
+    let cylShape = cylMaker.Shape();
+    cylMaker.delete();
+
+    // Translate cylinder so it's centered: move by -cylLen/2 along Z before rotation
+    const preTranslate = new oc.gp_Trsf_1();
+    preTranslate.SetTranslation_1(new oc.gp_Vec_4(0, 0, -cylLen / 2));
+    const preBuilder = new oc.BRepBuilderAPI_Transform_2(cylShape, preTranslate, true);
+    cylShape = preBuilder.Shape();
+    preBuilder.delete();
+    preTranslate.delete();
+
+    // Rotate cylinder from Z-axis to tab axis
+    if (tabAxis === 'X') {
+        const rot = new oc.gp_Trsf_1();
+        rot.SetRotation_1(
+            new oc.gp_Ax1_2(new oc.gp_Pnt_1(), new oc.gp_Dir_4(0, 1, 0)),
+            Math.PI / 2
+        );
+        const rotBuilder = new oc.BRepBuilderAPI_Transform_2(cylShape, rot, true);
+        cylShape = rotBuilder.Shape();
+        rotBuilder.delete();
+        rot.delete();
+    } else if (tabAxis === 'Y') {
+        const rot = new oc.gp_Trsf_1();
+        rot.SetRotation_1(
+            new oc.gp_Ax1_2(new oc.gp_Pnt_1(), new oc.gp_Dir_4(1, 0, 0)),
+            -Math.PI / 2
+        );
+        const rotBuilder = new oc.BRepBuilderAPI_Transform_2(cylShape, rot, true);
+        cylShape = rotBuilder.Shape();
+        rotBuilder.delete();
+        rot.delete();
+    }
+    // tabAxis === 'Z': no rotation needed
+
+    // Translate cylinder to world position (center of face + offset along normal)
+    const cylTranslate = new oc.gp_Trsf_1();
+    let cx = faceCenterWidth, cy = faceCenterTab, cz = cylNormalCenter;
+    // Map to world axes
+    if (normalAxis === 'Z') {
+        cx = tabAxis === 'X' ? faceCenterTab : faceCenterWidth;
+        cy = tabAxis === 'Y' ? faceCenterTab : faceCenterWidth;
+        cz = cylNormalCenter;
+    } else if (normalAxis === 'X') {
+        cx = cylNormalCenter;
+        cy = tabAxis === 'Y' ? faceCenterTab : faceCenterWidth;
+        cz = tabAxis === 'Z' ? faceCenterTab : faceCenterWidth;
+    } else { // normalAxis === 'Y'
+        cx = tabAxis === 'X' ? faceCenterTab : faceCenterWidth;
+        cy = cylNormalCenter;
+        cz = tabAxis === 'Z' ? faceCenterTab : faceCenterWidth;
+    }
+
+    cylTranslate.SetTranslation_1(new oc.gp_Vec_4(cx, cy, cz));
+    const cylBuilder = new oc.BRepBuilderAPI_Transform_2(cylShape, cylTranslate, true);
+    cylShape = cylBuilder.Shape();
+    cylBuilder.delete();
+    cylTranslate.delete();
+
+    // Fuse neck + cylinder
+    const fuse = new oc.BRepAlgoAPI_Fuse_3(neckShape, cylShape, new oc.Message_ProgressRange_1());
+    fuse.Build(new oc.Message_ProgressRange_1());
+
+    if (!fuse.IsDone()) {
+        console.error('[_buildTabGeometry] Fuse failed');
+        fuse.delete();
+        return null;
+    }
+
+    const fusedShape = fuse.Shape();
+    fuse.delete();
+
+    const result = new Workplane("XY");
+    result._shape = fusedShape;
+    return result;
+}
+
+/**
+ * Add a male snap-fit tab to the selected face.
+ * The tab extends outward from the face surface.
+ *
+ * @param {Object} [options={}] - Tab options
+ * @param {number} [options.neckThickness=1.3] - Width of the neck bridge (mm)
+ * @param {number} [options.tolerance=0.1] - Clearance for mating (informational for male)
+ * @returns {Workplane} New workplane with tab added
+ *
+ * @example
+ *   panel.faces(">X").addTab({ neckThickness: 1.3 });
+ */
+Workplane.prototype.addTab = function(options = {}) {
+    const {
+        neckThickness = 1.3,
+        tolerance = 0.1,
+    } = options;
+
+    if (!this._shape) {
+        console.error('[addTab] No shape');
+        return this;
+    }
+
+    const oc = getOC();
+    if (!oc) {
+        console.error('[addTab] OpenCascade not initialized');
+        return this;
+    }
+
+    const result = new Workplane(this._plane);
+    result._cloneProperties(this);
+
+    try {
+        let face;
+        if (this._selectedFaces && this._selectedFaces.length > 0) {
+            face = this._selectedFaces[0];
+        }
+
+        if (!face) {
+            console.error('[addTab] No face selected');
+            result._shape = this._shape;
+            return result;
+        }
+
+        const faceInfo = _getFaceCoordinateSystem(oc, face, this._shape);
+        if (!faceInfo) {
+            console.error('[addTab] Could not get face coordinate system');
+            result._shape = this._shape;
+            return result;
+        }
+
+        const tabGeom = _buildTabGeometry(faceInfo, neckThickness, tolerance, true);
+        if (!tabGeom) {
+            console.error('[addTab] Could not build tab geometry');
+            result._shape = this._shape;
+            return result;
+        }
+
+        // Union tab with shape
+        const fuse = new oc.BRepAlgoAPI_Fuse_3(
+            this._shape, tabGeom._shape, new oc.Message_ProgressRange_1()
+        );
+        fuse.Build(new oc.Message_ProgressRange_1());
+
+        if (fuse.IsDone()) {
+            const fusedShape = fuse.Shape();
+            if (fusedShape && !fusedShape.IsNull()) {
+                // Clean up internal seams
+                try {
+                    const unify = new oc.ShapeUpgrade_UnifySameDomain_2(fusedShape, true, true, false);
+                    unify.Build();
+                    const unified = unify.Shape();
+                    result._shape = (unified && !unified.IsNull()) ? unified : fusedShape;
+                    unify.delete();
+                } catch (e) {
+                    result._shape = fusedShape;
+                }
+            } else {
+                result._shape = this._shape;
+            }
+        } else {
+            console.error('[addTab] Fuse failed');
+            result._shape = this._shape;
+        }
+        fuse.delete();
+    } catch (e) {
+        console.error('[addTab] Exception:', e);
+        result._shape = this._shape;
+    }
+
+    return result;
+};
+
+/**
+ * Cut a female snap-fit slot from the selected face.
+ * The slot is an inward cavity matching the male tab + tolerance.
+ *
+ * @param {Object} [options={}] - Slot options
+ * @param {number} [options.neckThickness=1.3] - Width of the neck bridge (mm)
+ * @param {number} [options.tolerance=0.1] - Clearance added to slot dimensions (mm)
+ * @returns {Workplane} New workplane with slot cut
+ *
+ * @example
+ *   panel.faces("<X").addSlot({ neckThickness: 1.3, tolerance: 0.1 });
+ */
+Workplane.prototype.addSlot = function(options = {}) {
+    const {
+        neckThickness = 1.3,
+        tolerance = 0.1,
+    } = options;
+
+    if (!this._shape) {
+        console.error('[addSlot] No shape');
+        return this;
+    }
+
+    const oc = getOC();
+    if (!oc) {
+        console.error('[addSlot] OpenCascade not initialized');
+        return this;
+    }
+
+    const result = new Workplane(this._plane);
+    result._cloneProperties(this);
+
+    try {
+        let face;
+        if (this._selectedFaces && this._selectedFaces.length > 0) {
+            face = this._selectedFaces[0];
+        }
+
+        if (!face) {
+            console.error('[addSlot] No face selected');
+            result._shape = this._shape;
+            return result;
+        }
+
+        const faceInfo = _getFaceCoordinateSystem(oc, face, this._shape);
+        if (!faceInfo) {
+            console.error('[addSlot] Could not get face coordinate system');
+            result._shape = this._shape;
+            return result;
+        }
+
+        const slotGeom = _buildTabGeometry(faceInfo, neckThickness, tolerance, false);
+        if (!slotGeom) {
+            console.error('[addSlot] Could not build slot geometry');
+            result._shape = this._shape;
+            return result;
+        }
+
+        // Cut slot from shape
+        const cut = new oc.BRepAlgoAPI_Cut_3(
+            this._shape, slotGeom._shape, new oc.Message_ProgressRange_1()
+        );
+        cut.Build(new oc.Message_ProgressRange_1());
+
+        if (cut.IsDone()) {
+            const cutShape = cut.Shape();
+            if (cutShape && !cutShape.IsNull()) {
+                result._shape = cutShape;
+            } else {
+                result._shape = this._shape;
+            }
+        } else {
+            console.error('[addSlot] Cut failed');
+            result._shape = this._shape;
+        }
+        cut.delete();
+    } catch (e) {
+        console.error('[addSlot] Exception:', e);
         result._shape = this._shape;
     }
 

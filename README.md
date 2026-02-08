@@ -1,12 +1,12 @@
 ![](banner.jpg)
 
-# DAZ-CAD-2
+# DAZ-CAD
 
 A browser-based parametric CAD editor with 3D text support and multi-material 3MF export for Bambu Lab printers.
 
 ## Purpose
 
-DAZ-CAD-2 is a web-based CAD application that allows you to create and edit 3D models directly in your browser. It features:
+DAZ-CAD is a web-based CAD application that allows you to create and edit 3D models directly in your browser. It features:
 
 - Parametric modeling with numeric variable sliders
 - 3D text creation
@@ -24,8 +24,8 @@ DAZ-CAD-2 is a web-based CAD application that allows you to create and edit 3D m
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd daz-cad-2
+git clone https://github.com/darrenoakey/daz-cad.git
+cd daz-cad
 
 # Install dependencies
 ./run install

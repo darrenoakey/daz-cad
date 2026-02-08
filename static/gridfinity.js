@@ -1,5 +1,5 @@
 /**
- * Gridfinity.js - Gridfinity bin/insert generator for daz-cad-2
+ * Gridfinity.js - Gridfinity bin/insert generator for daz-cad
  *
  * Extends the CAD library with Gridfinity-specific operations:
  * - Gridfinity.bin() - Create solid gridfinity bin with standardized base
