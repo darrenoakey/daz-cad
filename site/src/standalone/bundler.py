@@ -57,14 +57,18 @@ def _build_editor_html(source_html: str, examples: dict[str, str]) -> str:
     html = source_html
 
     # Remove the dynamic import map script and replace with static one
+    # Use lambda replacement to prevent re.sub from interpreting backslash
+    # escapes in the JSON (e.g. \\n becoming literal newlines)
+    examples_json = json.dumps(examples, indent=8)
+    import_map = _build_import_map()
     html = re.sub(
         r'<script>\s*const cacheBuster.*?</script>',
-        f"""<script>
+        lambda _: f"""<script>
         window.DAZ_CAD_STANDALONE = true;
-        window.DAZ_CAD_EXAMPLES = {json.dumps(examples, indent=8)};
+        window.DAZ_CAD_EXAMPLES = {examples_json};
     </script>
     <script type="importmap">
-    {_build_import_map()}
+    {import_map}
     </script>""",
         html,
         count=1,
