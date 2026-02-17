@@ -1574,6 +1574,8 @@ result;
     }
 
     _initChat() {
+        if (STANDALONE) return; // Chat disabled in standalone mode
+
         this._chatInput = document.getElementById('chat-input');
         this._chatSendBtn = document.getElementById('chat-send-btn');
         this._chatMessages = document.getElementById('chat-messages');
@@ -1600,6 +1602,7 @@ result;
     }
 
     _disableChat() {
+        if (STANDALONE) return; // Chat disabled in standalone mode
         this._chatInput.disabled = true;
         this._chatSendBtn.disabled = true;
     }
@@ -1617,6 +1620,7 @@ result;
     }
 
     _addChatMessage(role, content) {
+        if (STANDALONE) return; // Chat disabled in standalone mode
         const messageEl = document.createElement('div');
         messageEl.className = `chat-message ${role}`;
         messageEl.textContent = content;
@@ -1625,6 +1629,7 @@ result;
     }
 
     _showTypingIndicator() {
+        if (STANDALONE) return; // Chat disabled in standalone mode
         const indicator = document.createElement('div');
         indicator.className = 'chat-typing';
         indicator.id = 'chat-typing-indicator';
@@ -1652,6 +1657,7 @@ result;
     }
 
     async _sendChatMessage() {
+        if (STANDALONE) return; // Chat disabled in standalone mode
         const message = this._chatInput.value.trim();
         if (!message || this._isProcessing) return;
 

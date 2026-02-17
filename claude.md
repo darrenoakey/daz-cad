@@ -80,12 +80,22 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 
 ## Standalone Editor Mode
 - `window.DAZ_CAD_STANDALONE = true` flag in editor.js
-- Server-dependent methods have `if (STANDALONE)` guards
+- **CRITICAL**: ALL methods that access chat DOM elements (`chat-input`, `chat-send-btn`, `chat-messages`) MUST have `if (STANDALONE) return;` guards — these elements don't exist in standalone HTML (replaced with "AI not available" image). Missing guards crash the entire async `_init()` chain, silently killing Monaco and worker initialization.
 - File storage: localStorage instead of server API
-- Chat pane: hidden via `display: none` in standalone HTML
+- Chat pane: replaced with sad android "AI not available" image in standalone
 - File watchers and hot reload: disabled
 - Bundled examples via `window.DAZ_CAD_EXAMPLES` object
-- URL params: `?file=demo_patterns.js` to select example
+- URL params: `?file=demo_patterns.js` to select example (standalone mode only)
+- Server mode uses URL path for file selection: `/model_name` (not `?file=`)
+
+## Site Deployment
+- S3 bucket: `dazcad-insidemind-com-au-site` (ap-southeast-2)
+- CloudFront: `d36vius0luszvk.cloudfront.net` with URL rewrite function
+- Links use `.html` extensions (S3 compatible), CloudFront rewrites extensionless URLs
+- Screenshots: Playwright capture requires fresh browser per model (OC.js memory leak crashes shared browser)
+- Screenshots wait: 20s for simple models, 35s for complex (clip-demo, baseplate-on-surface)
+- After S3 upload, must invalidate CloudFront cache for changes to appear on custom domain
+- Hero section has dark background always — force light text for buttons regardless of theme
 
 ## Conventions
 - Dimensions in millimeters
