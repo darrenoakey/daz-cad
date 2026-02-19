@@ -5,6 +5,7 @@ import socket
 from contextlib import closing
 import sys
 from pathlib import Path
+from playwright.sync_api import sync_playwright
 
 
 # ##################################################################
@@ -70,12 +71,51 @@ def server(server_port):
 
 
 # ##################################################################
-# browser context fixture
-# creates chromium browser context for playwright tests
+# shared browser fixture
+# single chromium instance reused across all tests (WASM compile cache)
 @pytest.fixture(scope="session")
-def browser_context(playwright):
-    browser = playwright.chromium.launch(headless=True)
-    context = browser.new_context()
-    yield context
-    context.close()
+def shared_browser():
+    pw = sync_playwright().start()
+    browser = pw.chromium.launch(
+        headless=True,
+        args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"]
+    )
+    yield browser
     browser.close()
+    pw.stop()
+
+
+# ##################################################################
+# cad page fixture
+# session-scoped page with OC.js loaded for evaluate-only CAD tests
+@pytest.fixture(scope="session")
+def cad_page(server, shared_browser):
+    page = shared_browser.new_page()
+    page.goto(f"{server}/")
+    page.wait_for_function(
+        """() => {
+            const statusText = document.getElementById('status-text');
+            return statusText && statusText.textContent === 'Ready' && window.Workplane;
+        }""",
+        timeout=90000
+    )
+    yield page
+    page.close()
+
+
+# ##################################################################
+# init page fixture
+# session-scoped page on /init-test with OC.js loaded
+@pytest.fixture(scope="session")
+def init_page(server, shared_browser):
+    page = shared_browser.new_page()
+    page.goto(f"{server}/init-test")
+    page.wait_for_function(
+        """() => {
+            const status = document.getElementById('status');
+            return status && status.classList.contains('success');
+        }""",
+        timeout=60000
+    )
+    yield page
+    page.close()
