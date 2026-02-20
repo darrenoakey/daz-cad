@@ -544,6 +544,78 @@ const result = bin.cut(cutter).color("#3498db");
 result;
 ```
 
+## Named References
+
+Shapes get automatic semantic face names that survive transforms and boolean operations. Convention: Front=+Y, Back=-Y, Right=+X, Left=-X, Top=+Z, Bottom=-Z.
+
+### Auto-Named Faces
+
+**box()** automatically names all 6 faces: `front`, `back`, `right`, `left`, `top`, `bottom`
+
+**cylinder()** automatically names: `top`, `bottom`, `side`
+
+### Face/Edge Selection by Name
+```javascript
+shape.faces("front")       // select front face (same as faces(">Y") on unrotated box)
+shape.edges("front-top")   // select edge between front and top faces
+shape.face("front")        // get FaceRef { normal, centroid, area } for inspection
+```
+
+After transforms, names follow the geometry:
+```javascript
+const box = new Workplane("XY").box(10, 10, 10);
+const rotated = box.rotate(0, 0, 1, 90);
+rotated.faces("front")  // selects the face now at -X (was +Y before rotation)
+```
+
+### Custom Naming
+```javascript
+shape.name("bracket")           // name the whole shape for sub-part access
+shape.nameFace(">Z", "lid")     // add custom name for a face
+shape.nameEdge(">Z and >Y", "rim")  // add custom name for edge(s)
+```
+
+### Relative Operations
+
+**extrudeOn(faceName, width, height, depth)** — extrude box outward from named face, auto-union
+```javascript
+const result = new Workplane("XY").box(20, 20, 20)
+    .extrudeOn("front", 5, 5, 3);  // 3mm protrusion from front face
+```
+
+**extrudeOn(faceName, otherShape)** — position other shape on face, auto-union
+
+**cutInto(faceName, width, height, depth)** — cut pocket inward from named face
+```javascript
+const result = new Workplane("XY").box(20, 20, 20)
+    .cutInto("top", 8, 8, 3);  // 3mm pocket from top
+```
+
+**cutInto(faceName, otherShape)** — position other shape against face, cut
+
+**centerOn(other, faceName)** — center this shape on other's named face
+```javascript
+const knob = new Workplane("XY").cylinder(3, 5);
+const positioned = knob.centerOn(base, "top");
+```
+
+**alignTo(other, faceName)** — align this shape against other's named face
+
+**attachTo(other, faceName)** — place on face and union (= centerOn + union)
+```javascript
+const result = knob.attachTo(base, "top");  // center on top + union
+```
+
+### Sub-Part Access After Boolean
+```javascript
+const base = new Workplane("XY").box(20, 20, 10).name("base");
+const tab = new Workplane("XY").box(5, 5, 5).translate(0, 0, 10).name("tab");
+const merged = base.union(tab);
+
+merged.faces("base.front")  // dotted sub-part access
+merged.faces("front")       // also works (top-level lookup)
+```
+
 ## Tips
 
 1. Always end with `result;` to return the final shape
@@ -552,3 +624,4 @@ result;
 4. Shapes are positioned for 3D printing by default (bottom at Z=0)
 5. Boolean operations create new shapes - assign to variables
 6. **For gridfinity items, always use the Gridfinity module** — never manually build gridfinity geometry with boxes
+7. Use named references (`"front"`, `"top"`) instead of axis selectors for clearer, rotation-safe code

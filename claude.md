@@ -6,6 +6,7 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 ## Key Files
 - `static/patterns.js` - cutPattern() API for cutting shapes into faces
 - `static/cad.js` - Core Workplane class and CAD operations
+- `static/naming.js` - Named references system (semantic face/edge names, relative operations)
 - `static/viewer.js` - Three.js 3D viewer
 - `static/editor.js` - Monaco editor integration
 - `static/gridfinity.js` - Gridfinity module (bin, plug, baseplate, fitBin, cutRectGrid, cutCircleGrid)
@@ -96,6 +97,19 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Screenshots wait: 20s for simple models, 35s for complex (clip-demo, baseplate-on-surface)
 - After S3 upload, must invalidate CloudFront cache for changes to appear on custom domain
 - Hero section has dark background always — force light text for buttons regardless of theme
+
+## Named References System (naming.js)
+- Extends `Workplane.prototype` like patterns.js — zero modifications to cad.js
+- Convention: Front=+Y, Back=-Y, Right=+X, Left=-X, Top=+Z, Bottom=-Z
+- `box()` auto-names 6 faces; `cylinder()` gets top/bottom/side
+- Edges auto-named as "face1-face2" (alphabetical, e.g. "front-top")
+- Names survive `translate()` (centroids shift) and `rotate()` (normals rotate via Rodrigues)
+- Boolean ops re-match faces by similarity scoring (50% normal, 35% centroid, 15% area)
+- `_isFacePlanar()` uses dual-point normal comparison (OC enum comparison unreliable in JS bindings)
+- `_resolveNamedFace()` uses best-match scoring with distance tolerance = 10% of shape diagonal
+- `name("part")` + `.union()` creates `_subParts` for dotted access: `faces("part.front")`
+- Relative ops: `extrudeOn`, `cutInto`, `centerOn`, `alignTo`, `attachTo`
+- Extrusion/cutting use Rodrigues rotation to align box +Z with face normal
 
 ## Conventions
 - Dimensions in millimeters

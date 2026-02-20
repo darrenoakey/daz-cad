@@ -10,6 +10,7 @@ import { CADViewer } from '/static/viewer.js';
 import { initCAD, Workplane, Assembly, Profiler } from '/static/cad.js';
 import { Gridfinity } from '/static/gridfinity.js';
 import '/static/patterns.js';  // Extends Workplane with unified cutPattern()
+import '/static/naming.js';    // Extends Workplane with named references
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
 import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
 
@@ -411,6 +412,37 @@ class CADEditor {
 
                             /** Set part name for 3MF export */
                             partName(name: string): Workplane;
+
+                            /** Name the whole shape for sub-part access after boolean ops */
+                            name(shapeName: string): Workplane;
+
+                            /** Add custom name for a face matching a selector */
+                            nameFace(selector: string, customName: string): Workplane;
+
+                            /** Add custom name for edge(s) matching a selector */
+                            nameEdge(selector: string, customName: string): Workplane;
+
+                            /** Get FaceRef for a named face (for inspection) */
+                            face(name: string): { normal: number[]; centroid: number[]; area: number } | null;
+
+                            /** Extrude box outward from named face, auto-union */
+                            extrudeOn(faceName: string, width: number, height: number, depth: number): Workplane;
+                            /** Position other shape on named face, auto-union */
+                            extrudeOn(faceName: string, other: Workplane): Workplane;
+
+                            /** Cut pocket inward from named face */
+                            cutInto(faceName: string, width: number, height: number, depth: number): Workplane;
+                            /** Position other shape against named face, cut */
+                            cutInto(faceName: string, other: Workplane): Workplane;
+
+                            /** Center this shape on other's named face */
+                            centerOn(other: Workplane, faceName: string): Workplane;
+
+                            /** Align this shape against other's named face */
+                            alignTo(other: Workplane, faceName: string): Workplane;
+
+                            /** Place on other's face and union (= centerOn + union) */
+                            attachTo(other: Workplane, faceName: string): Workplane;
                         }
 
                         /** Assembly of multiple parts */
