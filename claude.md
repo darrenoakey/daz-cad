@@ -114,6 +114,13 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Relative ops: `extrudeOn`, `cutInto`, `centerOn`, `alignTo`, `attachTo`
 - Extrusion/cutting use Rodrigues rotation to align box +Z with face normal
 
+## Adding New Primitives (Checklist)
+When adding a new primitive to the CAD library, ALL four locations must be updated:
+1. `static/cad.js` — Implementation in `Workplane` class (wire/face/extrude pattern via `BRepBuilderAPI_MakeWire` + `BRepBuilderAPI_MakeFace` + `BRepPrimAPI_MakePrism`)
+2. `static/editor.js` — Monaco type definitions (JSDoc + TypeScript signature for autocomplete)
+3. `static/cad-library-spec.md` — API reference + usage examples (this is the AI agent's sole API doc)
+4. `src/server_test.py` — Tests AND add to `expectedWorkplaneMethods` list (type-sync test catches missing entries)
+
 ## Conventions
 - Dimensions in millimeters
 - Result variable must be defined in CAD scripts
