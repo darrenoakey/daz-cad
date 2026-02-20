@@ -966,6 +966,110 @@ class Workplane {
     }
 
     /**
+     * Create a triangular prism (wedge) - a right-angled triangle extruded along X.
+     * Cross-section in YZ plane: triangle from (0,0) to (width,0) to (width,height).
+     * The slope rises from Y=0 (Z=0) to Y=width (Z=height).
+     * @param {number} length - X dimension
+     * @param {number} width - Y dimension (depth)
+     * @param {number} height - Z dimension at the back (>Y) edge
+     * @param {boolean} [centered=true] - Center on X/Y, bottom at Z=0
+     * @returns {Workplane}
+     */
+    wedge(length, width, height, centered = true) {
+        const result = new Workplane(this._plane);
+
+        if (typeof length !== 'number' || length <= 0) {
+            cadError('wedge', `Invalid length: ${length} (must be positive number)`);
+            return result;
+        }
+        if (typeof width !== 'number' || width <= 0) {
+            cadError('wedge', `Invalid width: ${width} (must be positive number)`);
+            return result;
+        }
+        if (typeof height !== 'number' || height <= 0) {
+            cadError('wedge', `Invalid height: ${height} (must be positive number)`);
+            return result;
+        }
+
+        try {
+            // Build triangle cross-section in YZ plane
+            // Right triangle: (0,0) -> (width,0) -> (width,height)
+            const offsetX = centered ? -length / 2 : 0;
+            const offsetY = centered ? -width / 2 : 0;
+
+            const p1 = new oc.gp_Pnt_3(offsetX, offsetY, 0);
+            const p2 = new oc.gp_Pnt_3(offsetX, offsetY + width, 0);
+            const p3 = new oc.gp_Pnt_3(offsetX, offsetY + width, height);
+
+            const wireBuilder = new oc.BRepBuilderAPI_MakeWire_1();
+
+            const e1 = new oc.BRepBuilderAPI_MakeEdge_3(p1, p2);
+            wireBuilder.Add_1(e1.Edge());
+            e1.delete();
+
+            const e2 = new oc.BRepBuilderAPI_MakeEdge_3(p2, p3);
+            wireBuilder.Add_1(e2.Edge());
+            e2.delete();
+
+            const e3 = new oc.BRepBuilderAPI_MakeEdge_3(p3, p1);
+            wireBuilder.Add_1(e3.Edge());
+            e3.delete();
+
+            const wire = wireBuilder.Wire();
+            wireBuilder.delete();
+
+            const faceMaker = new oc.BRepBuilderAPI_MakeFace_15(wire, true);
+            const face = faceMaker.Face();
+            faceMaker.delete();
+
+            // Extrude along X axis
+            const vec = new oc.gp_Vec_4(length, 0, 0);
+            const prism = new oc.BRepPrimAPI_MakePrism_1(face, vec, false, true);
+            result._shape = prism.Shape();
+            prism.delete();
+            vec.delete();
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('wedge', 'Failed to create wedge shape (result is null)');
+            }
+        } catch (e) {
+            cadError('wedge', 'Exception creating wedge', e);
+        }
+
+        return result;
+    }
+
+    /**
+     * Create a triangular prism (wedge) by angle instead of height.
+     * Same as wedge() but the slope angle determines the height.
+     * height = width * tan(angle)
+     * @param {number} length - X dimension
+     * @param {number} width - Y dimension (depth)
+     * @param {number} angle - Slope angle in degrees (0 < angle < 90)
+     * @param {boolean} [centered=true] - Center on X/Y, bottom at Z=0
+     * @returns {Workplane}
+     */
+    wedgeByAngle(length, width, angle, centered = true) {
+        const result = new Workplane(this._plane);
+
+        if (typeof length !== 'number' || length <= 0) {
+            cadError('wedgeByAngle', `Invalid length: ${length} (must be positive number)`);
+            return result;
+        }
+        if (typeof width !== 'number' || width <= 0) {
+            cadError('wedgeByAngle', `Invalid width: ${width} (must be positive number)`);
+            return result;
+        }
+        if (typeof angle !== 'number' || angle <= 0 || angle >= 90) {
+            cadError('wedgeByAngle', `Invalid angle: ${angle} (must be between 0 and 90 degrees exclusive)`);
+            return result;
+        }
+
+        const height = width * Math.tan(angle * Math.PI / 180);
+        return this.wedge(length, width, height, centered);
+    }
+
+    /**
      * Create 3D text using opentype.js for font parsing
      * @param {string} textString - The text to render
      * @param {number} fontSize - Height of the text (font size in model units)

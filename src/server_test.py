@@ -1644,7 +1644,7 @@ def test_monaco_type_definitions_match_library(cad_page):
             // Expected methods that should be in both implementation and type definitions
             // If a method is added to the library, it must also be added here and to editor.js type defs
             const expectedWorkplaneMethods = [
-                'box', 'cylinder', 'sphere', 'ellipsoid', 'polygonPrism', 'text',
+                'box', 'cylinder', 'sphere', 'ellipsoid', 'wedge', 'wedgeByAngle', 'polygonPrism', 'text',
                 'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet', 'clean',
                 'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
                 'translate', 'rotate', 'color', 'cutPattern', 'cutBorder', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutLines', 'cutBelow', 'cutAbove',
@@ -2931,4 +2931,196 @@ def test_naming_system(cad_page):
         }
     }""")
     assert result_attach["success"], f"attachTo failed: {result_attach.get('error')}"
+
+
+# test wedge and wedgeByAngle primitives
+def test_wedge_basic(cad_page):
+    """Test wedge() creates a valid triangular prism with correct geometry."""
+    result = cad_page.evaluate("""() => {
+        try {
+            const w = new Workplane('XY').wedge(20, 10, 5);
+            if (!w._shape) return { success: false, error: 'wedge shape is null' };
+
+            const mesh = w.toMesh(0.1, 0.3);
+            if (!mesh || !mesh.vertices || mesh.vertices.length === 0) {
+                return { success: false, error: 'wedge mesh has no vertices' };
+            }
+
+            // Check bounding box - centered on X/Y, bottom at Z=0
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            for (let i = 0; i < mesh.vertices.length; i += 3) {
+                const x = mesh.vertices[i], y = mesh.vertices[i+1], z = mesh.vertices[i+2];
+                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+            }
+
+            // length=20 centered: -10 to 10
+            if (Math.abs(minX - (-10)) > 0.01 || Math.abs(maxX - 10) > 0.01) {
+                return { success: false, error: `X range wrong: ${minX} to ${maxX}, expected -10 to 10` };
+            }
+            // width=10 centered: -5 to 5
+            if (Math.abs(minY - (-5)) > 0.01 || Math.abs(maxY - 5) > 0.01) {
+                return { success: false, error: `Y range wrong: ${minY} to ${maxY}, expected -5 to 5` };
+            }
+            // height=5, bottom at Z=0
+            if (Math.abs(minZ) > 0.01 || Math.abs(maxZ - 5) > 0.01) {
+                return { success: false, error: `Z range wrong: ${minZ} to ${maxZ}, expected 0 to 5` };
+            }
+
+            return {
+                success: true,
+                vertexCount: mesh.vertices.length / 3,
+                triangleCount: mesh.indices.length / 3
+            };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"wedge basic failed: {result.get('error')}"
+    assert result["vertexCount"] > 0
+    assert result["triangleCount"] > 0
+
+
+def test_wedge_not_centered(cad_page):
+    """Test wedge() with centered=false starts at origin."""
+    result = cad_page.evaluate("""() => {
+        try {
+            const w = new Workplane('XY').wedge(20, 10, 5, false);
+            if (!w._shape) return { success: false, error: 'wedge shape is null' };
+
+            const mesh = w.toMesh(0.1, 0.3);
+            if (!mesh || !mesh.vertices || mesh.vertices.length === 0) {
+                return { success: false, error: 'wedge mesh has no vertices' };
+            }
+
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            for (let i = 0; i < mesh.vertices.length; i += 3) {
+                const x = mesh.vertices[i], y = mesh.vertices[i+1], z = mesh.vertices[i+2];
+                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+            }
+
+            // not centered: X from 0 to 20, Y from 0 to 10, Z from 0 to 5
+            if (Math.abs(minX) > 0.01 || Math.abs(maxX - 20) > 0.01) {
+                return { success: false, error: `X range wrong: ${minX} to ${maxX}, expected 0 to 20` };
+            }
+            if (Math.abs(minY) > 0.01 || Math.abs(maxY - 10) > 0.01) {
+                return { success: false, error: `Y range wrong: ${minY} to ${maxY}, expected 0 to 10` };
+            }
+            if (Math.abs(minZ) > 0.01 || Math.abs(maxZ - 5) > 0.01) {
+                return { success: false, error: `Z range wrong: ${minZ} to ${maxZ}, expected 0 to 5` };
+            }
+
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"wedge not-centered failed: {result.get('error')}"
+
+
+def test_wedge_by_angle(cad_page):
+    """Test wedgeByAngle() computes correct height from angle."""
+    result = cad_page.evaluate("""() => {
+        try {
+            // 45 degrees with width=10 should give height=10
+            const w = new Workplane('XY').wedgeByAngle(20, 10, 45);
+            if (!w._shape) return { success: false, error: 'wedgeByAngle shape is null' };
+
+            const mesh = w.toMesh(0.1, 0.3);
+            if (!mesh || !mesh.vertices || mesh.vertices.length === 0) {
+                return { success: false, error: 'wedgeByAngle mesh has no vertices' };
+            }
+
+            let maxZ = -Infinity;
+            for (let i = 0; i < mesh.vertices.length; i += 3) {
+                maxZ = Math.max(maxZ, mesh.vertices[i+2]);
+            }
+
+            // tan(45°) = 1, so height = 10 * 1 = 10
+            if (Math.abs(maxZ - 10) > 0.01) {
+                return { success: false, error: `Max Z wrong: ${maxZ}, expected 10 (45° with width=10)` };
+            }
+
+            // Also test 30 degrees: tan(30°) ≈ 0.5774, height ≈ 5.774
+            const w30 = new Workplane('XY').wedgeByAngle(20, 10, 30);
+            if (!w30._shape) return { success: false, error: 'wedgeByAngle 30° shape is null' };
+
+            const mesh30 = w30.toMesh(0.1, 0.3);
+            let maxZ30 = -Infinity;
+            for (let i = 0; i < mesh30.vertices.length; i += 3) {
+                maxZ30 = Math.max(maxZ30, mesh30.vertices[i+2]);
+            }
+
+            const expected30 = 10 * Math.tan(30 * Math.PI / 180);
+            if (Math.abs(maxZ30 - expected30) > 0.05) {
+                return { success: false, error: `30° max Z wrong: ${maxZ30}, expected ${expected30}` };
+            }
+
+            return { success: true, maxZ45: maxZ, maxZ30: maxZ30 };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"wedgeByAngle failed: {result.get('error')}"
+
+
+def test_wedge_by_angle_validation(cad_page):
+    """Test wedgeByAngle() rejects invalid angles (<=0, >=90)."""
+    result = cad_page.evaluate("""() => {
+        try {
+            // angle = 0 should fail
+            const w0 = new Workplane('XY').wedgeByAngle(20, 10, 0);
+            if (w0._shape) return { success: false, error: 'angle=0 should have failed' };
+
+            // angle = 90 should fail
+            const w90 = new Workplane('XY').wedgeByAngle(20, 10, 90);
+            if (w90._shape) return { success: false, error: 'angle=90 should have failed' };
+
+            // angle = -5 should fail
+            const wNeg = new Workplane('XY').wedgeByAngle(20, 10, -5);
+            if (wNeg._shape) return { success: false, error: 'negative angle should have failed' };
+
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"wedgeByAngle validation failed: {result.get('error')}"
+
+
+def test_wedge_boolean_operations(cad_page):
+    """Test that wedge works with boolean operations (union, cut)."""
+    result = cad_page.evaluate("""() => {
+        try {
+            const base = new Workplane('XY').box(30, 30, 2);
+            const w = new Workplane('XY').wedge(30, 15, 10);
+
+            // Union
+            const united = base.union(w);
+            if (!united._shape) return { success: false, error: 'union with wedge failed' };
+
+            const baseMesh = base.toMesh(0.1, 0.3);
+            const unitedMesh = united.toMesh(0.1, 0.3);
+            if (unitedMesh.vertices.length <= baseMesh.vertices.length) {
+                return { success: false, error: 'union did not add geometry' };
+            }
+
+            // Cut
+            const bigBox = new Workplane('XY').box(40, 40, 20);
+            const cutResult = bigBox.cut(w);
+            if (!cutResult._shape) return { success: false, error: 'cut with wedge failed' };
+
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"wedge boolean ops failed: {result.get('error')}"
 

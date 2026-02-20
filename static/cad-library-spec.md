@@ -40,6 +40,20 @@ new Workplane(plane)
 - `rz`: Semi-axis length in Z (total Z diameter = 2*rz)
 - Use as a cutter with `.cut()` to carve elliptical bowls, indentations, etc.
 
+**wedge(length, width, height, centered = true)**
+- Creates a right-angled triangular prism (ramp/wedge shape)
+- `length`: X dimension
+- `width`: Y dimension (depth of the slope)
+- `height`: Z dimension at the back (>Y) edge; Z=0 at front (<Y)
+- `centered`: If true (default), centers on X/Y with bottom at Z=0
+- The slope rises linearly from Y_min (Z=0) to Y_max (Z=height)
+
+**wedgeByAngle(length, width, angle, centered = true)**
+- Same as `wedge()` but specifies the slope angle instead of height
+- `angle`: Slope angle in degrees (must be >0 and <90)
+- Height is computed as `width * tan(angle)`
+- Example: `wedgeByAngle(20, 10, 45)` → height = 10
+
 **polygonPrism(sides, flatToFlat, height)**
 - Creates a regular polygon extruded to a prism
 - `sides`: Number of sides (3=triangle, 4=square, 6=hexagon, etc.)
@@ -311,6 +325,24 @@ result;
 const result = new Workplane("XY")
     .polygonPrism(6, 20, 15)
     .color("#9b59b6");
+result;
+```
+
+### Ramp / Wedge
+```javascript
+// Simple ramp: 40mm long, 20mm deep, rises to 10mm height
+const result = new Workplane("XY")
+    .wedge(40, 20, 10)
+    .color("#e74c3c");
+result;
+```
+
+### Wedge by Angle
+```javascript
+// 30-degree ramp: height is calculated from the angle
+const result = new Workplane("XY")
+    .wedgeByAngle(40, 20, 30)
+    .color("#2ecc71");
 result;
 ```
 

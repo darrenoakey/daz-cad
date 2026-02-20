@@ -236,6 +236,12 @@ class CADEditor {
                             /** Create an ellipsoid with independent radii */
                             ellipsoid(rx: number, ry: number, rz: number): Workplane;
 
+                            /** Create a right-angled triangular prism (wedge/ramp). Slope rises from Y_min (Z=0) to Y_max (Z=height). */
+                            wedge(length: number, width: number, height: number, centered?: boolean): Workplane;
+
+                            /** Create a wedge by slope angle (degrees, 0-90 exclusive). Height = width * tan(angle). */
+                            wedgeByAngle(length: number, width: number, angle: number, centered?: boolean): Workplane;
+
                             /** Create a polygon prism (3=triangle, 4=square, 6=hexagon) */
                             polygonPrism(sides: number, flatToFlat: number, height: number): Workplane;
 
