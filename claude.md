@@ -15,10 +15,13 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 
 ## Testing
 - Run tests: `python -m pytest src/server_test.py -v`
+- Smoketest: `./smoketest` (connects to localhost:8765, waits for OC.js ready)
 - Tests use Playwright and require a running server (pytest fixture handles this)
 - Tests use `page.evaluate()` to run JavaScript in browser context
 - Pattern tests verify cutting by comparing mesh vertex counts before/after
 - **Mesh format:** `toMesh()` returns `{ vertices, indices, color, isModifier }` (not `position`)
+- **Shared fixtures** (conftest.py): `shared_browser` (session-scoped Chromium), `cad_page` (editor with OC.js ready), `init_page` (/init-test page). Reuse these — don't create new browsers per test (WASM compile = 30s per browser)
+- **Server fixture**: DO NOT use `--reload` with uvicorn in `run serve` — it creates multiprocessing parent/child that hangs after extended runtime. The in-app FileWatcher + SSE handles browser hot-reload
 
 ## cutPattern() Architecture
 - Cutters are created at Z=0 extending in +Z direction
