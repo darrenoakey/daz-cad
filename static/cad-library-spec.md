@@ -590,7 +590,14 @@ Shapes get automatic semantic face names that survive transforms and boolean ope
 ```javascript
 shape.faces("front")       // select front face (same as faces(">Y") on unrotated box)
 shape.edges("front-top")   // select edge between front and top faces
-shape.face("front")        // get FaceRef { normal, centroid, area } for inspection
+shape.edges("top")         // select all edges of the top face
+shape.face("front")        // select the front face (alias for faces("front"))
+shape.faceInfo("front")    // get FaceRef { normal, centroid, area } for inspection
+
+// fillet/chamfer using face name (operates on that face's edges)
+shape.face("top").fillet(2)       // fillet all edges of the top face
+shape.face("top").chamfer(1)      // chamfer all edges of the top face
+shape.edges("top").chamfer(2)     // equivalent: select top face edges, then chamfer
 ```
 
 After transforms, names follow the geometry:
@@ -605,6 +612,11 @@ rotated.faces("front")  // selects the face now at -X (was +Y before rotation)
 shape.name("bracket")           // name the whole shape for sub-part access
 shape.nameFace(">Z", "lid")     // add custom name for a face
 shape.nameEdge(">Z and >Y", "rim")  // add custom name for edge(s)
+```
+
+### Face Labels (for viewport display)
+```javascript
+shape.getFaceLabels()  // returns { namedFaces: { "front": [cx,cy,cz], ... }, allFaces: [{ name, centroid }, ...] }
 ```
 
 ### Relative Operations

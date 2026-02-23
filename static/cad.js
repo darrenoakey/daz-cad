@@ -2295,6 +2295,30 @@ class Workplane {
     }
 
     /**
+     * Collect all edges from _selectedFaces (used by fillet/chamfer when no edges are explicitly selected)
+     * @private
+     */
+    _edgesFromSelectedFaces() {
+        const edgeSet = new Set();
+        const edges = [];
+        for (const face of this._selectedFaces) {
+            const exp = new oc.TopExp_Explorer_2(
+                face,
+                oc.TopAbs_ShapeEnum.TopAbs_EDGE,
+                oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+            );
+            while (exp.More()) {
+                const edge = oc.TopoDS.Edge_1(exp.Current());
+                const hash = edge.HashCode(1000000);
+                if (!edgeSet.has(hash)) { edgeSet.add(hash); edges.push(edge); }
+                exp.Next();
+            }
+            exp.delete();
+        }
+        return edges;
+    }
+
+    /**
      * Apply chamfer to selected edges
      * Uses BRepFilletAPI_MakeChamfer
      * Preserves all properties
@@ -2351,6 +2375,10 @@ class Workplane {
         }
 
         let edges = this._selectedEdges;
+        // If no edges selected but faces are selected, derive edges from those faces
+        if (edges.length === 0 && this._selectionMode === 'faces' && this._selectedFaces.length > 0) {
+            edges = this._edgesFromSelectedFaces();
+        }
         let edgesAdded = 0;
 
         try {
@@ -2485,6 +2513,10 @@ class Workplane {
         }
 
         let edges = this._selectedEdges;
+        // If no edges selected but faces are selected, derive edges from those faces
+        if (edges.length === 0 && this._selectionMode === 'faces' && this._selectedFaces.length > 0) {
+            edges = this._edgesFromSelectedFaces();
+        }
         let edgesAdded = 0;
 
         if (edges.length === 0) {

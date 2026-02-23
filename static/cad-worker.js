@@ -134,10 +134,20 @@ function executeCode(code) {
     // Convert to mesh data
     if (result.isAssembly) {
         const meshes = result.toMesh(0.1, 0.5);
-        return { isAssembly: true, meshes };
+        // Collect face labels from each part
+        const assemblyFaceLabels = [];
+        if (result._parts) {
+            for (const part of result._parts) {
+                if (part && typeof part.getFaceLabels === 'function') {
+                    assemblyFaceLabels.push(part.getFaceLabels());
+                }
+            }
+        }
+        return { isAssembly: true, meshes, faceLabels: assemblyFaceLabels.length > 0 ? assemblyFaceLabels[0] : null };
     } else {
         const mesh = result.toMesh(0.1, 0.5);
-        return { isAssembly: false, mesh };
+        const faceLabels = typeof result.getFaceLabels === 'function' ? result.getFaceLabels() : null;
+        return { isAssembly: false, mesh, faceLabels };
     }
 }
 

@@ -99,6 +99,9 @@ class CADEditor {
         // Set up opacity slider
         this._initOpacitySlider();
 
+        // Set up face names toggle
+        this._initFaceNamesToggle();
+
         // Initialize file manager
         this._initFileManager();
 
@@ -428,8 +431,14 @@ class CADEditor {
                             /** Add custom name for edge(s) matching a selector */
                             nameEdge(selector: string, customName: string): Workplane;
 
-                            /** Get FaceRef for a named face (for inspection) */
-                            face(name: string): { normal: number[]; centroid: number[]; area: number } | null;
+                            /** Select a named face (alias for faces() with named selector) */
+                            face(name: string): Workplane;
+
+                            /** Get FaceRef data for a named face (for inspection) */
+                            faceInfo(name: string): { normal: number[]; centroid: number[]; area: number } | null;
+
+                            /** Get face label data for 3D viewport display */
+                            getFaceLabels(): { namedFaces: Record<string, number[]>; allFaces: Array<{ name: string; centroid: number[] }> };
 
                             /** Extrude box outward from named face, auto-union */
                             extrudeOn(faceName: string, width: number, height: number, depth: number): Workplane;
@@ -727,6 +736,7 @@ class CADEditor {
                 // Assembly - display all meshes
                 if (meshData.meshes && meshData.meshes.length > 0) {
                     this.viewer.displayMesh(meshData.meshes);
+                    this.viewer.setFaceLabels(meshData.faceLabels || null);
                     this._setStatus('ready', 'Ready');
                     this._downloadSTLBtn.disabled = false;
                     this._download3MFBtn.disabled = false;
@@ -738,6 +748,7 @@ class CADEditor {
                 // Single shape
                 if (meshData.mesh) {
                     this.viewer.displayMesh(meshData.mesh);
+                    this.viewer.setFaceLabels(meshData.faceLabels || null);
                     this._setStatus('ready', 'Ready');
                     this._downloadSTLBtn.disabled = false;
                     this._download3MFBtn.disabled = false;
@@ -1580,6 +1591,28 @@ result;
                 valueDisplay.textContent = slider.value + '%';
             });
         }
+    }
+
+    _initFaceNamesToggle() {
+        if (STANDALONE) return;
+
+        const toggle = document.getElementById('face-names-toggle');
+        if (!toggle) return;
+
+        const buttons = toggle.querySelectorAll('.segmented-btn');
+        buttons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                // Update active state
+                buttons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                // Set mode on viewer
+                const mode = btn.dataset.mode;
+                if (this.viewer) {
+                    this.viewer.setFaceNameMode(mode);
+                }
+            });
+        });
     }
 
     _initConsole() {

@@ -19,6 +19,9 @@ class CADViewer {
         this._userHasInteracted = false; // Track if user has moved/zoomed the view
         this._opacity = 1.0; // Global opacity for all parts (default 100%)
         this._materials = []; // Track materials for opacity updates
+        this._faceLabelsGroup = null; // Group for face name labels
+        this._faceNameMode = 'named'; // 'all' | 'named' | 'none'
+        this._faceLabelsData = null; // Stored face labels data for mode switching
 
         this._init();
         this._animate();
@@ -77,6 +80,10 @@ class CADViewer {
         // Group for meshes
         this.meshGroup = new THREE.Group();
         this.scene.add(this.meshGroup);
+
+        // Group for face name labels
+        this._faceLabelsGroup = new THREE.Group();
+        this.scene.add(this._faceLabelsGroup);
 
         // Handle resize
         window.addEventListener('resize', () => this._onResize());
@@ -428,6 +435,111 @@ class CADViewer {
         const zLabel = this._createTextSprite('Z', '#4444ff');
         zLabel.position.set(0, 0, distance);
         this.scene.add(zLabel);
+    }
+    /**
+     * Create a text sprite for face labels (with background pill)
+     */
+    _createFaceLabelSprite(text) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 512;
+        canvas.height = 128;
+
+        const ctx = canvas.getContext('2d');
+
+        // Background pill
+        const padding = 24;
+        ctx.font = 'bold 64px Arial';
+        const textWidth = ctx.measureText(text).width;
+        const pillWidth = Math.min(textWidth + padding * 2, 500);
+        const pillHeight = 88;
+        const pillX = (512 - pillWidth) / 2;
+        const pillY = (128 - pillHeight) / 2;
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        const radius = pillHeight / 2;
+        ctx.beginPath();
+        ctx.moveTo(pillX + radius, pillY);
+        ctx.lineTo(pillX + pillWidth - radius, pillY);
+        ctx.arc(pillX + pillWidth - radius, pillY + radius, radius, -Math.PI / 2, Math.PI / 2);
+        ctx.lineTo(pillX + radius, pillY + pillHeight);
+        ctx.arc(pillX + radius, pillY + radius, radius, Math.PI / 2, -Math.PI / 2);
+        ctx.closePath();
+        ctx.fill();
+
+        // Text
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, 256, 64);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false,
+            sizeAttenuation: true
+        });
+
+        const sprite = new THREE.Sprite(material);
+        sprite.scale.set(16, 4, 1); // 4:1 aspect ratio, large and readable
+        return sprite;
+    }
+
+    /**
+     * Set face labels data from render result
+     * @param {Object|null} faceLabels - { namedFaces, allFaces }
+     */
+    setFaceLabels(faceLabels) {
+        this._faceLabelsData = faceLabels;
+        this._updateFaceLabels();
+    }
+
+    /**
+     * Set face name display mode
+     * @param {string} mode - 'all' | 'named' | 'none'
+     */
+    setFaceNameMode(mode) {
+        this._faceNameMode = mode;
+        this._updateFaceLabels();
+    }
+
+    /**
+     * Get current face name mode
+     */
+    getFaceNameMode() {
+        return this._faceNameMode;
+    }
+
+    /**
+     * Update face label sprites based on current mode and data
+     * @private
+     */
+    _updateFaceLabels() {
+        // Clear existing labels
+        this._disposeGroup(this._faceLabelsGroup);
+
+        if (this._faceNameMode === 'none' || !this._faceLabelsData) return;
+
+        const data = this._faceLabelsData;
+
+        if (this._faceNameMode === 'named') {
+            // Show only user-explicitly-named faces (via nameFace())
+            const source = data.userNamedFaces || {};
+            for (const [name, centroid] of Object.entries(source)) {
+                const sprite = this._createFaceLabelSprite(name);
+                sprite.position.set(centroid[0], centroid[1], centroid[2]);
+                this._faceLabelsGroup.add(sprite);
+            }
+        } else if (this._faceNameMode === 'all') {
+            // Show all faces with names or indices
+            if (data.allFaces) {
+                for (const { name, centroid } of data.allFaces) {
+                    const sprite = this._createFaceLabelSprite(name);
+                    sprite.position.set(centroid[0], centroid[1], centroid[2]);
+                    this._faceLabelsGroup.add(sprite);
+                }
+            }
+        }
     }
 }
 

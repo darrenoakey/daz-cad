@@ -583,6 +583,7 @@ Workplane.prototype._cloneProperties = function(source) {
 
     this._shapeName = source._shapeName || null;
     this._pendingAutoName = source._pendingAutoName || null;
+    this._userNamedFaces = source._userNamedFaces ? new Set(source._userNamedFaces) : null;
 
     if (source._subParts) {
         this._subParts = {};
@@ -915,6 +916,42 @@ const _origEdges = Workplane.prototype.edges;
 const _origFilterEdges = Workplane.prototype._filterEdges;
 const _origFilterEdgesSingle = Workplane.prototype._filterEdgesSingle;
 
+/**
+ * Find all OC edges belonging to a named face
+ * Resolves the face by name, then enumerates its edges
+ */
+function _resolveEdgesOfNamedFace(shape, namedFaces, faceName) {
+    const oc = getOC();
+    const faceRef = namedFaces[faceName];
+    if (!faceRef) return [];
+
+    // Find the actual OC face
+    const faces = _resolveNamedFace(shape, faceRef);
+    if (faces.length === 0) return [];
+
+    // Enumerate edges of the matched face
+    const edges = [];
+    const seen = new Set();
+    for (const face of faces) {
+        const edgeExplorer = new oc.TopExp_Explorer_2(
+            face,
+            oc.TopAbs_ShapeEnum.TopAbs_EDGE,
+            oc.TopAbs_ShapeEnum.TopAbs_SHAPE
+        );
+        while (edgeExplorer.More()) {
+            const edge = oc.TopoDS.Edge_1(edgeExplorer.Current());
+            const hash = edge.HashCode(1000000);
+            if (!seen.has(hash)) {
+                seen.add(hash);
+                edges.push(edge);
+            }
+            edgeExplorer.Next();
+        }
+        edgeExplorer.delete();
+    }
+    return edges;
+}
+
 Workplane.prototype.edges = function(selector = null) {
     if (!selector || !_hasNamedSelector(selector)) {
         return _origEdges.call(this, selector);
@@ -929,10 +966,19 @@ Workplane.prototype.edges = function(selector = null) {
 
     if (!this._shape) return result;
 
+    const trimmed = selector.trim();
+
     // Check for named edge like "front-top" (lazy compute)
     _ensureNamedEdges(this);
-    if (this._namedEdges && this._namedEdges[selector.trim()]) {
-        result._selectedEdges = _resolveNamedEdge(this._shape, this._namedEdges[selector.trim()]);
+    if (this._namedEdges && this._namedEdges[trimmed]) {
+        result._selectedEdges = _resolveNamedEdge(this._shape, this._namedEdges[trimmed]);
+        return result;
+    }
+
+    // Check if selector matches a face name — select all edges of that face
+    _ensureNamedFaces(this);
+    if (this._namedFaces && this._namedFaces[trimmed]) {
+        result._selectedEdges = _resolveEdgesOfNamedFace(this._shape, this._namedFaces, trimmed);
         return result;
     }
 
@@ -942,13 +988,24 @@ Workplane.prototype.edges = function(selector = null) {
 
 Workplane.prototype._filterEdges = function(edges, selector) {
     if (_hasNamedSelector(selector)) {
-        _ensureNamedEdges(this);
         const trimmed = selector.trim();
+
+        // Check named edges first
+        _ensureNamedEdges(this);
         if (this._namedEdges && this._namedEdges[trimmed]) {
             const resolved = _resolveNamedEdge(this._shape, this._namedEdges[trimmed]);
             const resolvedHashes = new Set(resolved.map(e => e.HashCode(1000000)));
             return edges.filter(e => resolvedHashes.has(e.HashCode(1000000)));
         }
+
+        // Check face names — filter to edges of that face
+        _ensureNamedFaces(this);
+        if (this._namedFaces && this._namedFaces[trimmed]) {
+            const faceEdges = _resolveEdgesOfNamedFace(this._shape, this._namedFaces, trimmed);
+            const faceEdgeHashes = new Set(faceEdges.map(e => e.HashCode(1000000)));
+            return edges.filter(e => faceEdgeHashes.has(e.HashCode(1000000)));
+        }
+
         return [];
     }
     return _origFilterEdges.call(this, edges, selector);
@@ -996,6 +1053,9 @@ Workplane.prototype.nameFace = function(selector, customName) {
             centroid: [...props.centroid],
             area: props.area
         };
+        // Track as user-named (not auto-named)
+        if (!result._userNamedFaces) result._userNamedFaces = new Set();
+        result._userNamedFaces.add(customName);
     }
 
     return result;
@@ -1043,11 +1103,21 @@ Workplane.prototype.nameEdge = function(selector, customName) {
 };
 
 /**
- * Get the FaceRef for a named face (for inspection)
+ * Select a single named face (alias for faces() with named selector)
+ * Enables: shape.face("top").fillet(3)
+ * @param {string} name - Face name
+ * @returns {Workplane}
+ */
+Workplane.prototype.face = function(name) {
+    return this.faces(name);
+};
+
+/**
+ * Get the FaceRef data for a named face (for inspection)
  * @param {string} name - Face name
  * @returns {object|null} FaceRef { normal, centroid, area }
  */
-Workplane.prototype.face = function(name) {
+Workplane.prototype.faceInfo = function(name) {
     _ensureNamedFaces(this);
     if (this._namedFaces && this._namedFaces[name]) {
         return { ...this._namedFaces[name] };
@@ -1060,6 +1130,58 @@ Workplane.prototype.face = function(name) {
         }
     }
     return null;
+};
+
+/**
+ * Get face label data for 3D viewport display
+ * Returns named faces (semantic names) and all faces (indexed with named overrides)
+ * @returns {{ namedFaces: Object, allFaces: Array }}
+ */
+Workplane.prototype.getFaceLabels = function() {
+    _ensureNamedFaces(this);
+    const result = { namedFaces: {}, userNamedFaces: {}, allFaces: [] };
+
+    if (!this._shape) return result;
+
+    // Collect all named face centroids (includes auto-named)
+    if (this._namedFaces) {
+        for (const [name, ref] of Object.entries(this._namedFaces)) {
+            result.namedFaces[name] = [...ref.centroid];
+        }
+    }
+
+    // Collect only user-explicitly-named faces
+    if (this._userNamedFaces && this._namedFaces) {
+        for (const name of this._userNamedFaces) {
+            if (this._namedFaces[name]) {
+                result.userNamedFaces[name] = [...this._namedFaces[name].centroid];
+            }
+        }
+    }
+
+    // Enumerate all faces and match against named faces
+    const allFaceProps = _enumerateFaces(this._shape);
+    let faceIdx = 0;
+    for (const { centroid } of allFaceProps) {
+        let matchedName = null;
+        if (this._namedFaces) {
+            let bestDist = Infinity;
+            for (const [name, ref] of Object.entries(this._namedFaces)) {
+                const dist = _vecDistance(centroid, ref.centroid);
+                if (dist < 1.0 && dist < bestDist) {
+                    bestDist = dist;
+                    matchedName = name;
+                }
+            }
+        }
+        result.allFaces.push({
+            name: matchedName || `face${faceIdx}`,
+            centroid: [...centroid]
+        });
+        faceIdx++;
+    }
+
+    return result;
 };
 
 

@@ -715,6 +715,54 @@
             min-width: 32px;
             text-align: right;
         }
+
+        .face-names-control {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-right: 12px;
+            padding-right: 12px;
+            border-right: 1px solid #30363d;
+        }
+
+        .face-names-control label {
+            color: #8b949e;
+            font-size: 11px;
+            white-space: nowrap;
+            margin-right: 4px;
+        }
+
+        .segmented-control {
+            display: flex;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .segmented-btn {
+            background: #21262d;
+            border: none;
+            color: #8b949e;
+            padding: 3px 10px;
+            font-size: 11px;
+            cursor: pointer;
+            border-right: 1px solid #30363d;
+            transition: background 0.15s, color 0.15s;
+        }
+
+        .segmented-btn:last-child {
+            border-right: none;
+        }
+
+        .segmented-btn:hover {
+            background: #30363d;
+            color: #c9d1d9;
+        }
+
+        .segmented-btn.active {
+            background: #388bfd;
+            color: #ffffff;
+        }
     </style>
     <!-- Dynamic import map with cache busters for local modules -->
     <script>
@@ -787,6 +835,14 @@
                 <div class="viewer-header">
                     <span>3D Preview</span>
                     <div class="toolbar">
+                        <div class="face-names-control">
+                            <label>Faces:</label>
+                            <div class="segmented-control" id="face-names-toggle">
+                                <button class="segmented-btn" data-mode="all">All</button>
+                                <button class="segmented-btn active" data-mode="named">Named</button>
+                                <button class="segmented-btn" data-mode="none">None</button>
+                            </div>
+                        </div>
                         <div class="opacity-control">
                             <label for="opacity-slider">Opacity:</label>
                             <input type="range" id="opacity-slider" min="10" max="100" value="100">
