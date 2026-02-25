@@ -54,6 +54,16 @@ new Workplane(plane)
 - Height is computed as `width * tan(angle)`
 - Example: `wedgeByAngle(20, 10, 45)` → height = 10
 
+**isoPrism(base, length, height, centered = true)**
+- Creates an isosceles triangular prism (symmetric triangle extruded along Z)
+- `base`: X dimension (base of the isosceles triangle)
+- `length`: Y dimension (distance from base to apex)
+- `height`: Z dimension (extrusion thickness)
+- `centered`: If true (default), centers on X/Y with bottom at Z=0
+- Cross-section: isosceles triangle with base along X, apex centered at +Y
+- Example: `isoPrism(8, 7, 4)` → base from X=-4 to X=4, apex at Y=3.5, height 4
+- Use `.rotate()` to orient the prism in different directions
+
 **polygonPrism(sides, flatToFlat, height)**
 - Creates a regular polygon extruded to a prism
 - `sides`: Number of sides (3=triangle, 4=square, 6=hexagon, etc.)

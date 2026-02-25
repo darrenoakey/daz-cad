@@ -245,6 +245,9 @@ class CADEditor {
                             /** Create a wedge by slope angle (degrees, 0-90 exclusive). Height = width * tan(angle). */
                             wedgeByAngle(length: number, width: number, angle: number, centered?: boolean): Workplane;
 
+                            /** Create an isosceles triangular prism. Base along X, apex along +Y, extruded along Z. */
+                            isoPrism(base: number, length: number, height: number, centered?: boolean): Workplane;
+
                             /** Create a polygon prism (3=triangle, 4=square, 6=hexagon) */
                             polygonPrism(sides: number, flatToFlat: number, height: number): Workplane;
 

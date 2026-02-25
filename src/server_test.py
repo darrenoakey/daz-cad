@@ -1645,7 +1645,7 @@ def test_monaco_type_definitions_match_library(cad_page):
             // Expected methods that should be in both implementation and type definitions
             // If a method is added to the library, it must also be added here and to editor.js type defs
             const expectedWorkplaneMethods = [
-                'box', 'cylinder', 'sphere', 'ellipsoid', 'wedge', 'wedgeByAngle', 'polygonPrism', 'text',
+                'box', 'cylinder', 'sphere', 'ellipsoid', 'wedge', 'wedgeByAngle', 'isoPrism', 'polygonPrism', 'text',
                 'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet', 'clean',
                 'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
                 'translate', 'rotate', 'color', 'cutPattern', 'cutBorder', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutLines', 'cutBelow', 'cutAbove',
@@ -3266,4 +3266,310 @@ def test_wedge_boolean_operations(cad_page):
         }
     }""")
     assert result["success"], f"wedge boolean ops failed: {result.get('error')}"
+
+
+# test isoPrism - isosceles triangular prism
+def test_iso_prism_basic_centered(cad_page):
+    """Test isoPrism() creates a valid isosceles triangular prism with correct bounding box (centered)."""
+    result = cad_page.evaluate("""() => {
+        try {
+            // base=8, length=7, height=4
+            const w = new Workplane('XY').isoPrism(8, 7, 4);
+            if (!w._shape) return { success: false, error: 'isoPrism shape is null' };
+
+            const mesh = w.toMesh(0.1, 0.3);
+            if (!mesh || !mesh.vertices || mesh.vertices.length === 0) {
+                return { success: false, error: 'isoPrism mesh has no vertices' };
+            }
+
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            for (let i = 0; i < mesh.vertices.length; i += 3) {
+                const x = mesh.vertices[i], y = mesh.vertices[i+1], z = mesh.vertices[i+2];
+                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+            }
+
+            // base=8 centered: X from -4 to 4
+            if (Math.abs(minX - (-4)) > 0.01 || Math.abs(maxX - 4) > 0.01) {
+                return { success: false, error: `X range wrong: ${minX} to ${maxX}, expected -4 to 4` };
+            }
+            // length=7 centered: Y from -3.5 to 3.5
+            if (Math.abs(minY - (-3.5)) > 0.01 || Math.abs(maxY - 3.5) > 0.01) {
+                return { success: false, error: `Y range wrong: ${minY} to ${maxY}, expected -3.5 to 3.5` };
+            }
+            // height=4: Z from 0 to 4
+            if (Math.abs(minZ) > 0.01 || Math.abs(maxZ - 4) > 0.01) {
+                return { success: false, error: `Z range wrong: ${minZ} to ${maxZ}, expected 0 to 4` };
+            }
+
+            return {
+                success: true,
+                vertexCount: mesh.vertices.length / 3,
+                triangleCount: mesh.indices.length / 3
+            };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"isoPrism basic centered failed: {result.get('error')}"
+    assert result["vertexCount"] > 0
+    assert result["triangleCount"] > 0
+
+
+def test_iso_prism_not_centered(cad_page):
+    """Test isoPrism() with centered=false starts at origin."""
+    result = cad_page.evaluate("""() => {
+        try {
+            // base=8, length=7, height=4, not centered
+            const w = new Workplane('XY').isoPrism(8, 7, 4, false);
+            if (!w._shape) return { success: false, error: 'isoPrism shape is null' };
+
+            const mesh = w.toMesh(0.1, 0.3);
+            if (!mesh || !mesh.vertices || mesh.vertices.length === 0) {
+                return { success: false, error: 'isoPrism mesh has no vertices' };
+            }
+
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            for (let i = 0; i < mesh.vertices.length; i += 3) {
+                const x = mesh.vertices[i], y = mesh.vertices[i+1], z = mesh.vertices[i+2];
+                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+            }
+
+            // not centered: X from 0 to 8, Y from 0 to 7, Z from 0 to 4
+            if (Math.abs(minX) > 0.01 || Math.abs(maxX - 8) > 0.01) {
+                return { success: false, error: `X range wrong: ${minX} to ${maxX}, expected 0 to 8` };
+            }
+            if (Math.abs(minY) > 0.01 || Math.abs(maxY - 7) > 0.01) {
+                return { success: false, error: `Y range wrong: ${minY} to ${maxY}, expected 0 to 7` };
+            }
+            if (Math.abs(minZ) > 0.01 || Math.abs(maxZ - 4) > 0.01) {
+                return { success: false, error: `Z range wrong: ${minZ} to ${maxZ}, expected 0 to 4` };
+            }
+
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"isoPrism not-centered failed: {result.get('error')}"
+
+
+def test_iso_prism_vertex_math(cad_page):
+    """Verify exact vertex positions of isoPrism mathematically.
+    For base=8, length=7, height=4, centered=false:
+    Bottom triangle: (0,0,0), (8,0,0), (4,7,0)
+    Top triangle: (0,0,4), (8,0,4), (4,7,4)
+    """
+    result = cad_page.evaluate("""() => {
+        try {
+            const w = new Workplane('XY').isoPrism(8, 7, 4, false);
+            if (!w._shape) return { success: false, error: 'isoPrism shape is null' };
+
+            const mesh = w.toMesh(0.01, 0.01);
+            const verts = [];
+            for (let i = 0; i < mesh.vertices.length; i += 3) {
+                verts.push([mesh.vertices[i], mesh.vertices[i+1], mesh.vertices[i+2]]);
+            }
+
+            // Expected 6 unique vertices (corners of the prism)
+            // Due to mesh tessellation, there may be duplicates; find unique ones
+            const unique = [];
+            for (const v of verts) {
+                const found = unique.some(u =>
+                    Math.abs(u[0] - v[0]) < 0.02 &&
+                    Math.abs(u[1] - v[1]) < 0.02 &&
+                    Math.abs(u[2] - v[2]) < 0.02
+                );
+                if (!found) unique.push(v);
+            }
+
+            // Expected corners (not centered):
+            // Bottom: (0,0,0), (8,0,0), (4,7,0)
+            // Top: (0,0,4), (8,0,4), (4,7,4)
+            const expected = [
+                [0, 0, 0], [8, 0, 0], [4, 7, 0],
+                [0, 0, 4], [8, 0, 4], [4, 7, 4]
+            ];
+
+            const missing = [];
+            for (const e of expected) {
+                const found = unique.some(u =>
+                    Math.abs(u[0] - e[0]) < 0.05 &&
+                    Math.abs(u[1] - e[1]) < 0.05 &&
+                    Math.abs(u[2] - e[2]) < 0.05
+                );
+                if (!found) missing.push(e);
+            }
+
+            if (missing.length > 0) {
+                return {
+                    success: false,
+                    error: `Missing expected vertices: ${JSON.stringify(missing)}`,
+                    uniqueCount: unique.length,
+                    uniqueVerts: unique.slice(0, 20)
+                };
+            }
+
+            return { success: true, uniqueCount: unique.length };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"isoPrism vertex math failed: {result.get('error')}"
+
+
+def test_iso_prism_rotated_length_along_z(cad_page):
+    """Test isoPrism rotated so the triangle length (apex direction) goes along Z.
+    rotate(axisX, axisY, axisZ, angleDegrees): rotate -90° around X axis.
+    Original centered: X[-4,4], Y[-3.5,3.5], Z[0,4]
+    -90° around X: (x,y,z) → (x, z, -y)
+    Rotated: X[-4,4], Y[0,4], Z[-3.5,3.5]
+    """
+    result = cad_page.evaluate("""() => {
+        try {
+            const w = new Workplane('XY').isoPrism(8, 7, 4).rotate(1, 0, 0, -90);
+            if (!w._shape) return { success: false, error: 'rotated isoPrism shape is null' };
+
+            const mesh = w.toMesh(0.1, 0.3);
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            for (let i = 0; i < mesh.vertices.length; i += 3) {
+                const x = mesh.vertices[i], y = mesh.vertices[i+1], z = mesh.vertices[i+2];
+                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+            }
+
+            // After -90° around X: (x,y,z) → (x, z, -y)
+            // Original centered: X[-4,4], Y[-3.5,3.5], Z[0,4]
+            // Rotated: X[-4,4], Y[0,4], Z[-3.5,3.5]
+            const tol = 0.05;
+            const checks = [];
+            if (Math.abs(minX - (-4)) > tol || Math.abs(maxX - 4) > tol)
+                checks.push(`X: ${minX.toFixed(2)} to ${maxX.toFixed(2)}, expected -4 to 4`);
+            if (Math.abs(minY - 0) > tol || Math.abs(maxY - 4) > tol)
+                checks.push(`Y: ${minY.toFixed(2)} to ${maxY.toFixed(2)}, expected 0 to 4`);
+            if (Math.abs(minZ - (-3.5)) > tol || Math.abs(maxZ - 3.5) > tol)
+                checks.push(`Z: ${minZ.toFixed(2)} to ${maxZ.toFixed(2)}, expected -3.5 to 3.5`);
+
+            if (checks.length > 0) {
+                return { success: false, error: 'Bounding box mismatch: ' + checks.join('; ') };
+            }
+
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"isoPrism rotated (length along Z) failed: {result.get('error')}"
+
+
+def test_iso_prism_rotated_length_along_x(cad_page):
+    """Test isoPrism rotated so the triangle length (apex direction) goes along X.
+    rotate(0, 0, 1, 90): +90° around Z axis.
+    Original centered: X[-4,4], Y[-3.5,3.5], Z[0,4]
+    +90° around Z: (x,y) → (-y, x)
+    Rotated: X[-3.5,3.5], Y[-4,4], Z[0,4]
+    """
+    result = cad_page.evaluate("""() => {
+        try {
+            const w = new Workplane('XY').isoPrism(8, 7, 4).rotate(0, 0, 1, 90);
+            if (!w._shape) return { success: false, error: 'rotated isoPrism shape is null' };
+
+            const mesh = w.toMesh(0.1, 0.3);
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+            for (let i = 0; i < mesh.vertices.length; i += 3) {
+                const x = mesh.vertices[i], y = mesh.vertices[i+1], z = mesh.vertices[i+2];
+                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+            }
+
+            // After +90° around Z: (x,y) → (-y, x)
+            // Original: X[-4,4], Y[-3.5,3.5]
+            // Rotated: X[-3.5,3.5], Y[-4,4], Z[0,4]
+            const tol = 0.05;
+            const checks = [];
+            if (Math.abs(minX - (-3.5)) > tol || Math.abs(maxX - 3.5) > tol)
+                checks.push(`X: ${minX.toFixed(2)} to ${maxX.toFixed(2)}, expected -3.5 to 3.5`);
+            if (Math.abs(minY - (-4)) > tol || Math.abs(maxY - 4) > tol)
+                checks.push(`Y: ${minY.toFixed(2)} to ${maxY.toFixed(2)}, expected -4 to 4`);
+            if (Math.abs(minZ - 0) > tol || Math.abs(maxZ - 4) > tol)
+                checks.push(`Z: ${minZ.toFixed(2)} to ${maxZ.toFixed(2)}, expected 0 to 4`);
+
+            if (checks.length > 0) {
+                return { success: false, error: 'Bounding box mismatch: ' + checks.join('; ') };
+            }
+
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"isoPrism rotated (length along X) failed: {result.get('error')}"
+
+
+def test_iso_prism_validation(cad_page):
+    """Test isoPrism() rejects invalid parameters."""
+    result = cad_page.evaluate("""() => {
+        try {
+            const w1 = new Workplane('XY').isoPrism(0, 7, 4);
+            if (w1._shape) return { success: false, error: 'base=0 should have failed' };
+
+            const w2 = new Workplane('XY').isoPrism(8, -1, 4);
+            if (w2._shape) return { success: false, error: 'negative length should have failed' };
+
+            const w3 = new Workplane('XY').isoPrism(8, 7, 0);
+            if (w3._shape) return { success: false, error: 'height=0 should have failed' };
+
+            const w4 = new Workplane('XY').isoPrism('bad', 7, 4);
+            if (w4._shape) return { success: false, error: 'string base should have failed' };
+
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"isoPrism validation failed: {result.get('error')}"
+
+
+def test_iso_prism_boolean_operations(cad_page):
+    """Test that isoPrism works with boolean operations (union, cut)."""
+    result = cad_page.evaluate("""() => {
+        try {
+            const base = new Workplane('XY').box(20, 20, 2);
+            const tri = new Workplane('XY').isoPrism(10, 8, 6);
+
+            // Union
+            const united = base.union(tri);
+            if (!united._shape) return { success: false, error: 'union with isoPrism failed' };
+
+            const baseMesh = base.toMesh(0.1, 0.3);
+            const unitedMesh = united.toMesh(0.1, 0.3);
+            if (unitedMesh.vertices.length <= baseMesh.vertices.length) {
+                return { success: false, error: 'union did not add geometry' };
+            }
+
+            // Cut
+            const bigBox = new Workplane('XY').box(30, 30, 20);
+            const cutResult = bigBox.cut(tri);
+            if (!cutResult._shape) return { success: false, error: 'cut with isoPrism failed' };
+
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }""")
+    assert result["success"], f"isoPrism boolean ops failed: {result.get('error')}"
+
 

@@ -1070,6 +1070,79 @@ class Workplane {
     }
 
     /**
+     * Create an isosceles triangular prism - symmetric triangle extruded along Z.
+     * Cross-section in XY plane: base along X from (-base/2, 0) to (base/2, 0),
+     * apex at (0, length). Extruded along Z by height.
+     * @param {number} base - X dimension (base of the isosceles triangle)
+     * @param {number} length - Y dimension (distance from base to apex)
+     * @param {number} height - Z dimension (extrusion thickness)
+     * @param {boolean} [centered=true] - Center on X/Y, bottom at Z=0
+     * @returns {Workplane}
+     */
+    isoPrism(base, length, height, centered = true) {
+        const result = new Workplane(this._plane);
+
+        if (typeof base !== 'number' || base <= 0) {
+            cadError('isoPrism', `Invalid base: ${base} (must be positive number)`);
+            return result;
+        }
+        if (typeof length !== 'number' || length <= 0) {
+            cadError('isoPrism', `Invalid length: ${length} (must be positive number)`);
+            return result;
+        }
+        if (typeof height !== 'number' || height <= 0) {
+            cadError('isoPrism', `Invalid height: ${height} (must be positive number)`);
+            return result;
+        }
+
+        try {
+            // Build isosceles triangle cross-section in XY plane
+            const offsetX = centered ? 0 : base / 2;
+            const offsetY = centered ? -length / 2 : 0;
+
+            const p1 = new oc.gp_Pnt_3(-base / 2 + offsetX, offsetY, 0);
+            const p2 = new oc.gp_Pnt_3(base / 2 + offsetX, offsetY, 0);
+            const p3 = new oc.gp_Pnt_3(offsetX, length + offsetY, 0);
+
+            const wireBuilder = new oc.BRepBuilderAPI_MakeWire_1();
+
+            const e1 = new oc.BRepBuilderAPI_MakeEdge_3(p1, p2);
+            wireBuilder.Add_1(e1.Edge());
+            e1.delete();
+
+            const e2 = new oc.BRepBuilderAPI_MakeEdge_3(p2, p3);
+            wireBuilder.Add_1(e2.Edge());
+            e2.delete();
+
+            const e3 = new oc.BRepBuilderAPI_MakeEdge_3(p3, p1);
+            wireBuilder.Add_1(e3.Edge());
+            e3.delete();
+
+            const wire = wireBuilder.Wire();
+            wireBuilder.delete();
+
+            const faceMaker = new oc.BRepBuilderAPI_MakeFace_15(wire, true);
+            const face = faceMaker.Face();
+            faceMaker.delete();
+
+            // Extrude along Z axis
+            const vec = new oc.gp_Vec_4(0, 0, height);
+            const prism = new oc.BRepPrimAPI_MakePrism_1(face, vec, false, true);
+            result._shape = prism.Shape();
+            prism.delete();
+            vec.delete();
+
+            if (!result._shape || result._shape.IsNull()) {
+                cadError('isoPrism', 'Failed to create isoPrism shape (result is null)');
+            }
+        } catch (e) {
+            cadError('isoPrism', 'Exception creating isoPrism', e);
+        }
+
+        return result;
+    }
+
+    /**
      * Create 3D text using opentype.js for font parsing
      * @param {string} textString - The text to render
      * @param {number} fontSize - Height of the text (font size in model units)

@@ -113,6 +113,9 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - `name("part")` + `.union()` creates `_subParts` for dotted access: `faces("part.front")`
 - Relative ops: `extrudeOn`, `cutInto`, `centerOn`, `alignTo`, `attachTo`
 - Extrusion/cutting use Rodrigues rotation to align box +Z with face normal
+- **Face name selectors**: `face("top")` is a selector (returns Workplane with `_selectedFaces`), NOT inspection — use `faceInfo("top")` for `{ normal, centroid, area }`
+- **edges by face name**: `edges("top")` selects all edges of the top face — enables `box.edges("top").chamfer(2)`
+- **fillet/chamfer from face**: `face("top").fillet(2)` works — `fillet()`/`chamfer()` in cad.js derive edges via `_edgesFromSelectedFaces()` when `_selectedFaces` is set and `_selectedEdges` is empty
 
 ## Adding New Primitives (Checklist)
 When adding a new primitive to the CAD library, ALL four locations must be updated:
