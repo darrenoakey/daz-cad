@@ -104,4 +104,4 @@ Click the reset button to load template demo files and explore the editor's capa
 
 ## License
 
-This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev) - free to use and modify, but no commercial use without permission.
+This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev/license) - free to use and modify, but no commercial use without permission.
