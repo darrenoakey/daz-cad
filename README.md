@@ -101,3 +101,7 @@ Click the reset button to load template demo files and explore the editor's capa
 | `./run lint` | Run code linter |
 | `./run install` | Install all dependencies |
 | `./run build-opencascade` | Build custom OpenCascade.js |
+
+## License
+
+This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev) - free to use and modify, but no commercial use without permission.
