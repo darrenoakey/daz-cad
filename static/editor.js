@@ -54,6 +54,10 @@ class CADEditor {
         this._chatSendBtn = null;
         this._chatMessages = null;
 
+        // Local LLM state (Chrome Prompt API for standalone mode)
+        this._localLLMSession = null;
+        this._useLocalLLM = false;
+
         // Console output state
         this._consoleOutput = null;
         this._consoleClearBtn = null;
@@ -107,6 +111,9 @@ class CADEditor {
 
         // Initialize console output
         this._initConsole();
+
+        // Try to set up Chrome's on-device LLM (standalone mode only)
+        await this._setupLocalLLM();
 
         // Initialize chat UI
         this._initChat();
@@ -1647,12 +1654,100 @@ result;
         }
     }
 
+    // Local LLM (Chrome Prompt API) — compact system prompt that fits Gemini Nano's context window.
+    _localLLMSystemPrompt() {
+        return `You modify JavaScript code for a CadQuery-like 3D CAD library called daz-cad. Dimensions are in millimeters.
+
+Common API (chained on a Workplane):
+- Primitives: new Workplane("XY").box(l,w,h) | cylinder(r,h) | sphere(r) | cone(r1,r2,h) | ellipsoid(rx,ry,rz) | isoPrism(b,h,len).
+- Transform: .translate([x,y,z]), .rotate(axis,deg).
+- Boolean: .union(other), .cut(other), .intersect(other).
+- Edges/faces: .fillet(r), .chamfer(d), .edges("|Z"|"<X"|">Y"), .edgesNot(sel), .face("top"|"bottom"|"front"|"back"|"left"|"right").
+- Cosmetic: .color("#hex").
+- Patterns: .cutPattern({shape:"circle"|"hex"|"rect"|"slot", width, spacing, border, clip:"partial"|"whole"}).
+- Gridfinity: new Gridfinity().bin(x,y,h) | plug() | baseplate(x,y) | fitBin(bin,plug).
+
+The script MUST define a const named \`result\` and end with the line \`result;\`.
+
+When the user asks for a change, respond with:
+1. One short sentence describing the change.
+2. A single fenced code block containing the COMPLETE updated script:
+\`\`\`javascript
+// ...full code...
+result;
+\`\`\`
+
+Do not include any other code blocks. Keep changes minimal and targeted.`;
+    }
+
+    async _setupLocalLLM() {
+        if (!STANDALONE) return false;
+        if (typeof LanguageModel === 'undefined') {
+            console.log('Chrome Prompt API not available (no LanguageModel global)');
+            return false;
+        }
+
+        try {
+            const availability = await LanguageModel.availability();
+            console.log('LanguageModel availability:', availability);
+            if (availability === 'unavailable') return false;
+
+            this._localLLMSession = await LanguageModel.create({
+                initialPrompts: [
+                    { role: 'system', content: this._localLLMSystemPrompt() }
+                ]
+            });
+            this._useLocalLLM = true;
+            console.log(`Local LLM ready. Context: ${this._localLLMSession.contextUsage}/${this._localLLMSession.contextWindow}`);
+            return true;
+        } catch (e) {
+            console.warn('Local LLM setup failed:', e);
+            this._localLLMSession = null;
+            this._useLocalLLM = false;
+            return false;
+        }
+    }
+
+    _chatActive() {
+        // Chat operates in server mode, or in standalone mode when a local LLM is available.
+        return !STANDALONE || this._useLocalLLM;
+    }
+
+    _showChatUnavailable() {
+        const pane = document.querySelector('.chat-pane');
+        if (!pane) return;
+        pane.style.display = 'flex';
+        pane.style.flexDirection = 'column';
+        pane.style.alignItems = 'center';
+        pane.style.justifyContent = 'center';
+        pane.style.background = '#0B1120';
+        pane.style.padding = '20px';
+        pane.innerHTML =
+            '<img src="images/feature-ai-unavailable.jpg" alt="AI Assistant not available in this browser" ' +
+            'style="max-width: 100%; border-radius: 12px; margin-bottom: 12px;">' +
+            '<p style="color: #94A3B8; font-size: 0.8rem; text-align: center; line-height: 1.4;">' +
+            'AI not available. Use Chrome with the built-in <code style="color: #06B6D4;">LanguageModel</code> API enabled, ' +
+            'or run <code style="color: #06B6D4;">./run serve</code> locally.</p>';
+    }
+
     _initChat() {
-        if (STANDALONE) return; // Chat disabled in standalone mode
+        if (!this._chatActive()) {
+            this._showChatUnavailable();
+            return;
+        }
 
         this._chatInput = document.getElementById('chat-input');
         this._chatSendBtn = document.getElementById('chat-send-btn');
         this._chatMessages = document.getElementById('chat-messages');
+
+        if (this._useLocalLLM) {
+            const note = document.createElement('div');
+            note.className = 'chat-message assistant';
+            note.style.fontSize = '0.75rem';
+            note.style.opacity = '0.7';
+            note.textContent = 'Using Chrome on-device AI (Gemini Nano). Responses are local and may be slower or less accurate than the server agent.';
+            this._chatMessages.appendChild(note);
+        }
 
         // Enter key to send
         this._chatInput.addEventListener('keypress', (e) => {
@@ -1669,14 +1764,16 @@ result;
     }
 
     _enableChat() {
-        if (STANDALONE) return; // Chat disabled in standalone mode
+        if (!this._chatActive()) return;
         this._chatInput.disabled = false;
         this._chatSendBtn.disabled = false;
-        this._chatInput.placeholder = 'Ask to modify the model...';
+        this._chatInput.placeholder = this._useLocalLLM
+            ? 'Ask the on-device AI to modify the model...'
+            : 'Ask to modify the model...';
     }
 
     _disableChat() {
-        if (STANDALONE) return; // Chat disabled in standalone mode
+        if (!this._chatActive()) return;
         this._chatInput.disabled = true;
         this._chatSendBtn.disabled = true;
     }
@@ -1694,7 +1791,7 @@ result;
     }
 
     _addChatMessage(role, content) {
-        if (STANDALONE) return; // Chat disabled in standalone mode
+        if (!this._chatActive()) return;
         const messageEl = document.createElement('div');
         messageEl.className = `chat-message ${role}`;
         messageEl.textContent = content;
@@ -1703,7 +1800,7 @@ result;
     }
 
     _showTypingIndicator() {
-        if (STANDALONE) return; // Chat disabled in standalone mode
+        if (!this._chatActive()) return;
         const indicator = document.createElement('div');
         indicator.className = 'chat-typing';
         indicator.id = 'chat-typing-indicator';
@@ -1731,7 +1828,7 @@ result;
     }
 
     async _sendChatMessage() {
-        if (STANDALONE) return; // Chat disabled in standalone mode
+        if (!this._chatActive()) return;
         const message = this._chatInput.value.trim();
         if (!message || this._isProcessing) return;
 
@@ -1751,34 +1848,19 @@ result;
         this._showTypingIndicator();
 
         try {
-            const response = await fetch('/api/chat/message', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: message,
-                    current_file: this._currentFile,
-                    current_code: this.editor.getValue()
-                })
-            });
+            const result = this._useLocalLLM
+                ? await this._chatViaLocalLLM(message)
+                : await this._chatViaServer(message);
 
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
-            }
-
-            const data = await response.json();
-
-            // Hide typing indicator
             this._hideTypingIndicator();
 
-            // Show assistant response
-            if (data.response) {
-                this._addChatMessage('assistant', data.response);
+            if (result.response) {
+                this._addChatMessage('assistant', result.response);
             }
 
-            // If file was changed by agent, update editor
-            if (data.file_changed && data.new_content) {
+            if (result.file_changed && result.new_content) {
                 this._skipSave = true; // Don't save this change (agent already did)
-                this.editor.setValue(data.new_content);
+                this.editor.setValue(result.new_content);
                 // Render will be triggered by onDidChangeModelContent
             }
 
@@ -1792,6 +1874,48 @@ result;
             this._unlockEditor();
             this._chatInput.focus();
         }
+    }
+
+    async _chatViaServer(message) {
+        const response = await fetch('/api/chat/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: message,
+                current_file: this._currentFile,
+                current_code: this.editor.getValue()
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+        }
+
+        return await response.json();
+    }
+
+    async _chatViaLocalLLM(message) {
+        const currentCode = this.editor.getValue();
+        const prompt = `Current code:\n\`\`\`javascript\n${currentCode}\n\`\`\`\n\nUser request: ${message}`;
+
+        const raw = await this._localLLMSession.prompt(prompt);
+
+        // Extract the first fenced javascript/js code block as the new code.
+        const fence = raw.match(/```(?:javascript|js)?\s*\n([\s\S]*?)```/);
+        let newContent = null;
+        let explanation = raw;
+        if (fence) {
+            newContent = fence[1].trim();
+            // Strip the code block from the explanation.
+            explanation = raw.replace(fence[0], '').trim();
+            if (!explanation) explanation = 'Updated the code.';
+        }
+
+        return {
+            response: explanation,
+            file_changed: newContent !== null,
+            new_content: newContent,
+        };
     }
 
     _initProperties() {
