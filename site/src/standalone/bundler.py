@@ -12,6 +12,7 @@ JS_FILES = [
     "editor.js",
     "viewer.js",
     "patterns.js",
+    "naming.js",
     "gridfinity.js",
     "cad-worker.js",
     "opentype.module.js",
@@ -46,6 +47,7 @@ def _build_import_map() -> str:
             "/static/viewer.js": "./static/viewer.js",
             "/static/gridfinity.js": "./static/gridfinity.js",
             "/static/patterns.js": "./static/patterns.js",
+            "/static/naming.js": "./static/naming.js",
             "/static/threemf.js": "./static/threemf.js",
             "/static/opentype.module.js": "./static/opentype.module.js",
         }
