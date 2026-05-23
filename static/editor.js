@@ -1698,18 +1698,18 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
                 return false;
             }
 
-            // availability is 'available', 'downloadable', or 'downloading'.
-            // create() triggers/awaits the model download when it isn't local yet.
-            this._localLLMSession = await LanguageModel.create({
-                initialPrompts: [
-                    { role: 'system', content: this._localLLMSystemPrompt() }
-                ],
-                monitor(m) {
-                    m.addEventListener('downloadprogress', (e) => {
-                        console.log(`Gemini Nano download: ${Math.round(e.loaded * 100)}%`);
-                    });
-                }
-            });
+            if (availability !== 'available') {
+                // 'downloadable' / 'downloading': the ~2 GB model isn't local yet.
+                // Chrome refuses LanguageModel.create() outside a user gesture in
+                // this state (NotAllowedError), so we can't fetch it on page load.
+                // Surface a Download button instead and let _downloadLocalLLM()
+                // run create() from the click handler.
+                this._localLLMReason = 'needs-download';
+                return false;
+            }
+
+            // 'available': model is already local, create() needs no gesture.
+            this._localLLMSession = await this._createLocalLLMSession();
             this._useLocalLLM = true;
             console.log(`Local LLM ready. Context: ${this._localLLMSession.contextUsage}/${this._localLLMSession.contextWindow}`);
             return true;
@@ -1720,6 +1720,61 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
             this._localLLMReason = 'error';
             this._localLLMError = e;
             return false;
+        }
+    }
+
+    // Create a session, reporting download progress via the optional callback.
+    // Called both on page load (when already available) and from the Download
+    // button's click handler (which satisfies Chrome's user-gesture requirement).
+    _createLocalLLMSession(onProgress) {
+        return LanguageModel.create({
+            initialPrompts: [
+                { role: 'system', content: this._localLLMSystemPrompt() }
+            ],
+            monitor(m) {
+                m.addEventListener('downloadprogress', (e) => {
+                    const pct = Math.round(e.loaded * 100);
+                    console.log(`Gemini Nano download: ${pct}%`);
+                    if (onProgress) onProgress(pct);
+                });
+            }
+        });
+    }
+
+    // User-gesture-driven download of the on-device model. Wired to the
+    // Download button rendered by _showChatUnavailable() in the 'needs-download'
+    // state. On success the model becomes 'available', so we reload to take the
+    // normal _setupLocalLLM() path and rebuild the real chat UI.
+    async _downloadLocalLLM() {
+        const btn = document.getElementById('local-llm-download-btn');
+        const status = document.getElementById('local-llm-download-status');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Downloading…';
+            btn.style.opacity = '0.6';
+            btn.style.cursor = 'default';
+        }
+        if (status) status.textContent = 'Starting download… (this can take several minutes)';
+
+        try {
+            await this._createLocalLLMSession((pct) => {
+                if (status) status.textContent = `Downloading on-device model… ${pct}%`;
+            });
+            if (status) status.textContent = 'Model ready — reloading…';
+            // Reload so _setupLocalLLM() sees 'available' and builds the chat UI.
+            setTimeout(() => window.location.reload(), 600);
+        } catch (e) {
+            console.warn('On-device model download failed:', e);
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Retry download';
+                btn.style.opacity = '1';
+                btn.style.cursor = 'pointer';
+            }
+            if (status) {
+                status.textContent = 'Download failed: ' + (e && e.message ? e.message : e) +
+                    ' — make sure both chrome://flags below are enabled, then retry.';
+            }
         }
     }
 
@@ -1744,19 +1799,43 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
             'padding: 1px 5px; border-radius: 4px; font-size: 0.78rem; ' +
             'word-break: break-all; user-select: all;">' + s + '</code>';
 
-        // The on-device model can fall over for two distinct reasons: the
-        // Prompt API flag is off (no global at all), or the API exists but the
-        // device/profile can't run Gemini Nano. Tailor the lead line, but the
-        // setup steps are the same in both cases.
+        const heading = '<p style="margin: 0 0 10px; color: #E2E8F0; font-weight: 600; font-size: 0.95rem;">' +
+            'On-device AI assistant</p>';
+
+        // 'needs-download': the flags are already on and Chrome reports the model
+        // as downloadable. The only thing standing in the way is the user gesture,
+        // so show a Download button instead of flag instructions.
+        if (this._localLLMReason === 'needs-download') {
+            pane.innerHTML =
+                '<img src="images/feature-ai-unavailable.jpg" alt="AI assistant model not downloaded yet" ' +
+                'style="max-width: 55%; border-radius: 12px; margin-bottom: 16px;">' +
+                '<div style="color: #94A3B8; font-size: 0.82rem; line-height: 1.5; max-width: 360px; text-align: center;">' +
+                heading +
+                '<p style="margin: 0 0 14px;">Chrome has the built-in AI enabled, but the Gemini Nano model ' +
+                '(~2&nbsp;GB) isn\'t downloaded yet. Chrome only allows the download to start from a click.</p>' +
+                '<button id="local-llm-download-btn" ' +
+                'style="background: #06B6D4; color: #0B1120; border: none; border-radius: 8px; ' +
+                'padding: 10px 20px; font-size: 0.9rem; font-weight: 600; cursor: pointer;">' +
+                'Download AI model (~2&nbsp;GB)</button>' +
+                '<p id="local-llm-download-status" style="margin: 12px 0 0; opacity: 0.8; min-height: 1.2em;"></p>' +
+                '</div>';
+            const btn = document.getElementById('local-llm-download-btn');
+            if (btn) btn.addEventListener('click', () => this._downloadLocalLLM());
+            return;
+        }
+
+        // Otherwise the Prompt API flag is off (no global) or the device can't run
+        // the model. Show the full step-by-step flag setup instructions.
         const lead = this._localLLMReason === 'unavailable'
-            ? 'Chrome found the on-device AI API, but the model isn\'t ready on this device yet. Finish setup below.'
+            ? 'Chrome found the on-device AI API, but it can\'t run Gemini Nano on this device/profile yet. Check the steps below.'
             : 'This editor runs an AI assistant entirely on your machine using Chrome\'s built-in Gemini Nano model — no server, fully private. It needs a one-time setup.';
 
         pane.innerHTML =
             '<img src="images/feature-ai-unavailable.jpg" alt="AI Assistant not available in this browser" ' +
-            'style="max-width: 65%; border-radius: 12px; margin-bottom: 16px;">' +
+            'style="max-width: 55%; border-radius: 12px; margin-bottom: 16px;">' +
             '<div style="color: #94A3B8; font-size: 0.8rem; line-height: 1.5; max-width: 360px;">' +
-            '<p style="margin: 0 0 10px; color: #E2E8F0; font-weight: 600;">Enable the on-device AI (Chrome 138+, desktop)</p>' +
+            heading +
+            '<p style="margin: 0 0 6px; color: #94A3B8;">Requires Chrome 138+ on desktop.</p>' +
             '<p style="margin: 0 0 10px;">' + lead + '</p>' +
             '<ol style="margin: 0 0 12px; padding-left: 18px;">' +
             '<li style="margin-bottom: 8px;">Open ' + code('chrome://flags/#prompt-api-for-gemini-nano') +
@@ -1764,10 +1843,11 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
             '<li style="margin-bottom: 8px;">Open ' + code('chrome://flags/#optimization-guide-on-device-model') +
             ' and set it to <b style="color:#E2E8F0;">Enabled BypassPerfRequirement</b>.</li>' +
             '<li style="margin-bottom: 8px;">Click <b style="color:#E2E8F0;">Relaunch</b> to restart Chrome.</li>' +
-            '<li style="margin-bottom: 8px;">Open ' + code('chrome://components') +
-            ', find <b style="color:#E2E8F0;">Optimization Guide On Device Model</b>, and click ' +
-            '<b style="color:#E2E8F0;">Check for update</b> to download the model (~2&nbsp;GB).</li>' +
-            '<li style="margin-bottom: 8px;">Reload this page once the download shows a version number.</li>' +
+            '<li style="margin-bottom: 8px;">Reload this page — a ' +
+            '<b style="color:#E2E8F0;">Download AI model</b> button will appear here. Click it to fetch the model (~2&nbsp;GB).</li>' +
+            '<li style="margin-bottom: 8px;">If no button appears, open ' + code('chrome://components') +
+            ', find <b style="color:#E2E8F0;">Optimization Guide On Device Model</b>, click ' +
+            '<b style="color:#E2E8F0;">Check for update</b>, then reload.</li>' +
             '</ol>' +
             '<p style="margin: 0; opacity: 0.75;">Needs a desktop with ~22&nbsp;GB free disk and 4&nbsp;GB+ VRAM. ' +
             'No supported device? Run ' + code('./run serve') + ' locally for the full server agent.</p>' +
