@@ -57,6 +57,7 @@ class CADEditor {
         // Local LLM state (Chrome Prompt API for standalone mode)
         this._localLLMSession = null;
         this._useLocalLLM = false;
+        this._localLLMReason = null;
 
         // Console output state
         this._consoleOutput = null;
@@ -1684,18 +1685,30 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
         if (!STANDALONE) return false;
         if (typeof LanguageModel === 'undefined') {
             console.log('Chrome Prompt API not available (no LanguageModel global)');
+            this._localLLMReason = 'no-api';
             return false;
         }
 
         try {
             const availability = await LanguageModel.availability();
             console.log('LanguageModel availability:', availability);
-            if (availability === 'unavailable') return false;
+            if (availability === 'unavailable') {
+                // API exists but this device/profile cannot run the model.
+                this._localLLMReason = 'unavailable';
+                return false;
+            }
 
+            // availability is 'available', 'downloadable', or 'downloading'.
+            // create() triggers/awaits the model download when it isn't local yet.
             this._localLLMSession = await LanguageModel.create({
                 initialPrompts: [
                     { role: 'system', content: this._localLLMSystemPrompt() }
-                ]
+                ],
+                monitor(m) {
+                    m.addEventListener('downloadprogress', (e) => {
+                        console.log(`Gemini Nano download: ${Math.round(e.loaded * 100)}%`);
+                    });
+                }
             });
             this._useLocalLLM = true;
             console.log(`Local LLM ready. Context: ${this._localLLMSession.contextUsage}/${this._localLLMSession.contextWindow}`);
@@ -1704,6 +1717,8 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
             console.warn('Local LLM setup failed:', e);
             this._localLLMSession = null;
             this._useLocalLLM = false;
+            this._localLLMReason = 'error';
+            this._localLLMError = e;
             return false;
         }
     }
@@ -1719,15 +1734,44 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
         pane.style.display = 'flex';
         pane.style.flexDirection = 'column';
         pane.style.alignItems = 'center';
-        pane.style.justifyContent = 'center';
+        pane.style.justifyContent = 'flex-start';
+        pane.style.overflowY = 'auto';
         pane.style.background = '#0B1120';
         pane.style.padding = '20px';
+
+        const code = (s) =>
+            '<code style="color: #06B6D4; background: rgba(6,182,212,0.12); ' +
+            'padding: 1px 5px; border-radius: 4px; font-size: 0.78rem; ' +
+            'word-break: break-all; user-select: all;">' + s + '</code>';
+
+        // The on-device model can fall over for two distinct reasons: the
+        // Prompt API flag is off (no global at all), or the API exists but the
+        // device/profile can't run Gemini Nano. Tailor the lead line, but the
+        // setup steps are the same in both cases.
+        const lead = this._localLLMReason === 'unavailable'
+            ? 'Chrome found the on-device AI API, but the model isn\'t ready on this device yet. Finish setup below.'
+            : 'This editor runs an AI assistant entirely on your machine using Chrome\'s built-in Gemini Nano model — no server, fully private. It needs a one-time setup.';
+
         pane.innerHTML =
             '<img src="images/feature-ai-unavailable.jpg" alt="AI Assistant not available in this browser" ' +
-            'style="max-width: 100%; border-radius: 12px; margin-bottom: 12px;">' +
-            '<p style="color: #94A3B8; font-size: 0.8rem; text-align: center; line-height: 1.4;">' +
-            'AI not available. Use Chrome with the built-in <code style="color: #06B6D4;">LanguageModel</code> API enabled, ' +
-            'or run <code style="color: #06B6D4;">./run serve</code> locally.</p>';
+            'style="max-width: 65%; border-radius: 12px; margin-bottom: 16px;">' +
+            '<div style="color: #94A3B8; font-size: 0.8rem; line-height: 1.5; max-width: 360px;">' +
+            '<p style="margin: 0 0 10px; color: #E2E8F0; font-weight: 600;">Enable the on-device AI (Chrome 138+, desktop)</p>' +
+            '<p style="margin: 0 0 10px;">' + lead + '</p>' +
+            '<ol style="margin: 0 0 12px; padding-left: 18px;">' +
+            '<li style="margin-bottom: 8px;">Open ' + code('chrome://flags/#prompt-api-for-gemini-nano') +
+            ' and set it to <b style="color:#E2E8F0;">Enabled</b>.</li>' +
+            '<li style="margin-bottom: 8px;">Open ' + code('chrome://flags/#optimization-guide-on-device-model') +
+            ' and set it to <b style="color:#E2E8F0;">Enabled BypassPerfRequirement</b>.</li>' +
+            '<li style="margin-bottom: 8px;">Click <b style="color:#E2E8F0;">Relaunch</b> to restart Chrome.</li>' +
+            '<li style="margin-bottom: 8px;">Open ' + code('chrome://components') +
+            ', find <b style="color:#E2E8F0;">Optimization Guide On Device Model</b>, and click ' +
+            '<b style="color:#E2E8F0;">Check for update</b> to download the model (~2&nbsp;GB).</li>' +
+            '<li style="margin-bottom: 8px;">Reload this page once the download shows a version number.</li>' +
+            '</ol>' +
+            '<p style="margin: 0; opacity: 0.75;">Needs a desktop with ~22&nbsp;GB free disk and 4&nbsp;GB+ VRAM. ' +
+            'No supported device? Run ' + code('./run serve') + ' locally for the full server agent.</p>' +
+            '</div>';
     }
 
     _initChat() {
