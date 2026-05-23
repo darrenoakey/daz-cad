@@ -12,7 +12,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import uvicorn
 from pathlib import Path
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, AssistantMessage, TextBlock, query
+from daz_agent_sdk import agent, Tier
+from daz_agent_sdk.conversation import Conversation
 
 PORT = 8765
 BASE_DIR = Path(__file__).parent.parent
@@ -23,7 +24,7 @@ DEFAULT_FILE = "default.js"
 LIBRARY_SPEC_PATH = BASE_DIR / "static" / "cad-library-spec.md"
 
 # global state for agent
-agent_client: ClaudeSDKClient | None = None
+agent_conversation: Conversation | None = None
 
 
 # ##################################################################
@@ -210,24 +211,11 @@ Diff:
 {diff}"""
 
     try:
-        response = ""
-        async for message in query(
-            prompt=prompt,
-            options=ClaudeAgentOptions(
-                allowed_tools=[],
-                permission_mode="bypassPermissions",
-                model="haiku"
-            )
-        ):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        response += block.text
-
-        return response.strip() or f"Update {filename}"
+        response = await agent.ask(prompt, tier=Tier.LOW)
+        return response.text.strip() or f"Update {filename}"
     except Exception as e:
-        # Claude SDK failed - fall back to simple message
-        print(f"[auto-commit] Claude SDK error, using fallback message: {e}")
+        # daz_agent_sdk failed - fall back to simple message
+        print(f"[auto-commit] agent.ask error, using fallback message: {e}")
         return f"Update {filename}"
 
 
@@ -269,16 +257,22 @@ async def commit_changes(filename: str):
 # manages startup and shutdown events for the application
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global agent_client
+    global agent_conversation
     setup_models_directory()
     init_git_repo()
     start_file_watcher()
+    agent_conversation = agent.conversation(
+        "cad-assistant",
+        tier=Tier.HIGH,
+        system=get_system_prompt(),
+    )
+    await agent_conversation.__aenter__()
     yield
     if file_watcher:
         file_watcher.stop()
-    if agent_client:
-        await agent_client.__aexit__(None, None, None)
-        agent_client = None
+    if agent_conversation:
+        await agent_conversation.__aexit__(None, None, None)
+        agent_conversation = None
 
 
 app = FastAPI(title="CAD Editor", lifespan=lifespan)
@@ -467,36 +461,17 @@ async def has_template(filename: str):
 
 
 # ##################################################################
-# get or create agent client
-# initializes the claude agent client on first use
-async def get_or_create_agent() -> ClaudeSDKClient:
-    global agent_client
-    if agent_client is None:
-        options = ClaudeAgentOptions(
-            system_prompt=get_system_prompt(),
-            allowed_tools=["Read", "Write", "Edit"],
-            cwd=str(MODELS_DIR),
-            permission_mode="acceptEdits"
-        )
-        agent_client = ClaudeSDKClient(options=options)
-        await agent_client.__aenter__()
-    return agent_client
-
-
-# ##################################################################
 # chat message endpoint
 # sends a message to the cad assistant agent and returns the response
 @app.post("/api/chat/message")
 async def chat_message(request: ChatMessageRequest):
+    global agent_conversation
     safe_name = Path(request.current_file).name
     file_path = MODELS_DIR / safe_name
 
     # save current code to file before agent processes (in case it needs to read it)
     file_path.write_text(request.current_code)
     original_content = request.current_code
-
-    # get or create the agent client
-    client = await get_or_create_agent()
 
     # build the prompt with context - include full path for agent to use
     full_path = str(file_path.absolute())
@@ -507,14 +482,16 @@ User's request: {request.message}
 Please help them modify the CAD model as requested. Use the Read tool to see the current file contents, then use Write or Edit to make changes."""
 
     # send message and collect response
-    response_text = ""
     try:
-        await client.query(prompt)
-        async for message in client.receive_response():
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        response_text += block.text
+        if agent_conversation is None:
+            agent_conversation = agent.conversation(
+                "cad-assistant",
+                tier=Tier.HIGH,
+                system=get_system_prompt(),
+            )
+            await agent_conversation.__aenter__()
+        result = await agent_conversation.say(prompt)
+        response_text = result.text
     except Exception as e:
         return {
             "response": f"Error communicating with assistant: {str(e)}",

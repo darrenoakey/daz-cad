@@ -7,3 +7,6 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .DS_Store
+.claude/
+# Stray dir created when an SDK wrote logs to a literal "~" (unexpanded HOME)
+/~/
