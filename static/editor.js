@@ -42,6 +42,7 @@ class CADEditor {
         this._isDirty = false; // True if code changed during render
         this._pendingCode = null; // Code to render after current render completes
         this._renderRequestId = 0; // Incremented for each render request
+        this._renderWaiters = []; // Resolvers awaiting the next render to settle
 
         // Spare worker for instant swap when cancelling renders
         this._spareWorker = null;
@@ -589,6 +590,7 @@ class CADEditor {
                             this._showError(error);
                             this.viewer.showError();
                             this._isRendering = false;
+                            this._resolveRenderWaiters({ ok: false, error });
                             this._checkPendingRender();
                         }
                         break;
@@ -605,6 +607,7 @@ class CADEditor {
                             this._showError(error);
                             this.viewer.showError();
                             this._isRendering = false;
+                            this._resolveRenderWaiters({ ok: false, error });
                             this._checkPendingRender();
                         }
                         break;
@@ -672,6 +675,7 @@ class CADEditor {
                     this._showError(error);
                     this.viewer.showError();
                     this._isRendering = false;
+                    this._resolveRenderWaiters({ ok: false, error });
                     this._checkPendingRender();
                     break;
 
@@ -684,6 +688,7 @@ class CADEditor {
                     this._showError(error);
                     this.viewer.showError();
                     this._isRendering = false;
+                    this._resolveRenderWaiters({ ok: false, error });
                     this._checkPendingRender();
                     break;
 
@@ -768,14 +773,48 @@ class CADEditor {
                     throw new Error('Failed to generate mesh');
                 }
             }
+            this._resolveRenderWaiters({ ok: true, error: null });
         } catch (error) {
             this._setStatus('error', 'Error');
             this._showError(error.message);
             this.viewer.showError();
+            this._resolveRenderWaiters({ ok: false, error: error.message });
         }
 
         // Check if there's a pending render
         this._checkPendingRender();
+    }
+
+    // Resolve everyone awaiting the current render's outcome. Safe to call with
+    // no waiters. Used by the chat auto-fix loop to know whether the assistant's
+    // change actually compiled and rendered.
+    _resolveRenderWaiters(result) {
+        if (this._renderWaiters.length === 0) return;
+        const waiters = this._renderWaiters;
+        this._renderWaiters = [];
+        for (const resolve of waiters) resolve(result);
+    }
+
+    // Promise that settles when the next render finishes: { ok, error }.
+    // A timeout guards against a render that never reports back, so the chat /
+    // editor can never get permanently locked.
+    _nextRenderResult(timeoutMs = 120000) {
+        return new Promise((resolve) => {
+            let done = false;
+            const settle = (r) => {
+                if (done) return;
+                done = true;
+                resolve(r);
+            };
+            const timer = setTimeout(
+                () => settle({ ok: false, error: 'Render timed out' }),
+                timeoutMs,
+            );
+            this._renderWaiters.push((r) => {
+                clearTimeout(timer);
+                settle(r);
+            });
+        });
     }
 
     _checkPendingRender() {
@@ -1953,13 +1992,13 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
 
     async _sendChatMessage() {
         if (!this._chatActive()) return;
+        // Lock SYNCHRONOUSLY, before any await, so a fast [Enter] followed by a
+        // Send click (or vice versa) can't both pass the guard and start two
+        // concurrent requests.
+        if (this._isProcessing) return;
         const message = this._chatInput.value.trim();
-        if (!message || this._isProcessing) return;
+        if (!message) return;
 
-        // Wait for any pending render
-        await this._waitForRenderComplete();
-
-        // Set processing state
         this._isProcessing = true;
         this._disableChat();
         this._lockEditor();
@@ -1968,36 +2007,77 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
         this._addChatMessage('user', message);
         this._chatInput.value = '';
 
-        // Show typing indicator
-        this._showTypingIndicator();
-
         try {
-            const result = this._useLocalLLM
-                ? await this._chatViaLocalLLM(message)
-                : await this._chatViaServer(message);
+            // Wait for any pending render to settle before we start.
+            await this._waitForRenderComplete();
+            await this._runAssistantTurn(message);
+        } catch (error) {
+            this._hideTypingIndicator();
+            this._addChatMessage('error', `Error: ${error.message}`);
+        } finally {
+            // Only here — after the change compiled successfully or we gave up —
+            // do we unlock the editor and re-enable chat input.
+            this._isProcessing = false;
+            this._enableChat();
+            this._unlockEditor();
+            this._chatInput.focus();
+        }
+    }
 
+    // Run one assistant request, then keep the editor/chat locked while we feed
+    // any compile/render error back to the assistant and let it retry, until the
+    // model compiles cleanly or we exhaust the retry budget.
+    async _runAssistantTurn(userMessage) {
+        const maxFixAttempts = 3;
+        let prompt = userMessage;
+        let fixAttempt = 0;
+
+        while (true) {
+            this._showTypingIndicator();
+            const result = this._useLocalLLM
+                ? await this._chatViaLocalLLM(prompt)
+                : await this._chatViaServer(prompt);
             this._hideTypingIndicator();
 
             if (result.response) {
                 this._addChatMessage('assistant', result.response);
             }
 
-            if (result.file_changed && result.new_content) {
-                this._skipSave = true; // Don't save this change (agent already did)
-                this.editor.setValue(result.new_content);
-                // Render will be triggered by onDidChangeModelContent
-            }
+            // No code change → nothing to compile, turn is done.
+            if (!result.file_changed || !result.new_content) return;
 
-        } catch (error) {
-            this._hideTypingIndicator();
-            this._addChatMessage('error', `Error: ${error.message}`);
-        } finally {
-            // Restore normal state
-            this._isProcessing = false;
-            this._enableChat();
-            this._unlockEditor();
-            this._chatInput.focus();
+            // If the proposed code is identical to what's already loaded, Monaco
+            // won't fire a change event and no render will run — don't wait on one.
+            if (result.new_content === this.editor.getValue()) return;
+
+            // Apply the change and wait for the resulting render to settle.
+            const settled = this._nextRenderResult();
+            this._skipSave = true; // The change originates from the assistant.
+            this.editor.setValue(result.new_content);
+            const outcome = await settled;
+
+            if (outcome.ok) return; // Clean compile → release the lock.
+
+            // Compile/runtime error: feed it back to the assistant and retry.
+            fixAttempt++;
+            if (fixAttempt >= maxFixAttempts) {
+                this._addChatMessage('error',
+                    `Still failing after ${fixAttempt} attempts:\n${outcome.error}\n\n` +
+                    'Stopping automatic retries — adjust your request or edit the code directly.');
+                return;
+            }
+            this._addChatMessage('error',
+                `That change didn't compile (attempt ${fixAttempt}/${maxFixAttempts}):\n${outcome.error}\n` +
+                'Asking the assistant to fix it…');
+            prompt = this._buildFixPrompt(outcome.error);
         }
+    }
+
+    _buildFixPrompt(error) {
+        return 'Your previous change produced this error when the model was ' +
+            'compiled and rendered:\n\n' + error + '\n\n' +
+            'Please fix the code so it compiles and renders without errors. ' +
+            'Return the complete corrected script.';
     }
 
     async _chatViaServer(message) {
