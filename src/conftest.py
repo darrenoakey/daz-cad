@@ -30,19 +30,36 @@ def server_port():
 # server fixture
 # starts fastapi server as subprocess and yields url when ready
 @pytest.fixture(scope="session")
-def server(server_port):
+def server(server_port, tmp_path_factory):
     project_root = Path(__file__).parent.parent
 
+    # isolate the test server's ONE persistent agentd3 chat conversation from
+    # the deployment state: each test session gets its own state file and a
+    # test source/model via test-harness variables, so tests never touch the
+    # production conversation at local/agentd3-chat.json
+    import os
+
+    state_path = tmp_path_factory.mktemp("agentd3-state") / "agentd3-chat.json"
     proc = subprocess.Popen(
         [
-            sys.executable, "-m", "uvicorn",
+            sys.executable,
+            "-m",
+            "uvicorn",
             "src.server:app",
-            "--host", "127.0.0.1",
-            "--port", str(server_port),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(server_port),
         ],
         cwd=project_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={
+            **os.environ,
+            "DAZCAD_AGENTD3_STATE": str(state_path),
+            "DAZCAD_AGENTD3_SOURCE": "daz-cad-test",
+            "DAZCAD_AGENTD3_MODEL": "agentic-low",
+        },
     )
 
     server_url = f"http://127.0.0.1:{server_port}"
@@ -50,6 +67,7 @@ def server(server_port):
     for _ in range(max_attempts):
         try:
             import httpx
+
             response = httpx.get(f"{server_url}/health", timeout=1.0)
             if response.status_code == 200:
                 break
@@ -76,10 +94,7 @@ def server(server_port):
 @pytest.fixture(scope="session")
 def shared_browser():
     pw = sync_playwright().start()
-    browser = pw.chromium.launch(
-        headless=True,
-        args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"]
-    )
+    browser = pw.chromium.launch(headless=True, args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"])
     yield browser
     browser.close()
     pw.stop()
@@ -97,7 +112,7 @@ def cad_page(server, shared_browser):
             const statusText = document.getElementById('status-text');
             return statusText && statusText.textContent === 'Ready' && window.Workplane;
         }""",
-        timeout=90000
+        timeout=90000,
     )
     yield page
     page.close()
@@ -115,7 +130,7 @@ def init_page(server, shared_browser):
             const status = document.getElementById('status');
             return status && status.classList.contains('success');
         }""",
-        timeout=60000
+        timeout=60000,
     )
     yield page
     page.close()

@@ -1,19 +1,22 @@
-import setproctitle
 import asyncio
-import threading
-import time
+import os
 import shutil
 import subprocess
+import threading
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import BaseModel
-import uvicorn
 from pathlib import Path
-from daz_agent_sdk import agent, Tier
-from daz_agent_sdk.conversation import Conversation
+
+import setproctitle
+import uvicorn
+from daz_agent_sdk import Tier, agent
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from src.agentd3_chat import Agentd3Chat
 
 PORT = 8766
 BASE_DIR = Path(__file__).parent.parent
@@ -21,42 +24,10 @@ WATCH_DIR = BASE_DIR / "static"
 MODELS_DIR = BASE_DIR / "local" / "models"
 EXAMPLES_DIR = BASE_DIR / "examples"
 DEFAULT_FILE = "default.js"
-LIBRARY_SPEC_PATH = BASE_DIR / "static" / "cad-library-spec.md"
 
-# global state for agent
-agent_conversation: Conversation | None = None
-
-
-# ##################################################################
-# load library spec
-# reads the cad library spec for the agent system prompt
-def load_library_spec() -> str:
-    if LIBRARY_SPEC_PATH.exists():
-        return LIBRARY_SPEC_PATH.read_text()
-    return "CAD library for creating 3D shapes using Workplane and Assembly classes."
-
-
-# ##################################################################
-# get system prompt
-# creates the system prompt for the cad assistant agent
-def get_system_prompt() -> str:
-    library_spec = load_library_spec()
-    return f"""You are an expert CAD assistant that helps users create and modify 3D models.
-
-You work with a JavaScript CAD library. The user's code is in a .js file that you can read and modify.
-
-IMPORTANT RULES:
-1. When asked to modify the model, edit the actual .js file directly using the Write tool
-2. Always preserve the overall structure: define shapes, combine them, set result variable
-3. The file must end with `result;` to return the final shape
-4. Use the Read tool to see the current file contents before making changes
-5. Make minimal, targeted changes - don't rewrite the entire file unless necessary
-6. After editing, briefly explain what you changed
-
-Here is the CAD library specification:
-
-{library_spec}
-"""
+# global state for the agentd3 chat client (the real conversation is created
+# lazily on first chat and persisted in local/agentd3-chat.json)
+agentd3_chat: Agentd3Chat | None = None
 
 
 # global state for hot reload
@@ -92,10 +63,7 @@ class FileWatcher:
                 current_files.add(path_str)
                 mtime = f.stat().st_mtime
 
-                if path_str not in self.file_times:
-                    self.file_times[path_str] = mtime
-                    changed = True
-                elif self.file_times[path_str] != mtime:
+                if path_str not in self.file_times or self.file_times[path_str] != mtime:
                     self.file_times[path_str] = mtime
                     changed = True
 
@@ -161,11 +129,7 @@ def init_git_repo():
         subprocess.run(["git", "init"], cwd=MODELS_DIR, capture_output=True)
         # create initial commit with all existing files
         subprocess.run(["git", "add", "-A"], cwd=MODELS_DIR, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial commit"],
-            cwd=MODELS_DIR,
-            capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=MODELS_DIR, capture_output=True)
 
 
 # ##################################################################
@@ -173,21 +137,13 @@ def init_git_repo():
 # uses claude haiku to generate a commit message from the diff
 async def generate_commit_message(filename: str) -> str:
     # get the diff for this file
-    result = subprocess.run(
-        ["git", "diff", "--", filename],
-        cwd=MODELS_DIR,
-        capture_output=True,
-        text=True
-    )
+    result = subprocess.run(["git", "diff", "--", filename], cwd=MODELS_DIR, capture_output=True, text=True)
     diff = result.stdout
 
     # if no diff (new file), get the file content
     if not diff:
         result = subprocess.run(
-            ["git", "diff", "--cached", "--", filename],
-            cwd=MODELS_DIR,
-            capture_output=True,
-            text=True
+            ["git", "diff", "--cached", "--", filename], cwd=MODELS_DIR, capture_output=True, text=True
         )
         diff = result.stdout
 
@@ -226,10 +182,7 @@ async def commit_changes(filename: str):
     try:
         # check if there are changes to commit
         result = subprocess.run(
-            ["git", "status", "--porcelain", "--", filename],
-            cwd=MODELS_DIR,
-            capture_output=True,
-            text=True
+            ["git", "status", "--porcelain", "--", filename], cwd=MODELS_DIR, capture_output=True, text=True
         )
         if not result.stdout.strip():
             return  # no changes
@@ -241,11 +194,7 @@ async def commit_changes(filename: str):
         message = await generate_commit_message(filename)
 
         # commit
-        subprocess.run(
-            ["git", "commit", "-m", message],
-            cwd=MODELS_DIR,
-            capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", message], cwd=MODELS_DIR, capture_output=True)
         print(f"[auto-commit] Committed {filename}: {message}")
     except Exception as e:
         # Log but don't propagate - this is a background task
@@ -257,22 +206,31 @@ async def commit_changes(filename: str):
 # manages startup and shutdown events for the application
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global agent_conversation
+    global agentd3_chat
     setup_models_directory()
     init_git_repo()
     start_file_watcher()
-    agent_conversation = agent.conversation(
-        "cad-assistant",
-        tier=Tier.HIGH,
-        system=get_system_prompt(),
+    # test-harness-only overrides (src/conftest.py sets these when it spawns
+    # the app for tests); production configuration comes from the committed
+    # defaults plus optional local/config.toml
+    env_overrides = {}
+    if os.environ.get("DAZCAD_AGENTD3_SOURCE"):
+        env_overrides["source"] = os.environ["DAZCAD_AGENTD3_SOURCE"]
+    if os.environ.get("DAZCAD_AGENTD3_MODEL"):
+        env_overrides["model"] = os.environ["DAZCAD_AGENTD3_MODEL"]
+    env_state = os.environ.get("DAZCAD_AGENTD3_STATE")
+    agentd3_chat = Agentd3Chat(
+        base_dir=BASE_DIR,
+        config_path=BASE_DIR / "local" / "config.toml",
+        state_path=Path(env_state) if env_state else None,
+        overrides=env_overrides or None,
     )
-    await agent_conversation.__aenter__()
     yield
     if file_watcher:
         file_watcher.stop()
-    if agent_conversation:
-        await agent_conversation.__aexit__(None, None, None)
-        agent_conversation = None
+    if agentd3_chat:
+        await agentd3_chat.close()
+        agentd3_chat = None
 
 
 app = FastAPI(title="CAD Editor", lifespan=lifespan)
@@ -438,12 +396,7 @@ async def reset_model(filename: str):
     target_path = MODELS_DIR / safe_name
     target_path.write_text(template_content)
 
-    return {
-        "filename": safe_name,
-        "content": template_content,
-        "mtime": target_path.stat().st_mtime,
-        "reset": True
-    }
+    return {"filename": safe_name, "content": template_content, "mtime": target_path.stat().st_mtime, "reset": True}
 
 
 # ##################################################################
@@ -465,13 +418,8 @@ async def has_template(filename: str):
 # sends a message to the cad assistant agent and returns the response
 @app.post("/api/chat/message")
 async def chat_message(request: ChatMessageRequest):
-    global agent_conversation
     safe_name = Path(request.current_file).name
     file_path = MODELS_DIR / safe_name
-
-    # save current code to file before agent processes (in case it needs to read it)
-    file_path.write_text(request.current_code)
-    original_content = request.current_code
 
     # build the prompt with context - include full path for agent to use
     full_path = str(file_path.absolute())
@@ -481,38 +429,31 @@ User's request: {request.message}
 
 Please help them modify the CAD model as requested. Use the Read tool to see the current file contents, then use Write or Edit to make changes."""
 
-    # send message and collect response
-    try:
-        if agent_conversation is None:
-            agent_conversation = agent.conversation(
-                "cad-assistant",
-                tier=Tier.HIGH,
-                system=get_system_prompt(),
-            )
-            await agent_conversation.__aenter__()
-        result = await agent_conversation.say(prompt)
-        response_text = result.text
-    except Exception as e:
-        return {
-            "response": f"Error communicating with assistant: {str(e)}",
-            "file_changed": False,
-            "new_content": None
-        }
-
-    # check if file was changed by agent
+    # the whole critical section runs under the chat lock: any outstanding
+    # turn from an earlier timed-out chat is settled first, then the request's
+    # code is saved, the agent turn runs, and the updated file is read back -
+    # all as one indivisible unit so a concurrent same-file request can never
+    # overwrite the model file between this request's save and its agent turn
     file_changed = False
     new_content = None
-    if file_path.exists():
-        current_content = file_path.read_text()
-        if current_content != original_content:
-            file_changed = True
-            new_content = current_content
+    try:
+        async with agentd3_chat.exclusive_turn() as chat:
+            conversation_id = await chat.ensure_ready()
+            file_path.write_text(request.current_code)
+            original_content = request.current_code
 
-    return {
-        "response": response_text,
-        "file_changed": file_changed,
-        "new_content": new_content
-    }
+            response_text = await chat.send_message_locked(prompt, conversation_id)
+
+            # check if file was changed by agent, still under the same lock
+            if file_path.exists():
+                current_content = file_path.read_text()
+                if current_content != original_content:
+                    file_changed = True
+                    new_content = current_content
+    except Exception as e:
+        return {"response": f"Error communicating with assistant: {e!s}", "file_changed": False, "new_content": None}
+
+    return {"response": response_text, "file_changed": file_changed, "new_content": new_content}
 
 
 # ##################################################################
@@ -539,11 +480,7 @@ async def hot_reload():
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
