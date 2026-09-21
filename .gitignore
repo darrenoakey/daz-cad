@@ -10,3 +10,4 @@ __pycache__/
 .claude/
 # Stray dir created when an SDK wrote logs to a literal "~" (unexpanded HOME)
 /~/
+.agentd3-worktrees/

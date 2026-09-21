@@ -65,6 +65,16 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Boolean cuts can fail silently - verify by checking mesh vertex counts
 - Browser caching: NoCacheMiddleware adds no-cache headers to all /static/* files
 
+## AI Chat (Agentd3 integration)
+- `src/agentd3_chat.py` owns the app's ONE real Agentd3 assistant conversation, created lazily on the first chat
+- Seeding happens ONLY at creation: system prompt embeds `static/cad-library-spec.md` (sole API doc) plus `docs/*.md`, and `cwd` is bound to the daz-cad checkout (`original_cwd` remotely; the daemon runs the agent in its own git worktree copy of the repo)
+- The conversation id is persisted in `local/agentd3-chat.json` (with an idempotency key) and reused across app restarts
+- Identity is fail-closed: stored id missing/archived remotely, or wrong source/cwd binding, is a hard error shown in chat — NEVER a silent replacement conversation
+- Each chat runs under `exclusive_turn()`: settle any outstanding turn (cancel queued + interrupt), save `current_code`, run the agent turn, read the file back — one indivisible unit, so concurrent same-file chats cannot overwrite each other's code
+- Reply correlation: event cursor taken BEFORE posting; reply = last `message.completed` for OUR `user.message`'s turn_id, finish on `turn.completed`; scoped daemon error events (auto-title, memory recall) are ignored
+- Config overrides live in gitignored `local/config.toml` `[agentd3]` (base_url, model, policy, priority, source, timeout_seconds, settle_timeout_seconds); defaults in the module
+- Tests (`src/agentd3_chat_test.py`) hit the REAL daemon at 127.0.0.1:8620 with source `daz-cad-test` on `agentic-low`; they archive their conversations afterwards
+
 ## Version Control
 - `local/models/` directory is auto-initialized as a git repo on server startup
 - Every successful model save auto-commits with AI-generated message (Claude Haiku)
