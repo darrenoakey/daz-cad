@@ -178,7 +178,17 @@ def command_deploy(_: argparse.Namespace) -> int:
     if result != 0:
         print("auto restart daz-cad failed")
         return result
-    return command_health(None)
+    # the service boots through venv-ensure + uvicorn startup; poll briefly
+    # instead of probing once - an instant probe races the bind and fails a
+    # healthy deploy
+    import time as _time
+
+    for _ in range(30):
+        if command_health(None) == 0:
+            return 0
+        _time.sleep(1.0)
+    print("service did not become healthy within 30s of restart")
+    return 1
 
 
 # ##################################################################
