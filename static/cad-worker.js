@@ -123,9 +123,9 @@ function executeCode(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    // Execute the code with Workplane, Assembly, Profiler, Gridfinity, and font functions available
-    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', code + '\nreturn result;');
-    const result = fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity);
+    // Execute the code with the CAD API and this worker's initialized OpenCascade instance available
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', 'oc', code + '\nreturn result;');
+    const result = fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity, oc);
 
     if (!result) {
         throw new Error('Code did not produce a result');
@@ -157,8 +157,8 @@ function executeForExport(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', code + '\nreturn result;');
-    return fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity);
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', 'oc', code + '\nreturn result;');
+    return fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity, oc);
 }
 
 // Handle messages from main thread

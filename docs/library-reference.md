@@ -4,6 +4,7 @@ Complete API documentation for the CAD library.
 
 ## Table of Contents
 
+- [Execution Environment](#execution-environment)
 - [Workplane Class](#workplane-class)
   - [Primitives](#primitives)
   - [Boolean Operations](#boolean-operations)
@@ -19,6 +20,13 @@ Complete API documentation for the CAD library.
   - [Auto-Fit Packing](#auto-fit-packing)
 - [Assembly Class](#assembly-class)
 - [Utility Classes](#utility-classes)
+
+---
+
+## Execution Environment
+
+CAD source runs with `Workplane`, `Assembly`, `Profiler`, `Gridfinity`, the font helpers, and `oc` in scope. The `oc`
+binding is the initialized OpenCascade instance used by the worker for preview, STL export, and 3MF export.
 
 ---
 

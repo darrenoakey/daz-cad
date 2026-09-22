@@ -105,8 +105,8 @@ def command_lint(_: argparse.Namespace) -> int:
 # command check
 # greenline gate: bounded change-impact verification for a candidate -
 # lint plus the agentd3 chat integration's deterministic real-daemon tests
-# (the load-sensitive settle test is deselected; run check-full for
-# everything). exit code is the verdict
+# and the real-browser CAD worker execution regression. the load-sensitive
+# settle test is deselected; run check-full for everything. exit code is the verdict
 GATE_TESTS = [
     "src/agentd3_chat_test.py::test_scoped_error_events_never_fail_a_turn",
     "src/agentd3_chat_test.py::test_tracker_ignores_other_turns_events",
@@ -116,6 +116,7 @@ GATE_TESTS = [
     "src/agentd3_chat_test.py::test_concurrent_create_yields_single_conversation",
     "src/agentd3_chat_test.py::test_state_key_recovery",
     "src/agentd3_chat_test.py::test_chat_endpoint_round_trip",
+    "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
 ]
 
 

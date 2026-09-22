@@ -783,6 +783,72 @@ def test_3mf_export(cad_page):
     print(f"Text modifier 3MF size: {result.get('textModifier3MFSize')} bytes")
 
 
+# ##################################################################
+# test worker direct opencascade preview and exports
+# verifies advanced cad code receives the worker's initialized oc instance for every execution path
+def test_worker_direct_opencascade_preview_and_exports(cad_page):
+    result = cad_page.evaluate("""async () => {
+        const worker = new Worker('/static/cad-worker.js', { type: 'module' });
+        const waitForMessage = (successType, errorType, id) => new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                worker.removeEventListener('message', onMessage);
+                reject(new Error(`Timed out waiting for ${successType}`));
+            }, 90000);
+            const onMessage = (event) => {
+                const message = event.data;
+                const matchesId = id === undefined || message.id === undefined || message.id === id;
+                if (matchesId && message.type === successType) {
+                    clearTimeout(timeout);
+                    worker.removeEventListener('message', onMessage);
+                    resolve(message);
+                } else if (matchesId && message.type === errorType) {
+                    clearTimeout(timeout);
+                    worker.removeEventListener('message', onMessage);
+                    reject(new Error(message.error));
+                }
+            };
+            worker.addEventListener('message', onMessage);
+        });
+
+        const code = `
+            const boxBuilder = new oc.BRepPrimAPI_MakeBox_2(10, 12, 14);
+            const result = new Workplane('XY');
+            result._shape = boxBuilder.Shape();
+        `;
+
+        try {
+            await waitForMessage('loaded', 'error');
+            const initialized = waitForMessage('initialized', 'error', 1);
+            worker.postMessage({ type: 'init', id: 1 });
+            await initialized;
+
+            const rendered = waitForMessage('renderComplete', 'renderError', 2);
+            worker.postMessage({ type: 'render', code, id: 2 });
+            const renderMessage = await rendered;
+
+            const stlExported = waitForMessage('exportSTLComplete', 'exportSTLError', 3);
+            worker.postMessage({ type: 'exportSTL', code, id: 3 });
+            const stlMessage = await stlExported;
+
+            const threeMfExported = waitForMessage('export3MFComplete', 'export3MFError', 4);
+            worker.postMessage({ type: 'export3MF', code, id: 4 });
+            const threeMfMessage = await threeMfExported;
+
+            return {
+                vertexCount: renderMessage.meshData.mesh.vertices.length / 3,
+                stlSize: stlMessage.buffer.byteLength,
+                threeMfSize: threeMfMessage.buffer.byteLength,
+            };
+        } finally {
+            worker.terminate();
+        }
+    }""")
+
+    assert result["vertexCount"] > 0
+    assert result["stlSize"] > 100
+    assert result["threeMfSize"] > 100
+
+
 
 # ##################################################################
 # test javascript ast parser
@@ -3571,5 +3637,4 @@ def test_iso_prism_boolean_operations(cad_page):
         }
     }""")
     assert result["success"], f"isoPrism boolean ops failed: {result.get('error')}"
-
 
