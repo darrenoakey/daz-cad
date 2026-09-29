@@ -1,5 +1,5 @@
-from playwright.sync_api import expect
 import httpx
+from playwright.sync_api import expect
 
 
 # ##################################################################
@@ -1715,7 +1715,7 @@ def test_monaco_type_definitions_match_library(cad_page):
                 'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet', 'clean',
                 'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
                 'translate', 'rotate', 'color', 'cutPattern', 'cutBorder', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutLines', 'cutBelow', 'cutAbove',
-                'addTab', 'addSlot',
+                'addTab', 'addSlot', 'splitAndJoin',
                 'toSTL', 'to3MF', 'toMesh',
                 'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val',
                 'meta', 'infillDensity', 'infillPattern', 'partName',
@@ -1810,12 +1810,12 @@ def test_monaco_type_definitions_match_library(cad_page):
     print(f"Actual Profiler methods: {result.get('actualProfilerMethods')}")
 
     if result.get('issues'):
-        print(f"\nType definition issues found:")
+        print("\nType definition issues found:")
         for issue in result['issues']:
             print(f"  - {issue}")
 
     assert result["success"], (
-        f"Type definitions out of sync with library! Issues:\n" +
+        "Type definitions out of sync with library! Issues:\n" +
         "\n".join(f"  - {issue}" for issue in result.get('issues', []))
     )
 
@@ -1974,14 +1974,14 @@ def test_cut_pattern_clip_border_on_circle(cad_page):
     )
 
     # Log the results
-    print(f"\nClip border test results:")
+    print("\nClip border test results:")
     print(f"  Base vertices: {result.get('baseVertexCount')}")
     print(f"  Cut vertices: {result.get('cutVertexCount')}")
     print(f"  Mesh radius: {result.get('meshRadius')}")
     print(f"  Expected inner radius: {result.get('expectedInnerRadius')}")
     print(f"  Outer ring has cuts: {result.get('outerRingHasCuts')}")
     if logs:
-        print(f"\nConsole logs:")
+        print("\nConsole logs:")
         for log in logs:
             if 'Offset' in log or 'clip' in log.lower():
                 print(f"  {log}")
@@ -2130,7 +2130,7 @@ def test_cut_pattern_clip_border_on_rectangle(cad_page):
 
 
     # Log the console output first (for debugging)
-    print(f"\nConsole logs:")
+    print("\nConsole logs:")
     for log in logs:
         if 'Offset' in log or 'clip' in log.lower() or 'polygon' in log.lower() or 'boundary' in log.lower():
             print(f"  {log}")
@@ -2141,7 +2141,7 @@ def test_cut_pattern_clip_border_on_rectangle(cad_page):
     )
 
     # Log the results
-    print(f"\nClip border rectangle test results:")
+    print("\nClip border rectangle test results:")
     print(f"  Base vertices: {result.get('baseVertexCount')}")
     print(f"  Cut vertices: {result.get('cutVertexCount')}")
     print(f"  Mesh extent: {result.get('meshExtent')}")
@@ -2237,7 +2237,7 @@ def test_cut_pattern_clip_demo_irregular_shape(cad_page):
 
 
     # Log the console output for debugging
-    print(f"\nConsole logs:")
+    print("\nConsole logs:")
     for log in logs:
         if 'Offset' in log or 'clip' in log.lower() or 'boundary' in log.lower():
             print(f"  {log}")
@@ -2248,7 +2248,7 @@ def test_cut_pattern_clip_demo_irregular_shape(cad_page):
     )
 
     # Log the results
-    print(f"\nClip demo test results:")
+    print("\nClip demo test results:")
     print(f"  Base vertices: {result.get('baseVertexCount')}")
     print(f"  Cut vertices: {result.get('cutVertexCount')}")
     print(f"  Vertex ratio: {result.get('vertexRatio')}")
@@ -2339,7 +2339,7 @@ def test_border_demo_wire_explorer(cad_page):
 
 
     # Log results
-    print(f"\nWire Explorer test results:")
+    print("\nWire Explorer test results:")
     for r in result.get('results', []):
         status = "OK" if r['correct'] and r['validPolygon'] else "FAIL"
         print(f"  {r['name']}: {r['actualVerts']}/{r['expectedVerts']} verts, area={r['signedArea']} [{status}]")
@@ -2514,7 +2514,7 @@ def test_add_tab_matches_manual_construction(cad_page):
     }""")
 
 
-    print(f"\naddTab/addSlot test results:")
+    print("\naddTab/addSlot test results:")
     print(f"  Bare panel vertices: {result.get('bareVerts')}")
     print(f"  Tab panel vertices:  {result.get('tabVerts')}")
     print(f"  Slot panel vertices: {result.get('slotVerts')}")
@@ -3638,3 +3638,46 @@ def test_iso_prism_boolean_operations(cad_page):
     }""")
     assert result["success"], f"isoPrism boolean ops failed: {result.get('error')}"
 
+
+
+# Real worker-lifecycle integration, distinct from UI-only BDD: cancel both
+# actual workers synchronously, then queue a real model while replacement loads.
+# No worker, CAD kernel, messages, or renderer is mocked.
+def test_worker_recreation_replays_latest_model(cad_page):
+    from pathlib import Path
+    from uuid import uuid4
+
+    filename = f"test-worker-replay-{uuid4().hex}.js"
+    expect(cad_page.locator("#filename-display")).not_to_have_text("loading...", timeout=90000)
+    original = cad_page.locator("#filename-display").inner_text()
+    cad_page.locator("#file-selector-btn").click()
+    cad_page.locator("#new-file-input").fill(filename)
+    cad_page.locator("#create-file-btn").click()
+    expect(cad_page.locator("#filename-display")).to_have_text(filename, timeout=30000)
+    expect(cad_page.locator("#download-3mf-btn")).to_be_enabled(timeout=90000)
+    try:
+        with cad_page.expect_response(
+            lambda response: response.url.endswith(f"/api/models/{filename}")
+            and response.request.method == "POST"
+            and "box(27,29,31)" in (response.request.post_data or ""),
+            timeout=90000,
+        ):
+            result = cad_page.evaluate("""async () => {
+                const editor = window.cadEditor;
+                editor._cancelRender();
+                editor._cancelRender();
+                const unavailable = !editor._workerReady;
+                const completed = editor._nextRenderResult(90000);
+                editor.editor.setValue('const result = new Workplane("XY").box(27,29,31);\\nresult;');
+                editor._render();
+                const outcome = await completed;
+                return {unavailable, outcome, bounds:editor.viewer.getModelBounds(),
+                    exportEnabled:!document.getElementById('download-3mf-btn').disabled};
+            }""")
+        assert result["unavailable"], result
+        assert result["outcome"]["ok"] and result["exportEnabled"], result
+        assert abs(result["bounds"]["max"][0] - result["bounds"]["min"][0] - 27) < 0.001, result
+        assert abs(result["bounds"]["max"][2] - result["bounds"]["min"][2] - 31) < 0.001, result
+    finally:
+        cad_page.evaluate("filename => window.cadEditor._selectFile(filename)", original)
+        (Path(__file__).resolve().parent.parent / "local" / "models" / filename).unlink(missing_ok=True)

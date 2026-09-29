@@ -11,6 +11,8 @@ import { initCAD, Workplane, Assembly, Profiler } from '/static/cad.js';
 import { Gridfinity } from '/static/gridfinity.js';
 import '/static/patterns.js';  // Extends Workplane with unified cutPattern()
 import '/static/naming.js';    // Extends Workplane with named references
+import { Joinery } from '/static/joinery.js';
+import { JoineryUI } from '/static/joinery-ui.js';
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
 import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
 
@@ -34,6 +36,8 @@ class CADEditor {
         this._currentFile = null; // Current file being edited
         this._downloadSTLBtn = null;
         this._download3MFBtn = null;
+        this.joineryUI = null;
+        this._joineryValidationRequests = new Map();
 
         // Web Worker for background rendering
         this._worker = null;
@@ -107,6 +111,9 @@ class CADEditor {
 
         // Set up face names toggle
         this._initFaceNamesToggle();
+
+        // The plane is visible in the Three.js viewer; methods come from the library.
+        this.joineryUI = new JoineryUI(this, Joinery.methods);
 
         // Initialize file manager
         this._initFileManager();
@@ -398,6 +405,9 @@ class CADEditor {
                             /** Cut away everything above the origin plane on specified axis */
                             cutAbove(axis: "X" | "Y" | "Z"): Workplane;
 
+                            /** Split this Workplane on a plane and add a printable connector system. */
+                            splitAndJoin(options: { plane: { origin: [number, number, number]; normal: [number, number, number]; up?: [number, number, number] }; method: JoineryMethod; size?: number; depth?: number; clearance?: number; positions?: Array<[number, number]>; count?: number; wall?: number; detent?: boolean; wedgePreload?: number }): JointResult;
+
                             /** Export to STL */
                             toSTL(linearDeflection?: number, angularDeflection?: number): Blob;
 
@@ -471,6 +481,19 @@ class CADEditor {
                             /** Place on other's face and union (= centerOn + union) */
                             attachTo(other: Workplane, faceName: string): Workplane;
                         }
+
+                        type JoineryMethod = 'snap-key' | 'butterfly-key' | 'dovetail' | 'jigsaw' | 'cantilever-snap' | 'snap-dowel' | 'cross-key' | 'scarf-wedge' | 'bayonet' | 'bridge-clip';
+                        declare class JointResult extends Assembly {
+                            readonly parts: Workplane[];
+                            readonly keys: Workplane[];
+                            readonly method: JoineryMethod;
+                            readonly plane: { origin: [number, number, number]; normal: [number, number, number]; up: [number, number, number] };
+                            readonly connectors: Array<{ id: string; method: JoineryMethod; position: { u: number; v: number; world: [number, number, number] }; size: number; depth: number; clearance: number; retention: string; assembly: string; print: { parts: string[]; keys: string[] } | null; printGuidance: string }>;
+                            readonly instructions: string[];
+                            readonly warnings: string[];
+                            toAssembly(options?: { mode?: 'assembled' | 'exploded' | 'print'; gap?: number }): Assembly;
+                        }
+                        declare const Joinery: { methods: Array<{ id: JoineryMethod; label: string; description: string }> };
 
                         /** Assembly of multiple parts */
                         declare class Assembly {
@@ -714,6 +737,10 @@ class CADEditor {
 
                 case 'console':
                     this._appendConsole(e.data.level, e.data.message);
+                    break;
+
+                case 'joineryValidation':
+                    this._resolveJoineryValidation(id, e.data);
                     break;
             }
         };
@@ -1404,6 +1431,9 @@ result;
     }
 
     _onCodeChange() {
+        // A changed script is not export-ready until its own render succeeds.
+        this._downloadSTLBtn.disabled = true;
+        this._download3MFBtn.disabled = true;
         // Clear previous timer
         if (this.debounceTimer) {
             clearTimeout(this.debounceTimer);
@@ -1474,7 +1504,12 @@ result;
             this._workerReady = true;
             this._attachWorkerHandlers(this._worker);
             this.isReady = true;
-            this._setStatus('ready', 'Ready');
+            // Edits made while the replacement was loading had their debounce
+            // callbacks return early. Replay the latest editor contents now,
+            // rather than leaving Ready with no preview and disabled exports.
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
+            this._render();
 
             // Also create a spare now
             this._initSpareWorker();
@@ -1515,6 +1550,30 @@ result;
             code: code,
             id: this._renderRequestId
         });
+    }
+
+    async validateJoinerySource(code, generated = false) {
+        // Start the validation timeout only after the worker's current render
+        // has settled; large models must not consume it while queued.
+        if (this._isRendering) {
+            const settled = await this._nextRenderResult();
+            if (!settled.ok) return { ok: false, error: settled.error || 'Current render failed.' };
+            if (this._isRendering) return { ok: false, error: 'The model changed and another render started; wait for it to finish.' };
+        }
+        if (!this._workerReady) return Promise.resolve({ ok: false, error: 'CAD engine is still starting; wait for Ready before applying Cut/Join.' });
+        const id = `joinery-${Date.now()}-${Math.random()}`;
+        return new Promise((resolve) => {
+            this._joineryValidationRequests.set(id, resolve);
+            this._worker.postMessage({ type: 'validateJoinery', code, id, generated });
+            setTimeout(() => this._resolveJoineryValidation(id, { ok: false, error: 'Cut/Join validation timed out; your source was not changed.' }), 30000);
+        });
+    }
+
+    _resolveJoineryValidation(id, result) {
+        const resolve = this._joineryValidationRequests.get(id);
+        if (!resolve) return;
+        this._joineryValidationRequests.delete(id);
+        resolve(result);
     }
 
     _setStatus(state, text) {

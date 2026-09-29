@@ -73,7 +73,7 @@ Browser-based CAD application using OpenCascade.js for 3D modeling. JavaScript C
 - Each chat runs under `exclusive_turn()`: settle any outstanding turn (cancel queued + interrupt), save `current_code`, run the agent turn, read the file back — one indivisible unit, so concurrent same-file chats cannot overwrite each other's code
 - Reply correlation: event cursor taken BEFORE posting; reply = last `message.completed` for OUR `user.message`'s turn_id, finish on `turn.completed`; scoped daemon error events (auto-title, memory recall) are ignored
 - Config overrides live in gitignored `local/config.toml` `[agentd3]` (base_url, model, policy, priority, source, timeout_seconds, settle_timeout_seconds); defaults in the module
-- Tests (`src/agentd3_chat_test.py`) hit the REAL daemon at 127.0.0.1:8620 with source `daz-cad-test` on `agentic-low`; they archive their conversations afterwards
+- Tests (`src/agentd3_chat_test.py`) hit the standing REAL test daemon at 127.0.0.1:18620 with source `daz-cad-test` on `agentic-low`; a health preflight requires `instance=test` and `database=agentd3_downstream_test`, and they archive their conversations afterwards. Never fall back to production: unrelated production restarts can tear held event polls and strand terminal replies.
 
 ## Version Control
 - `local/models/` directory is auto-initialized as a git repo on server startup

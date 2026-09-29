@@ -343,8 +343,18 @@ class Agentd3Chat:
             status, payload = await self.request_json("POST", "/v1/conversations", request_body)
             if status in (200, 201):
                 return status, payload
-            duplicate_race = status == 500 and "duplicate key" in str(payload.get("error", "")).lower()
-            if not duplicate_race or attempt == 2:
+            error_text = str(payload.get("error", "")).lower()
+            duplicate_race = status == 500 and "duplicate key" in error_text
+            # Concurrent idempotent creates can reach Git worktree setup before
+            # the daemon commits its replay row. Retry that specific transient
+            # config lock race with the SAME saved idempotency key; never retry
+            # permission errors or replace a missing/mismatched conversation.
+            worktree_race = (
+                status in (400, 500)
+                and "could not lock config file" in error_text
+                and "file exists" in error_text
+            )
+            if not (duplicate_race or worktree_race) or attempt == 2:
                 raise Agentd3ChatError(
                     f"agentd3 daemon refused conversation creation: HTTP {status} {payload.get('error', '')}"
                 )

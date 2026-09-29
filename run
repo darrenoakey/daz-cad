@@ -2,6 +2,7 @@
 import argparse
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent
@@ -117,6 +118,11 @@ GATE_TESTS = [
     "src/agentd3_chat_test.py::test_state_key_recovery",
     "src/agentd3_chat_test.py::test_chat_endpoint_round_trip",
     "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
+    "src/server_test.py::test_monaco_type_definitions_match_library",
+    "src/server_test.py::test_worker_recreation_replays_latest_model",
+    "src/joinery_kernel_test.py",
+    "src/joinery_test.py",
+    "src/joinery_ui_test.py",
 ]
 
 
@@ -134,19 +140,43 @@ def command_check(_: argparse.Namespace) -> int:
             "120",
             "src/agentd3_chat.py",
             "src/agentd3_chat_test.py",
+            "src/joinery_kernel_test.py",
+            "src/joinery_test.py",
+            "src/joinery_ui_test.py",
         ]
     )
     if lint != 0:
         return lint
     log_path = TEST_OUT / "gate_check.log"
     print(f"Running gate tests (log: {log_path})")
-    with open(log_path, "w") as log_file:
-        result = subprocess.call(
-            [_venv_python(), "-m", "pytest", "-v", "--disable-warnings"] + GATE_TESTS,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
-    return result
+    # The independent real-daemon lane does not own a browser. Run it beside
+    # the CAD lane instead of serializing remote inference ahead of all WASM
+    # work. CAD batches remain serial and release their native resources before
+    # the next batch; every selected assertion still runs without replay.
+    chat = [target for target in GATE_TESTS if target.startswith("src/agentd3_chat_test.py")]
+    geometry = [target for target in GATE_TESTS if target in ("src/joinery_kernel_test.py", "src/joinery_test.py")]
+    regression = [target for target in GATE_TESTS if target.startswith("src/server_test.py")]
+    lanes = {"chat": [chat], "cad": [geometry, regression, ["src/joinery_ui_test.py"]]}
+
+    def run_lane(name, batches):
+        lane_path = TEST_OUT / f"gate_{name}.log"
+        with open(lane_path, "w") as stream:
+            for targets in batches:
+                result = subprocess.call(
+                    [_venv_python(), "-m", "pytest", "-v", "--durations=10"] + targets,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                )
+                if result != 0:
+                    return result
+        return 0
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(run_lane, name, batches) for name, batches in lanes.items()]
+        results = [future.result() for future in futures]
+    with open(log_path, "w") as stream:
+        stream.writelines((TEST_OUT / f"gate_{name}.log").read_text() for name in lanes)
+    return next((result for result in results if result != 0), 0)
 
 
 # ##################################################################
@@ -246,7 +276,7 @@ def command_build_opencascade(_: argparse.Namespace) -> int:
         return 1
 
     # Check if Docker daemon is running
-    result = subprocess.run(["docker", "info"], capture_output=True)
+    result = subprocess.run(["docker", "info"], capture_output=True, check=False)
     if result.returncode != 0:
         print("Error: Docker daemon is not running. Start Docker Desktop and try again.")
         return 1
@@ -270,6 +300,7 @@ def command_build_opencascade(_: argparse.Namespace) -> int:
             "opencascade-freetype.yml",
         ],
         cwd=build_dir,
+        check=False,
     )
 
     if result.returncode == 0:

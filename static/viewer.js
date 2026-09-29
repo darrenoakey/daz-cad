@@ -22,6 +22,10 @@ class CADViewer {
         this._faceLabelsGroup = null; // Group for face name labels
         this._faceNameMode = 'named'; // 'all' | 'named' | 'none'
         this._faceLabelsData = null; // Stored face labels data for mode switching
+        this._cutPlaneGroup = null;
+        this._cutPlane = null;
+        this._cutPlaneMove = null;
+        this._draggingCutPlane = false;
 
         this._init();
         this._animate();
@@ -85,6 +89,11 @@ class CADViewer {
         this._faceLabelsGroup = new THREE.Group();
         this.scene.add(this._faceLabelsGroup);
 
+        // Translucent visual guide for the Cut/Join workplane.
+        this._cutPlaneGroup = new THREE.Group();
+        this.scene.add(this._cutPlaneGroup);
+        this._initCutPlaneDrag();
+
         // Handle resize
         window.addEventListener('resize', () => this._onResize());
 
@@ -113,6 +122,79 @@ class CADViewer {
     clear() {
         this._disposeGroup(this.meshGroup);
         this._materials = [];
+    }
+
+    _initCutPlaneDrag() {
+        const pointer = new THREE.Vector2();
+        const raycaster = new THREE.Raycaster();
+        const intersection = new THREE.Vector3();
+        const pointFromEvent = (event) => {
+            if (!this._cutPlane) return null;
+            const rect = this.renderer.domElement.getBoundingClientRect();
+            pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+            raycaster.setFromCamera(pointer, this.camera);
+            const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this._cutPlane.normal, this._cutPlane.origin);
+            return raycaster.ray.intersectPlane(plane, intersection) ? intersection.clone() : null;
+        };
+        this.renderer.domElement.addEventListener('pointerdown', (event) => {
+            // Shift-drag preserves ordinary orbit navigation while providing a
+            // deliberate plane handle gesture anywhere on the visible guide.
+            if (!event.shiftKey) return;
+            const point = pointFromEvent(event);
+            if (!point) return;
+            this._draggingCutPlane = true;
+            this.controls.enabled = false;
+            this.renderer.domElement.setPointerCapture(event.pointerId);
+        });
+        this.renderer.domElement.addEventListener('pointermove', (event) => {
+            if (!this._draggingCutPlane) return;
+            const point = pointFromEvent(event);
+            if (!point) return;
+            this._cutPlane.origin.copy(point);
+            this._cutPlaneMove?.(point.toArray());
+            this.setCutPlane({ origin: point.toArray(), normal: this._cutPlane.normal.toArray() }, this._cutPlaneMove);
+        });
+        const stop = (event) => {
+            if (!this._draggingCutPlane) return;
+            this._draggingCutPlane = false;
+            this.controls.enabled = true;
+            if (this.renderer.domElement.hasPointerCapture(event.pointerId)) this.renderer.domElement.releasePointerCapture(event.pointerId);
+        };
+        this.renderer.domElement.addEventListener('pointerup', stop);
+        this.renderer.domElement.addEventListener('pointercancel', stop);
+    }
+
+    /** Show the Cut/Join plane with a normal arrow; it never changes CAD geometry. */
+    setCutPlane(plane, onMove = null) {
+        this.clearCutPlane();
+        const origin = new THREE.Vector3(...plane.origin);
+        const normal = new THREE.Vector3(...plane.normal);
+        this._cutPlane = { origin, normal, };
+        this._cutPlaneMove = onMove;
+        if (normal.lengthSq() < 1e-9) return;
+        normal.normalize();
+        const planeMesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(120, 120),
+            new THREE.MeshBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }),
+        );
+        // PlaneGeometry faces +Z; rotate that normal to the requested normal.
+        planeMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+        planeMesh.position.copy(origin);
+        this._cutPlaneGroup.add(planeMesh);
+        const arrow = new THREE.ArrowHelper(normal, origin, 20, 0x00d4ff, 4, 2);
+        this._cutPlaneGroup.add(arrow);
+    }
+
+    clearCutPlane() {
+        if (this._cutPlaneGroup) this._disposeGroup(this._cutPlaneGroup);
+        this._cutPlane = null;
+        this._cutPlaneMove = null;
+    }
+
+    getModelBounds() {
+        if (!this.meshGroup || this.meshGroup.children.length === 0) return null;
+        const box = new THREE.Box3().setFromObject(this.meshGroup);
+        return box.isEmpty() ? null : { min: box.min.toArray(), max: box.max.toArray() };
     }
 
     /**

@@ -2,6 +2,8 @@
 
 Complete API documentation for the CAD library.
 
+**Cut-plane joinery:** `Workplane.splitAndJoin(options)` generates complementary parts and loose keys using ten connector methods. See [Joinery API and examples](joinery.md). The returned `JointResult` extends `Assembly` and supports assembled, exploded, and print layouts.
+
 ## Table of Contents
 
 - [Execution Environment](#execution-environment)

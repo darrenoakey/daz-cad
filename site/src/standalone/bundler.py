@@ -7,13 +7,24 @@ import shutil
 from pathlib import Path
 
 
-# Intra-/static module basenames whose import specifiers get content-hash
-# cache-busting. cad-worker.js is handled separately (it's loaded as a Worker
-# URL, not an ES import, and must stay an absolute path).
-_BUSTABLE_MODULES = (
-    "cad", "viewer", "gridfinity", "patterns", "naming",
-    "threemf", "opentype.module",
-)
+def _collect_js_files(static_src: Path) -> list[str]:
+    """Return root JS assets plus every local static ES-module dependency.
+
+    Joinery intentionally fans out into family modules, so a handwritten copy
+    list is unsafe: a new local import must ship and affect the cache hash.
+    """
+    pending = list(JS_FILES)
+    found: set[str] = set()
+    import_re = re.compile(r"(?:from\s*|import\s*)['\"](?:\.?/static/|\./)([A-Za-z0-9_.-]+\.js)['\"]")
+    while pending:
+        filename = pending.pop()
+        if filename in found or not (static_src / filename).is_file():
+            continue
+        found.add(filename)
+        for dependency in import_re.findall((static_src / filename).read_text()):
+            if dependency not in found:
+                pending.append(dependency)
+    return sorted(found)
 
 
 def _compute_build_hash(static_src: Path) -> str:
@@ -26,7 +37,7 @@ def _compute_build_hash(static_src: Path) -> str:
     these files almost always change together anyway.
     """
     h = hashlib.sha256()
-    for filename in sorted(JS_FILES):
+    for filename in [*_collect_js_files(static_src), *sorted(CSS_FILES)]:
         src = static_src / filename
         if src.exists():
             h.update(src.read_bytes())
@@ -45,23 +56,22 @@ def _bust_js(content: str, build_hash: str) -> str:
       - the Worker URL `/static/cad-worker.js` -> same path + ?v=<hash>
         (kept absolute: it's resolved against the document base, not /static/)
     """
-    alt = "|".join(m.replace(".", r"\.") for m in _BUSTABLE_MODULES)
     # Worker URL first (absolute path preserved), avoid double-busting.
     content = re.sub(
         r"(/static/cad-worker\.js)(?!\?)",
         rf"\1?v={build_hash}",
         content,
     )
-    # Absolute static module imports -> relative + version.
+    # Rewrite every local static module, not a fixed allowlist: this follows
+    # joinery's family-module graph and keeps new local dependencies deployable.
     content = re.sub(
-        rf"/static/({alt})\.js(?!\?)",
-        rf"./\1.js?v={build_hash}",
+        r"/static/([A-Za-z0-9_.-]+\.js)(?!\?)",
+        rf"./\1?v={build_hash}",
         content,
     )
-    # Already-relative static module imports -> + version.
     content = re.sub(
-        rf"(?<![\w/])\./({alt})\.js(?!\?)",
-        rf"./\1.js?v={build_hash}",
+        r"(?<![\w/])\./([A-Za-z0-9_.-]+\.js)(?!\?)",
+        rf"./\1?v={build_hash}",
         content,
     )
     return content
@@ -74,10 +84,16 @@ JS_FILES = [
     "viewer.js",
     "patterns.js",
     "naming.js",
+    "joinery.js",
+    "joinery-ui.js",
     "gridfinity.js",
     "cad-worker.js",
     "opentype.module.js",
     "threemf.js",
+]
+
+CSS_FILES = [
+    "joinery-ui.css",
 ]
 
 FONT_FILES = [
@@ -116,6 +132,8 @@ def _build_import_map(build_hash: str) -> str:
             "/static/gridfinity.js": f"./static/gridfinity.js{v}",
             "/static/patterns.js": f"./static/patterns.js{v}",
             "/static/naming.js": f"./static/naming.js{v}",
+            "/static/joinery.js": f"./static/joinery.js{v}",
+            "/static/joinery-ui.js": f"./static/joinery-ui.js{v}",
             "/static/threemf.js": f"./static/threemf.js{v}",
             "/static/opentype.module.js": f"./static/opentype.module.js{v}",
         }
@@ -143,6 +161,12 @@ def _build_editor_html(source_html: str, examples: dict[str, str], build_hash: s
         html,
         count=1,
         flags=re.DOTALL,
+    )
+
+    # Version the Cut/Join stylesheet too; it is copied beside the JS bundle.
+    html = html.replace(
+        'href="/static/joinery-ui.css"',
+        f'href="./static/joinery-ui.css?v={build_hash}"',
     )
 
     # Remove the hot reload script
@@ -209,11 +233,17 @@ def bundle(project_root: Path, output_dir: Path) -> None:
     # Content hash over all JS — stamped into every module URL for cache-busting.
     build_hash = _compute_build_hash(static_src)
 
-    # Copy JS files, rewriting intra-/static import URLs to carry ?v=<hash>.
-    for filename in JS_FILES:
+    # Copy roots and their complete local ES-module closure, rewriting URLs.
+    for filename in _collect_js_files(static_src):
         src = static_src / filename
         if src.exists():
             (static_dst / filename).write_text(_bust_js(src.read_text(), build_hash))
+
+    # Copy stylesheet assets referenced by editor.html.
+    for css_path in CSS_FILES:
+        src = static_src / css_path
+        if src.exists():
+            shutil.copy2(src, static_dst / css_path)
 
     # Copy font files
     for font_path in FONT_FILES:

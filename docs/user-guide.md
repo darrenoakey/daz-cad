@@ -12,9 +12,16 @@ A complete guide to using the DAZ-CAD-2 browser-based parametric CAD editor.
 - [CAD Assistant](#cad-assistant)
 - [Exporting Models](#exporting-models)
 - [Working with Gridfinity](#working-with-gridfinity)
+- [Cut-plane Joinery](joinery.md)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 
 ---
+
+## Cut & Join oversized prints
+
+Use **Cut & Join** in the toolbar on a model whose result is one Workplane. Set the origin, normal, and up-vector of the cyan cutting plane, or Shift-drag the plane in the viewport. Choose one of ten connector methods, set size/depth/clearance, and select assembled, exploded, or print layout before applying. Invalid generation leaves the source unchanged.
+
+The generated script retains your original model and creates the matching sides and any loose keys together. Open `demo_joinery.js` to try every method. Use print layout for exporting separated components, then inspect the result in your slicer and print a fit coupon. See [the joinery guide](joinery.md) for the API, mechanisms, assembly access, and support/strength limitations.
 
 ## Getting Started
 

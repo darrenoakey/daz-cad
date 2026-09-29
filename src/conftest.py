@@ -1,10 +1,12 @@
-import pytest
-import subprocess
-import time
 import socket
-from contextlib import closing
+import subprocess
 import sys
+import time
+from contextlib import closing
 from pathlib import Path
+
+import httpx
+import pytest
 from playwright.sync_api import sync_playwright
 
 
@@ -64,19 +66,18 @@ def server(server_port, tmp_path_factory):
 
     server_url = f"http://127.0.0.1:{server_port}"
     max_attempts = 30
+    last_error = "health endpoint has not returned success"
     for _ in range(max_attempts):
         try:
-            import httpx
-
             response = httpx.get(f"{server_url}/health", timeout=1.0)
             if response.status_code == 200:
                 break
-        except Exception:
-            pass
+        except httpx.RequestError as error:
+            last_error = str(error)
         time.sleep(0.5)
     else:
         proc.terminate()
-        raise RuntimeError(f"Server failed to start on port {server_port}")
+        raise RuntimeError(f"Server failed to start on port {server_port}: {last_error}")
 
     yield server_url
 
@@ -106,14 +107,24 @@ def shared_browser():
 @pytest.fixture(scope="session")
 def cad_page(server, shared_browser):
     page = shared_browser.new_page()
+    failures = []
+    messages = []
+    page.on("requestfailed", lambda request: failures.append(f"{request.url}: {request.failure}"))
+    page.on("pageerror", lambda error: failures.append(str(error)))
+    page.on("console", lambda message: messages.append(message.text))
     page.goto(f"{server}/")
-    page.wait_for_function(
-        """() => {
-            const statusText = document.getElementById('status-text');
-            return statusText && statusText.textContent === 'Ready' && window.Workplane;
-        }""",
-        timeout=90000,
-    )
+    try:
+        page.wait_for_function(
+            """() => {
+                const statusText = document.getElementById('status-text');
+                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+            }""",
+            timeout=90000,
+        )
+    except Exception as error:
+        status = page.locator("#status-text").inner_text()
+        page.close()
+        raise RuntimeError(f"CAD startup failed: status={status}; requests={failures}; console={messages[-15:]}") from error
     yield page
     page.close()
 
@@ -124,13 +135,21 @@ def cad_page(server, shared_browser):
 @pytest.fixture(scope="session")
 def init_page(server, shared_browser):
     page = shared_browser.new_page()
+    failures = []
+    page.on("requestfailed", lambda request: failures.append(f"{request.url}: {request.failure}"))
+    page.on("pageerror", lambda error: failures.append(str(error)))
     page.goto(f"{server}/init-test")
-    page.wait_for_function(
-        """() => {
-            const status = document.getElementById('status');
-            return status && status.classList.contains('success');
-        }""",
-        timeout=60000,
-    )
+    try:
+        page.wait_for_function(
+            """() => {
+                const status = document.getElementById('status');
+                return status && status.classList.contains('success');
+            }""",
+            timeout=60000,
+        )
+    except Exception as error:
+        diagnostics = page.locator("body").inner_text()
+        page.close()
+        raise RuntimeError(f"OpenCascade startup failed: {failures}\n{diagnostics}") from error
     yield page
     page.close()

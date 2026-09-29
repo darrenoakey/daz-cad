@@ -9,6 +9,7 @@ import { initCAD, Workplane, Assembly, Profiler, loadFont, getDefaultFont } from
 import { Gridfinity } from './gridfinity.js';
 import './patterns.js';  // Extends Workplane with unified cutPattern()
 import './naming.js';    // Extends Workplane with named references
+import { Joinery } from './joinery.js'; // Extends Workplane with splitAndJoin()
 
 let oc = null;
 let isInitialized = false;
@@ -124,8 +125,8 @@ function executeCode(code) {
     }
 
     // Execute the code with the CAD API and this worker's initialized OpenCascade instance available
-    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', 'oc', code + '\nreturn result;');
-    const result = fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity, oc);
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', 'Joinery', 'oc', code + '\nreturn result;');
+    const result = fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity, Joinery, oc);
 
     if (!result) {
         throw new Error('Code did not produce a result');
@@ -157,13 +158,13 @@ function executeForExport(code) {
         throw new Error('OpenCascade not initialized');
     }
 
-    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', 'oc', code + '\nreturn result;');
-    return fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity, oc);
+    const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', 'Joinery', 'oc', code + '\nreturn result;');
+    return fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity, Joinery, oc);
 }
 
 // Handle messages from main thread
 self.onmessage = async function(e) {
-    const { type, code, id } = e.data;
+    const { type, code, id, generated } = e.data;
 
     if (type === 'init') {
         try {
@@ -200,7 +201,23 @@ self.onmessage = async function(e) {
             self.postMessage({ type: 'renderError', id, error: error.message });
         } finally {
             isRendering = false;
-            postStatus('ready', 'Ready');
+            // renderComplete/renderError are authoritative. A trailing Ready
+            // used to hide render errors or mark stale results as exportable.
+        }
+    } else if (type === 'validateJoinery') {
+        // Preflight before the UI edits Monaco: a failed source is never replaced.
+        try {
+            const result = executeForExport(code);
+            if (!result) throw new Error('Source did not produce a result variable.');
+            if (generated) {
+                if (!result.isAssembly) throw new Error('Generated Cut/Join result was not an Assembly.');
+            } else {
+                if (result.isAssembly) throw new Error('Cut/Join currently accepts one Workplane result; choose or create a single part before splitting.');
+                if (typeof result.splitAndJoin !== 'function') throw new Error('This result is not a Workplane that can be split.');
+            }
+            self.postMessage({ type: 'joineryValidation', id, ok: true, warnings: [] });
+        } catch (error) {
+            self.postMessage({ type: 'joineryValidation', id, ok: false, error: `Cut/Join was not applied: ${error.message}` });
         }
     } else if (type === 'exportSTL') {
         if (!isInitialized) {

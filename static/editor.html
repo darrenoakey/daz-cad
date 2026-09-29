@@ -764,6 +764,7 @@
             color: #ffffff;
         }
     </style>
+    <link rel="stylesheet" href="/static/joinery-ui.css">
     <!-- Dynamic import map with cache busters for local modules -->
     <script>
         const cacheBuster = `?v=${Date.now()}`;
@@ -780,6 +781,8 @@
                 "/static/gridfinity.js": `/static/gridfinity.js${cacheBuster}`,
                 "/static/patterns.js": `/static/patterns.js${cacheBuster}`,
                 "/static/naming.js": `/static/naming.js${cacheBuster}`,
+                "/static/joinery.js": `/static/joinery.js${cacheBuster}`,
+                "/static/joinery-ui.js": `/static/joinery-ui.js${cacheBuster}`,
                 "/static/threemf.js": `/static/threemf.js${cacheBuster}`,
                 "/static/opentype.module.js": `/static/opentype.module.js${cacheBuster}`
             }
@@ -843,6 +846,7 @@
                                 <button class="segmented-btn" data-mode="none">None</button>
                             </div>
                         </div>
+                        <button id="cut-join-btn" class="toolbar-btn" title="Split a Workplane and add printable joinery">Cut &amp; Join</button>
                         <div class="opacity-control">
                             <label for="opacity-slider">Opacity:</label>
                             <input type="range" id="opacity-slider" min="10" max="100" value="100">
@@ -867,6 +871,20 @@
                     </div>
                 </div>
                 <div id="viewer-container"></div>
+                <section id="joinery-panel" class="joinery-panel" hidden aria-label="Cut and Join">
+                    <header><strong>Cut / Join</strong><button id="joinery-close" aria-label="Close Cut and Join">×</button></header>
+                    <label>Connector <select id="joinery-method"></select></label>
+                    <fieldset><legend>Cut plane (mm)</legend>
+                        <div class="joinery-axis"><button type="button" data-joinery-axis="X">X plane</button><button type="button" data-joinery-axis="Y">Y plane</button><button type="button" data-joinery-axis="Z" class="active">Z plane</button></div>
+                        <div class="joinery-grid"><label>X <input id="joinery-x" type="number" value="0" step="1"></label><label>Y <input id="joinery-y" type="number" value="0" step="1"></label><label>Z <input id="joinery-z" type="number" value="10" step="1"></label></div>
+                        <div class="joinery-grid"><label>Normal X <input id="joinery-nx" type="number" value="0" step="0.1"></label><label>Normal Y <input id="joinery-ny" type="number" value="0" step="0.1"></label><label>Normal Z <input id="joinery-nz" type="number" value="1" step="0.1"></label></div>
+                        <div class="joinery-grid"><label>Up X <input id="joinery-ux" type="number" value="0" step="0.1"></label><label>Up Y <input id="joinery-uy" type="number" value="1" step="0.1"></label><label>Up Z <input id="joinery-uz" type="number" value="0" step="0.1"></label></div>
+                    </fieldset>
+                    <div class="joinery-grid"><label>Size <input id="joinery-size" type="number" value="8" min="1" step="0.1"></label><label>Depth <input id="joinery-depth" type="number" value="6" min="1" step="0.1"></label><label>Clearance <input id="joinery-clearance" type="number" value="0.2" min="0" step="0.05"></label><label>Count <input id="joinery-count" type="number" value="1" min="1" step="1"></label><label>Wall <input id="joinery-wall" type="number" value="1.2" min="0.4" step="0.1"></label></div>
+                    <label>Preview <select id="joinery-preview"><option value="assembled">Assembled</option><option value="exploded">Exploded</option><option value="print">Print parts</option></select></label>
+                    <p id="joinery-diagnostics" role="status"></p>
+                    <button id="joinery-apply" class="toolbar-btn">Apply Cut / Join</button>
+                </section>
                 <div id="error-overlay" class="error-overlay">
                     <div class="error-title">Error</div>
                     <div id="error-message"></div>

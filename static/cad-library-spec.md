@@ -71,6 +71,41 @@ new Workplane(plane)
 - `height`: Height of the prism
 - Oriented with a flat edge at the top
 
+### Cut-plane joinery (all ten connector methods)
+
+**splitAndJoin(options)** splits one Workplane on an arbitrary plane and constructs both mating sides and any separate keys together. Returns a `JointResult` (an Assembly), leaving the input unchanged.
+
+```javascript
+const joint = new Workplane('XY').box(60, 40, 24).splitAndJoin({
+    plane: { origin: [0, 0, 12], normal: [0, 0, 1], up: [0, 1, 0] },
+    method: 'snap-key', size: 8, depth: 6, clearance: 0.2, wall: 1.2, count: 1
+});
+const result = joint.toAssembly({ mode: 'print', gap: 15 });
+console.log(joint.instructions.join('\n'));
+console.warn(joint.warnings.join('\n'));
+result;
+```
+
+Available method IDs (all implemented, not aliases):
+- `snap-key`: separate double-ended snap bridge.
+- `butterfly-key`: bow-tie spline across the seam.
+- `dovetail`: sliding mating dovetail profile.
+- `jigsaw`: interlocking profiled seam.
+- `cantilever-snap`: integral compliant hook connection.
+- `snap-dowel`: separate split retention pin.
+- `cross-key`: tongue/mortise with a separate transverse lock.
+- `scarf-wedge`: overlapping scarf and locking wedge.
+- `bayonet`: insert-and-rotate lug/track joint.
+- `bridge-clip`: separate external bridge clip.
+
+`Joinery.methods` is the catalogue of `{id,label,description}` objects.
+
+Options: `plane.origin`, `plane.normal`, and `plane.up` are three-element vectors. Normal must be nonzero, optional up must be nonparallel (a stable axis is chosen when omitted), and the plane must cut through the solid. Sliding methods use `detent: true` by default; `detent: false` allows free reverse sliding. `positions: [[u,v], ...]` optionally specifies local connector centers; otherwise placement uses `count`. Dimensions and `clearance` are millimetres. Invalid cuts, dimensions, or unsuitable placement raise errors rather than silently returning the original shape.
+
+Result fields: `parts`, `keys` (Workplanes), `method`, `plane`, `connectors`, `instructions`, `warnings`. Render/export the result directly, or call `toAssembly({mode:'assembled'|'exploded'|'print',gap:20})`. Print view separates parts and loose keys; assembled view must not be mistaken for a print-plate layout. Check bed fit and slice preview before printing. The API does not promise automatic multi-plate nesting or physically calibrated strength/fit.
+
+For oversized objects, split individual solids successively and preserve an assembly order with room for all sliding or twisting operations. Do not imply that tilting the cut plane alone eliminates supports: use the returned method-specific print guidance and verify actual printing orientation and clearances with a coupon.
+
 ### Operations
 
 **hole(diameter, depth = null)**

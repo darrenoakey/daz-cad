@@ -19,6 +19,7 @@ DAZ-CAD is a web-based CAD application that allows you to create and edit 3D mod
 
 - **[User Guide](docs/user-guide.md)** - Complete walkthrough of the interface, navigation, and features
 - **[Library Reference](docs/library-reference.md)** - API documentation for all CAD operations
+- **[Cut-plane Joinery](docs/joinery.md)** - Ten connector methods for splitting oversized prints into mating parts and separate keys
 
 ## Installation
 

@@ -9,10 +9,22 @@ import pytest
 
 from src.agentd3_chat import STATE_SCHEMA_VERSION, Agentd3Chat, Agentd3ChatError, TurnReplyTracker
 
-# real daemon - every test here creates and talks to REAL agentd3 conversations
-DAEMON_BASE_URL = "http://127.0.0.1:8620"
+# Standing real TEST daemon: production can restart during unrelated releases.
+# Never send test mutations to its production datastore or fall back to it.
+DAEMON_BASE_URL = "http://127.0.0.1:18620"
 WORKTREE_ROOT = Path(__file__).parent.parent
 TEST_SOURCE = "daz-cad-test"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def require_test_daemon():
+    # Fail closed if the configured endpoint is unavailable or is production.
+    response = httpx.get(f"{DAEMON_BASE_URL}/healthz", timeout=5.0)
+    response.raise_for_status()
+    health = response.json()
+    assert health.get("instance") == "test", health
+    assert health.get("database") == "agentd3_downstream_test", health
+    assert health.get("status") == "ok", health
 
 
 # ##################################################################
@@ -235,28 +247,23 @@ async def test_fail_closed_on_cwd_mismatch(tmp_path: Path):
 
 # ##################################################################
 # test concurrent create yields one conversation
-# two clients racing the same fresh state file must end up with the same
-# conversation - the persisted idempotency key collapses the race
-async def test_concurrent_create_yields_single_conversation(tmp_path: Path):
+# clients racing the same fresh state file must end up with the same
+# conversation - including the daemon's transient Git config-lock race.
+@pytest.mark.parametrize("client_count", [2, 4])
+async def test_concurrent_create_yields_single_conversation(tmp_path: Path, client_count: int):
     state_path = tmp_path / "agentd3-chat.json"
     conversation_id = ""
+    clients = [make_chat(state_path) for _ in range(client_count)]
     try:
-        first = make_chat(state_path)
-        second = make_chat(state_path)
-        try:
-            first_id, second_id = await asyncio.gather(
-                first.get_or_create_conversation(),
-                second.get_or_create_conversation(),
-            )
-        finally:
-            await first.close()
-            await second.close()
-        assert first_id.startswith("conv-")
-        assert first_id == second_id
-        conversation_id = first_id
-        assert conversation_id_of(state_path) == first_id
+        identifiers = await asyncio.gather(*(client.get_or_create_conversation() for client in clients))
+        conversation_id = identifiers[0]
+        assert conversation_id.startswith("conv-")
+        assert all(identifier == conversation_id for identifier in identifiers)
+        assert conversation_id_of(state_path) == conversation_id
     finally:
-        archive_conversation(conversation_id)
+        await asyncio.gather(*(client.close() for client in clients))
+        stored_id = conversation_id_of(state_path) if state_path.exists() else ""
+        archive_conversation(conversation_id or stored_id)
 
 
 # ##################################################################
