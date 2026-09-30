@@ -428,10 +428,10 @@ def test_editor_auto_renders_default_code(server, shared_browser):
 # ##################################################################
 # test editor mesh has geometry
 # verifies the three.js mesh group contains actual geometry data
-def test_editor_mesh_has_geometry(cad_page):
+def test_editor_mesh_has_geometry(editor_page):
     # wait for ready state
     # check three.js scene state through the cadeditor instance
-    mesh_check = cad_page.evaluate("""() => {
+    mesh_check = editor_page.evaluate("""() => {
         // the viewer should be accessible - find it in the dom or window
         const viewer = document.querySelector('#viewer-container');
         if (!viewer) return { success: false, reason: 'No viewer container' };
@@ -506,9 +506,9 @@ def test_editor_code_execution(cad_page):
 # ##################################################################
 # test editor full render pipeline
 # comprehensive test that validates the entire render pipeline works
-def test_editor_full_render_pipeline(cad_page):
-    # check error overlay is not visible
-    error_overlay = cad_page.locator("#error-overlay")
+def test_editor_full_render_pipeline(editor_page, cad_page):
+    # check error overlay is not visible on the genuine worker-backed editor.
+    error_overlay = editor_page.locator("#error-overlay")
     error_class = error_overlay.get_attribute("class") or ""
     assert "visible" not in error_class, "Error overlay is visible"
 
@@ -786,8 +786,8 @@ def test_3mf_export(cad_page):
 # ##################################################################
 # test worker direct opencascade preview and exports
 # verifies advanced cad code receives the worker's initialized oc instance for every execution path
-def test_worker_direct_opencascade_preview_and_exports(cad_page):
-    result = cad_page.evaluate("""async () => {
+def test_worker_direct_opencascade_preview_and_exports(bare_page):
+    result = bare_page.evaluate("""async () => {
         const worker = new Worker('/static/cad-worker.js', { type: 'module' });
         const waitForMessage = (successType, errorType, id) => new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -961,9 +961,9 @@ def test_reset_file(server):
 # ##################################################################
 # test reset button visibility
 # verifies reset button shows for files with templates
-def test_reset_button_visibility(cad_page):
+def test_reset_button_visibility(editor_page):
     # wait for editor and filename to be loaded
-    cad_page.wait_for_function(
+    editor_page.wait_for_function(
         """() => {
             const filename = document.getElementById('filename-display');
             return window.cadEditor && window.cadEditor.editor &&
@@ -972,10 +972,10 @@ def test_reset_button_visibility(cad_page):
         timeout=30000
     )
     # wait a bit more for template check to complete
-    cad_page.wait_for_timeout(500)
+    editor_page.wait_for_timeout(500)
 
     # check reset button is visible for default.js (has template)
-    result = cad_page.evaluate("""() => {
+    result = editor_page.evaluate("""() => {
         const btn = document.getElementById('reset-file-btn');
         const filename = document.getElementById('filename-display');
         return {
@@ -997,10 +997,10 @@ def test_reset_button_visibility(cad_page):
 # ##################################################################
 # test properties panel
 # verifies properties panel parses numeric variables and sliders update code
-def test_properties_panel(cad_page):
+def test_properties_panel(editor_page):
     # wait for editor to be ready
     # test properties panel in a single atomic evaluate to avoid race conditions
-    result = cad_page.evaluate("""() => {
+    result = editor_page.evaluate("""() => {
         // stop file watcher and debounce timer
         if (window.cadEditor._fileWatchInterval) {
             clearInterval(window.cadEditor._fileWatchInterval);
@@ -1652,11 +1652,11 @@ def test_clean_method(cad_page):
 # ##################################################################
 # test monaco type definitions match actual library
 # verifies the type definitions in editor.js match the actual CAD library exports
-def test_monaco_type_definitions_match_library(cad_page):
-    # wait for Gridfinity to be available (cad_page already waited for Workplane)
-    cad_page.wait_for_function("() => window.Gridfinity !== undefined", timeout=30000)
+def test_monaco_type_definitions_match_library(module_page):
+    # module_page has loaded the real CAD modules and prototype extensions.
+    module_page.wait_for_function("() => window.Gridfinity !== undefined", timeout=30000)
 
-    result = cad_page.evaluate("""() => {
+    result = module_page.evaluate("""() => {
         try {
             const issues = [];
 
@@ -3643,26 +3643,26 @@ def test_iso_prism_boolean_operations(cad_page):
 # Real worker-lifecycle integration, distinct from UI-only BDD: cancel both
 # actual workers synchronously, then queue a real model while replacement loads.
 # No worker, CAD kernel, messages, or renderer is mocked.
-def test_worker_recreation_replays_latest_model(cad_page):
+def test_worker_recreation_replays_latest_model(editor_page):
     from pathlib import Path
     from uuid import uuid4
 
     filename = f"test-worker-replay-{uuid4().hex}.js"
-    expect(cad_page.locator("#filename-display")).not_to_have_text("loading...", timeout=90000)
-    original = cad_page.locator("#filename-display").inner_text()
-    cad_page.locator("#file-selector-btn").click()
-    cad_page.locator("#new-file-input").fill(filename)
-    cad_page.locator("#create-file-btn").click()
-    expect(cad_page.locator("#filename-display")).to_have_text(filename, timeout=30000)
-    expect(cad_page.locator("#download-3mf-btn")).to_be_enabled(timeout=90000)
+    expect(editor_page.locator("#filename-display")).not_to_have_text("loading...", timeout=90000)
+    original = editor_page.locator("#filename-display").inner_text()
+    editor_page.locator("#file-selector-btn").click()
+    editor_page.locator("#new-file-input").fill(filename)
+    editor_page.locator("#create-file-btn").click()
+    expect(editor_page.locator("#filename-display")).to_have_text(filename, timeout=30000)
+    expect(editor_page.locator("#download-3mf-btn")).to_be_enabled(timeout=90000)
     try:
-        with cad_page.expect_response(
+        with editor_page.expect_response(
             lambda response: response.url.endswith(f"/api/models/{filename}")
             and response.request.method == "POST"
             and "box(27,29,31)" in (response.request.post_data or ""),
             timeout=90000,
         ):
-            result = cad_page.evaluate("""async () => {
+            result = editor_page.evaluate("""async () => {
                 const editor = window.cadEditor;
                 editor._cancelRender();
                 editor._cancelRender();
@@ -3689,5 +3689,5 @@ def test_worker_recreation_replays_latest_model(cad_page):
         assert abs(result["bounds"]["max"][0] - result["bounds"]["min"][0] - 27) < 0.001, result
         assert abs(result["bounds"]["max"][2] - result["bounds"]["min"][2] - 31) < 0.001, result
     finally:
-        cad_page.evaluate("filename => window.cadEditor._selectFile(filename)", original)
+        editor_page.evaluate("filename => window.cadEditor._selectFile(filename)", original)
         (Path(__file__).resolve().parent.parent / "local" / "models" / filename).unlink(missing_ok=True)

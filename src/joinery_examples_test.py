@@ -184,10 +184,10 @@ def test_showcase_change_impact_selection():
 
 # Real editor lifecycle integration (separate from the UI-only picker scenario):
 # reading identical model bytes must not enqueue rendering or disable exports.
-def test_identical_model_reload_does_not_recompile(cad_page):
-    expect(cad_page.locator('#filename-display')).not_to_have_text('loading...', timeout=90000)
-    expect(cad_page.locator('#download-3mf-btn')).to_be_enabled(timeout=90000)
-    result = cad_page.evaluate("""async () => {
+def test_identical_model_reload_does_not_recompile(editor_page):
+    expect(editor_page.locator('#filename-display')).not_to_have_text('loading...', timeout=90000)
+    expect(editor_page.locator('#download-3mf-btn')).to_be_enabled(timeout=90000)
+    result = editor_page.evaluate("""async () => {
         const editor = window.cadEditor;
         const request = editor._renderRequestId;
         const code = editor.editor.getValue();

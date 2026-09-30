@@ -112,9 +112,38 @@ def shared_browser():
 
 # ##################################################################
 # cad page fixture
-# session-scoped page with OC.js loaded for evaluate-only CAD tests
+# session-scoped, one-engine CAD API page for evaluate-only geometry tests.
+# /init-test owns the real main-thread OpenCascade instance; the editor's worker
+# is intentionally never started here.
 @pytest.fixture(scope="session")
-def cad_page(server, shared_browser):
+def cad_page(init_page):
+    init_page.evaluate("""async () => {
+        const cad = await import('/static/cad.js');
+        const gridfinity = await import('/static/gridfinity.js');
+        await import('/static/patterns.js');
+        await import('/static/naming.js');
+        await import('/static/joinery.js');
+        cad.initCAD(window.oc);
+        window.Gridfinity = gridfinity.Gridfinity;
+        await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = '/static/cad-tests.js';
+            script.onload = resolve;
+            script.onerror = () => reject(new Error('Failed to load CADTests'));
+            document.head.appendChild(script);
+        });
+    }""")
+    yield init_page
+
+
+# ##################################################################
+# editor page fixture
+# session-scoped real editor page whose readiness is supplied by its primary
+# rendering worker. Main-thread OpenCascade is deliberately not a prerequisite:
+# editor rendering and recovery use the worker, while direct CAD API checks use
+# the legacy cad_page fixture above.
+@pytest.fixture(scope="session")
+def editor_page(server, shared_browser):
     page = shared_browser.new_page()
     failures = []
     messages = []
@@ -126,16 +155,56 @@ def cad_page(server, shared_browser):
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+                const filename = document.getElementById('filename-display');
+                const exportButton = document.getElementById('download-3mf-btn');
+                return statusText && statusText.textContent === 'Ready' &&
+                    window.cadEditor && window.cadEditor._workerReady &&
+                    filename && filename.textContent !== 'loading...' &&
+                    exportButton && !exportButton.disabled;
             }""",
             timeout=90000,
         )
     except Exception as error:
         status = page.locator("#status-text").inner_text()
         page.close()
-        raise RuntimeError(f"CAD startup failed: status={status}; requests={failures}; console={messages[-15:]}") from error
+        raise RuntimeError(
+            f"Editor worker startup failed: status={status}; requests={failures}; "
+            f"console={messages[-15:]}"
+        ) from error
     yield page
     page.close()
+
+
+# ##################################################################
+# bare page fixture
+# a same-origin document without editor or OpenCascade startup. Tests which
+# instantiate their own real worker use this to avoid preloading extra engines.
+@pytest.fixture(scope="session")
+def bare_page(server, shared_browser):
+    page = shared_browser.new_page()
+    page.goto(f"{server}/health")
+    yield page
+    page.close()
+
+
+# ##################################################################
+# module page fixture
+# loads real CAD modules and their prototype extensions without initializing
+# OpenCascade. This supports API/type-shape checks that do not create geometry.
+@pytest.fixture(scope="session")
+def module_page(bare_page):
+    bare_page.evaluate("""async () => {
+        const cad = await import('/static/cad.js');
+        const gridfinity = await import('/static/gridfinity.js');
+        await import('/static/patterns.js');
+        await import('/static/naming.js');
+        await import('/static/joinery.js');
+        window.Workplane = cad.Workplane;
+        window.Assembly = cad.Assembly;
+        window.Profiler = cad.Profiler;
+        window.Gridfinity = gridfinity.Gridfinity;
+    }""")
+    yield bare_page
 
 
 # ##################################################################

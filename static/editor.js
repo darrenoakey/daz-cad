@@ -137,8 +137,10 @@ class CADEditor {
         // The worker handles rendering; main thread OC is for tests/direct API use
         await this._initWorker();
 
-        // Initialize main-thread OpenCascade for testing and direct API calls
-        await this._initOpenCascade();
+        // Only the rendering worker is required to show/edit a model. Start
+        // the direct-call engine in the background instead of blocking file
+        // loading on a third WASM instance; warm the spare after it settles.
+        this._mainCADInitialization = this._initOpenCascade().finally(() => this._initSpareWorker());
 
         // Load default file from server
         await this._loadDefaultFile();
@@ -749,19 +751,11 @@ class CADEditor {
     async _initWorker() {
         this._setStatus('loading', 'Starting CAD engine...');
 
-        // Initialize both main and spare workers in parallel
-        const [mainWorker, spareWorker] = await Promise.all([
-            this._createWorkerInstance(true),
-            this._createWorkerInstance(false)
-        ]);
-
-        this._worker = mainWorker;
+        // Start one real engine first. A cold spare must not delay the UI.
+        this._worker = await this._createWorkerInstance(true);
         this._workerReady = true;
         this._attachWorkerHandlers(this._worker);
-
-        this._spareWorker = spareWorker;
-        this._spareWorkerReady = true;
-        console.log('[CAD] Both main and spare workers initialized');
+        console.log('[CAD] Main rendering worker initialized');
     }
 
     _handleRenderComplete(meshData, requestId) {
@@ -1518,6 +1512,8 @@ result;
 
     // Create a new spare worker in the background
     async _initSpareWorker() {
+        if (this._spareWorkerReady || this._spareLoading) return;
+        this._spareLoading = true;
         try {
             console.log('[CAD] Starting spare worker initialization in background');
             this._spareWorker = await this._createWorkerInstance(false);
@@ -1527,6 +1523,8 @@ result;
             console.error('[CAD] Failed to create spare worker:', error);
             this._spareWorker = null;
             this._spareWorkerReady = false;
+        } finally {
+            this._spareLoading = false;
         }
     }
 
