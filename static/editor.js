@@ -1108,7 +1108,15 @@ class CADEditor {
         }, 2000);
     }
 
-    async _checkFileChanged() {
+    _checkFileChanged() {
+        if (this._fileCheckPromise) return this._fileCheckPromise;
+        this._fileCheckPromise = this._checkFileChangedOnce().finally(() => {
+            this._fileCheckPromise = null;
+        });
+        return this._fileCheckPromise;
+    }
+
+    async _checkFileChangedOnce() {
         if (!this._currentFile || this._fileMtime === null) return;
 
         // Don't check if we just saved (within last 3 seconds)
@@ -1116,30 +1124,38 @@ class CADEditor {
 
         // Don't check if currently rendering or processing chat
         if (this._isRendering || this._isProcessing) return;
-
+        const filename = this._currentFile;
+        const content = this.editor.getValue();
+        this._fileCheckPending = true;
         try {
-            const response = await fetch(`/api/models/${this._currentFile}/mtime`);
+            const response = await fetch(`/api/models/${filename}/mtime`);
             if (!response.ok) return;
 
             const data = await response.json();
+            if (filename !== this._currentFile || content !== this.editor.getValue()) return;
             if (data.mtime !== this._fileMtime) {
-                console.log(`File ${this._currentFile} changed externally, reloading...`);
-                await this._reloadCurrentFile();
+                await this._reloadCurrentFile(filename, content);
             }
         } catch (error) {
-            // Ignore errors during polling
+            // A failed read leaves the current model untouched.
+        } finally {
+            this._fileCheckPending = false;
         }
     }
 
-    async _reloadCurrentFile() {
-        if (!this._currentFile) return;
+    async _reloadCurrentFile(filename = this._currentFile, content = this.editor.getValue()) {
+        if (!filename) return;
 
         try {
-            const response = await fetch(`/api/models/${this._currentFile}`);
+            const response = await fetch(`/api/models/${filename}`);
             if (!response.ok) return;
 
             const data = await response.json();
+            if (filename !== this._currentFile || content !== this.editor.getValue()) return;
             this._fileMtime = data.mtime;
+            // Autosave changes mtime too. Identical bytes must not cancel and
+            // rebuild an expensive model (or repeatedly exhaust its workers).
+            if (data.content === content) return;
 
             // Update editor without triggering save
             this._skipSave = true;
@@ -1283,6 +1299,11 @@ class CADEditor {
             this._currentFile = data.filename;
             this._fileMtime = data.mtime;
             this.editor.setValue(data.content);
+            this.viewer.resetView();
+            // Selection renders immediately below; do not queue a second full
+            // geometry evaluation from setValue's ordinary typing debounce.
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
             this._updateFilenameDisplay();
             this._closeFileDropdown();
 
@@ -1315,6 +1336,9 @@ class CADEditor {
         }
 
         this._fileMtime = null;
+        this.viewer.resetView();
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = null;
         this._updateFilenameDisplay();
         this._closeFileDropdown();
         localStorage.setItem('cad-standalone-last-file', this._currentFile);
@@ -1407,9 +1431,10 @@ result;
         }
 
         try {
+            const filename = this._currentFile;
             const content = this.editor.getValue();
             this._lastSaveTime = Date.now();
-            const response = await fetch(`/api/models/${this._currentFile}`, {
+            const response = await fetch(`/api/models/${filename}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content })
@@ -1417,10 +1442,12 @@ result;
 
             if (response.ok) {
                 // Update our known mtime to avoid triggering hot reload
-                const mtimeResponse = await fetch(`/api/models/${this._currentFile}/mtime`);
+                const mtimeResponse = await fetch(`/api/models/${filename}/mtime`);
                 if (mtimeResponse.ok) {
                     const data = await mtimeResponse.json();
-                    this._fileMtime = data.mtime;
+                    if (this._currentFile === filename && this.editor.getValue() === content) {
+                        this._fileMtime = data.mtime;
+                    }
                 }
             } else {
                 console.warn('Failed to save file:', response.statusText);

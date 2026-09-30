@@ -4,6 +4,8 @@ Split a solid into mating printable parts with one operation. Both sides and any
 
 ## Quick start
 
+For separate, purposeful examples of every method, open the numbered `joinery_01_…` through `joinery_10_…` projects in the model selector. See the [connector demonstration gallery](joinery-gallery.md) for the ten objects, assembly directions, and VIEW controls.
+
 Open **demo_joinery.js** from the model selector. Change `METHOD` from 0 through 9 to see every family; `VIEW` chooses `assembled`, `exploded`, or `print`.
 
 For your own model, start with one `Workplane` result, open **Cut & Join**, position the displayed plane, choose the connector and fit dimensions, choose a view, then apply. The editor retains the original model inside a lexical wrapper and adds a parametric `splitAndJoin` call. The generated script can be saved, reopened, edited, and exported using the normal controls. An entire `Assembly` is not implicitly fused or split: select/build the intended solid first.

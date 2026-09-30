@@ -42,6 +42,8 @@ def server(server_port, tmp_path_factory):
     import os
 
     state_path = tmp_path_factory.mktemp("agentd3-state") / "agentd3-chat.json"
+    log_path = tmp_path_factory.mktemp("server-logs") / "uvicorn.log"
+    log_stream = log_path.open("w")
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -54,8 +56,10 @@ def server(server_port, tmp_path_factory):
             str(server_port),
         ],
         cwd=project_root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # Undrained PIPEs can block the server when a gallery generates many
+        # requests. Retain genuine logs on disk without an output backpressure trap.
+        stdout=log_stream,
+        stderr=subprocess.STDOUT,
         env={
             **os.environ,
             "DAZCAD_AGENTD3_STATE": str(state_path),
@@ -77,7 +81,9 @@ def server(server_port, tmp_path_factory):
         time.sleep(0.5)
     else:
         proc.terminate()
-        raise RuntimeError(f"Server failed to start on port {server_port}: {last_error}")
+        proc.wait(timeout=3)
+        log_stream.close()
+        raise RuntimeError(f"Server failed to start on port {server_port}: {last_error}; log: {log_path}")
 
     yield server_url
 
@@ -87,6 +93,7 @@ def server(server_port, tmp_path_factory):
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=2)
+    log_stream.close()
 
 
 # ##################################################################
@@ -95,7 +102,9 @@ def server(server_port, tmp_path_factory):
 @pytest.fixture(scope="session")
 def shared_browser():
     pw = sync_playwright().start()
-    browser = pw.chromium.launch(headless=True, args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"])
+    # Use Playwright's supported headless defaults. Forcing legacy ANGLE/GPU
+    # flags significantly increased measured OC initialization on this host.
+    browser = pw.chromium.launch(headless=True)
     yield browser
     browser.close()
     pw.stop()
@@ -145,7 +154,7 @@ def init_page(server, shared_browser):
                 const status = document.getElementById('status');
                 return status && status.classList.contains('success');
             }""",
-            timeout=60000,
+            timeout=90000,
         )
     except Exception as error:
         diagnostics = page.locator("body").inner_text()

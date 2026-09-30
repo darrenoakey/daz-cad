@@ -126,6 +126,21 @@ GATE_TESTS = [
 ]
 
 
+def showcase_only_changes(paths: list[str]) -> bool:
+    # The new examples exercise only existing library/editor paths. Unknown,
+    # core, runner, or fixture changes retain the complete regression plan.
+    allowed = {
+        "README.md", "docs/joinery.md", "docs/joinery-gallery.md",
+        "src/joinery_examples_test.py", "tests/bdd/features/joinery_examples.feature",
+    }
+    def is_example(path):
+        return path.startswith("examples/joinery_") and path.endswith(".js")
+
+    return bool(paths) and any(is_example(path) for path in paths) and all(
+        is_example(path) or path in allowed for path in paths
+    )
+
+
 def command_check(_: argparse.Namespace) -> int:
     _ensure_venv()
     _ensure_dependencies()
@@ -143,6 +158,8 @@ def command_check(_: argparse.Namespace) -> int:
             "src/joinery_kernel_test.py",
             "src/joinery_test.py",
             "src/joinery_ui_test.py",
+            "src/joinery_examples_test.py",
+            "run",
         ]
     )
     if lint != 0:
@@ -156,7 +173,27 @@ def command_check(_: argparse.Namespace) -> int:
     chat = [target for target in GATE_TESTS if target.startswith("src/agentd3_chat_test.py")]
     geometry = [target for target in GATE_TESTS if target in ("src/joinery_kernel_test.py", "src/joinery_test.py")]
     regression = [target for target in GATE_TESTS if target.startswith("src/server_test.py")]
-    lanes = {"chat": [chat], "cad": [geometry, regression, ["src/joinery_ui_test.py"]]}
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", "-z", "refs/greenline/last-green", "--"],
+        cwd=PROJECT_ROOT, capture_output=True, check=False,
+    )
+    paths = changed.stdout.decode().strip("\0").split("\0") if changed.returncode == 0 else []
+    # Release the gallery's native OC heap before opening editor workers.
+    examples = [
+        [
+            "src/joinery_examples_test.py::test_connector_projects_render_and_export",
+            "src/joinery_examples_test.py::test_connector_projects_bundled_for_standalone",
+            "src/joinery_examples_test.py::test_showcase_change_impact_selection",
+        ],
+        ["src/joinery_examples_test.py::test_connector_catalog_and_picker_workflow",
+         "src/joinery_examples_test.py::test_identical_model_reload_does_not_recompile"],
+    ]
+    if showcase_only_changes(paths):
+        lanes = {"examples": examples}
+        print("Impact: connector demonstrations only; verifying every project through OC, UI export and standalone packaging")
+    else:
+        lanes = {"chat": [chat], "cad": [geometry, regression, ["src/joinery_ui_test.py"]], "examples": examples}
+        print("Impact: full regressions plus connector demonstrations")
 
     def run_lane(name, batches):
         lane_path = TEST_OUT / f"gate_{name}.log"
@@ -171,7 +208,7 @@ def command_check(_: argparse.Namespace) -> int:
                     return result
         return 0
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=len(lanes)) as executor:
         futures = [executor.submit(run_lane, name, batches) for name, batches in lanes.items()]
         results = [future.result() for future in futures]
     with open(log_path, "w") as stream:
