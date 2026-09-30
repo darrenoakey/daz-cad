@@ -165,10 +165,32 @@ def editor_page(server, shared_browser):
             timeout=90000,
         )
     except Exception as error:
-        status = page.locator("#status-text").inner_text()
+        diagnostics = page.evaluate("""() => {
+            const editor = window.cadEditor;
+            const overlay = document.getElementById('error-overlay');
+            const errorMessage = document.getElementById('error-message');
+            const exportButton = document.getElementById('download-3mf-btn');
+            return {
+                status: document.getElementById('status-text')?.textContent,
+                errorVisible: overlay?.classList.contains('visible'),
+                errorMessage: errorMessage?.textContent,
+                exportDisabled: exportButton?.disabled,
+                currentFile: editor?._currentFile,
+                source: editor?.editor?.getValue(),
+                isRendering: editor?._isRendering,
+                renderRequestId: editor?._renderRequestId,
+                pendingCode: editor?._pendingCode,
+                isDirty: editor?._isDirty,
+                workerReady: editor?._workerReady,
+                spareWorkerReady: editor?._spareWorkerReady,
+                mainOCReady: editor?.isReady,
+                mainOCPresent: Boolean(editor?.oc),
+                globalWorkplane: Boolean(window.Workplane),
+            };
+        }""")
         page.close()
         raise RuntimeError(
-            f"Editor worker startup failed: status={status}; requests={failures}; "
+            f"Editor worker startup failed: diagnostics={diagnostics}; requests={failures}; "
             f"console={messages[-15:]}"
         ) from error
     yield page
