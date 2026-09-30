@@ -54,7 +54,7 @@ class CADEditor {
 
         // Chat state
         this._isProcessing = false; // True when waiting for agent response
-        this._skipSave = false; // True when file update came from agent
+        this._savedContent = null; // Last contents acknowledged by the model store
         this._chatInput = null;
         this._chatSendBtn = null;
         this._chatMessages = null;
@@ -916,6 +916,7 @@ class CADEditor {
                         const fileData = await fileResponse.json();
                         this._currentFile = fileData.filename;
                         this._fileMtime = fileData.mtime;
+                        this._savedContent = fileData.content;
                         this.editor.setValue(fileData.content);
                         this._updateFilenameDisplay();
                         // Update localStorage and URL
@@ -941,6 +942,7 @@ class CADEditor {
             const fileData = await fileResponse.json();
             this._currentFile = fileData.filename;
             this._fileMtime = fileData.mtime;
+            this._savedContent = fileData.content;
             this.editor.setValue(fileData.content);
             this._updateFilenameDisplay();
             localStorage.setItem('cad-editor-last-file', this._currentFile);
@@ -973,9 +975,11 @@ class CADEditor {
         const savedContent = localStorage.getItem(`cad-standalone-${targetFile}`);
         if (savedContent) {
             this._currentFile = targetFile;
+            this._savedContent = savedContent;
             this.editor.setValue(savedContent);
         } else if (examples[targetFile]) {
             this._currentFile = targetFile;
+            this._savedContent = examples[targetFile];
             this.editor.setValue(examples[targetFile]);
         } else {
             this._currentFile = 'default.js';
@@ -1058,7 +1062,7 @@ class CADEditor {
             const examples = window.DAZ_CAD_EXAMPLES || {};
             if (examples[this._currentFile]) {
                 localStorage.removeItem(`cad-standalone-${this._currentFile}`);
-                this._skipSave = true;
+                this._savedContent = examples[this._currentFile];
                 this.editor.setValue(examples[this._currentFile]);
                 if (this.debounceTimer) {
                     clearTimeout(this.debounceTimer);
@@ -1082,7 +1086,7 @@ class CADEditor {
             this._fileMtime = data.mtime;
 
             // Update editor without triggering save
-            this._skipSave = true;
+            this._savedContent = data.content;
             this.editor.setValue(data.content);
 
             // Clear any pending debounce and render immediately
@@ -1117,7 +1121,8 @@ class CADEditor {
     }
 
     async _checkFileChangedOnce() {
-        if (!this._currentFile || this._fileMtime === null) return;
+        if (!this._currentFile || this._savedContent === null) return;
+        if (this.editor.getValue() !== this._savedContent) return;
 
         // Don't check if we just saved (within last 3 seconds)
         if (Date.now() - this._lastSaveTime < 3000) return;
@@ -1144,7 +1149,7 @@ class CADEditor {
     }
 
     async _reloadCurrentFile(filename = this._currentFile, content = this.editor.getValue()) {
-        if (!filename) return;
+        if (!filename || this._savedContent === null || content !== this._savedContent) return;
 
         try {
             const response = await fetch(`/api/models/${filename}`);
@@ -1158,7 +1163,7 @@ class CADEditor {
             if (data.content === content) return;
 
             // Update editor without triggering save
-            this._skipSave = true;
+            this._savedContent = data.content;
             this.editor.setValue(data.content);
 
             // Clear any pending debounce and render immediately
@@ -1298,6 +1303,7 @@ class CADEditor {
             const data = await response.json();
             this._currentFile = data.filename;
             this._fileMtime = data.mtime;
+            this._savedContent = data.content;
             this.editor.setValue(data.content);
             this.viewer.resetView();
             // Selection renders immediately below; do not queue a second full
@@ -1326,9 +1332,11 @@ class CADEditor {
         const savedContent = localStorage.getItem(`cad-standalone-${filename}`);
         if (savedContent) {
             this._currentFile = filename;
+            this._savedContent = savedContent;
             this.editor.setValue(savedContent);
         } else if (examples[filename]) {
             this._currentFile = filename;
+            this._savedContent = examples[filename];
             this.editor.setValue(examples[filename]);
         } else {
             this._showError(`File not found: ${filename}`);
@@ -1377,6 +1385,8 @@ result;
             // Save to localStorage
             localStorage.setItem(`cad-standalone-${filename}`, templateContent);
             this._currentFile = filename;
+            this._savedContent = templateContent;
+            this._fileMtime = null;
             this.editor.setValue(templateContent);
             this._updateFilenameDisplay();
             this._newFileInput.value = '';
@@ -1397,6 +1407,8 @@ result;
 
             // Load the new file
             this._currentFile = filename;
+            this._savedContent = templateContent;
+            this._fileMtime = null;
             this.editor.setValue(templateContent);
             this._updateFilenameDisplay();
             this._newFileInput.value = '';
@@ -1416,41 +1428,37 @@ result;
 
     async _saveFile() {
         if (!this._currentFile) return;
-
-        // Skip save if file update came from agent
-        if (this._skipSave) {
-            this._skipSave = false;
-            return;
-        }
-
+        const filename = this._currentFile;
+        const content = this.editor.getValue();
+        // Rendering a stored project is a read, not a new edit. A content
+        // baseline also prevents a cancelled external reload suppressing a
+        // later user edit's save through a stale global skip flag.
+        if (content === this._savedContent) return;
         if (STANDALONE) {
-            // Save to localStorage
-            const content = this.editor.getValue();
-            localStorage.setItem(`cad-standalone-${this._currentFile}`, content);
+            localStorage.setItem(`cad-standalone-${filename}`, content);
+            this._savedContent = content;
             return;
         }
-
+        if (this._savedContent === null) {
+            console.warn('Model was not loaded from storage; refusing an automatic overwrite.');
+            return;
+        }
         try {
-            const filename = this._currentFile;
-            const content = this.editor.getValue();
             this._lastSaveTime = Date.now();
             const response = await fetch(`/api/models/${filename}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content })
             });
-
-            if (response.ok) {
-                // Update our known mtime to avoid triggering hot reload
-                const mtimeResponse = await fetch(`/api/models/${filename}/mtime`);
-                if (mtimeResponse.ok) {
-                    const data = await mtimeResponse.json();
-                    if (this._currentFile === filename && this.editor.getValue() === content) {
-                        this._fileMtime = data.mtime;
-                    }
-                }
-            } else {
+            if (!response.ok) {
                 console.warn('Failed to save file:', response.statusText);
+                return;
+            }
+            if (this._currentFile !== filename || this.editor.getValue() !== content) return;
+            this._savedContent = content;
+            const mtimeResponse = await fetch(`/api/models/${filename}/mtime`);
+            if (mtimeResponse.ok) {
+                const data = await mtimeResponse.json();
+                if (this._currentFile === filename && this.editor.getValue() === content) this._fileMtime = data.mtime;
             }
         } catch (error) {
             console.warn('Failed to save file:', error);
@@ -2138,7 +2146,7 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
 
             // Apply the change and wait for the resulting render to settle.
             const settled = this._nextRenderResult();
-            this._skipSave = true; // The change originates from the assistant.
+            if (!STANDALONE) this._savedContent = result.new_content; // Already saved by the server.
             this.editor.setValue(result.new_content);
             const outcome = await settled;
 

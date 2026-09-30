@@ -146,7 +146,7 @@ def showcase_browser_changes(paths: list[str]) -> bool:
     # assistant backend. Retain all editor/worker regressions, and validate all
     # ten real gallery geometries instead of rerunning unrelated backend/math
     # suites. Any unlisted production component keeps the full plan.
-    browser = {"static/editor.js", "src/conftest.py", "run"}
+    browser = {"static/editor.js", "src/conftest.py", "src/server_test.py", "run"}
     return showcase_only_changes([path for path in paths if path not in browser])
 
 

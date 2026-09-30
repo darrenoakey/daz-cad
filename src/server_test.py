@@ -3670,12 +3670,22 @@ def test_worker_recreation_replays_latest_model(cad_page):
                 const completed = editor._nextRenderResult(90000);
                 editor.editor.setValue('const result = new Workplane("XY").box(27,29,31);\\nresult;');
                 editor._render();
+                // Genuine storage reads while the local edit is still dirty
+                // must not replace it with the previously saved template.
+                await editor._reloadCurrentFile();
+                await editor._checkFileChanged();
                 const outcome = await completed;
-                return {unavailable, outcome, bounds:editor.viewer.getModelBounds(),
+                return {unavailable, outcome,
+                    currentFile:editor._currentFile, currentCode:editor.editor.getValue(),
+                    bounds:editor.viewer.getModelBounds(),
                     exportEnabled:!document.getElementById('download-3mf-btn').disabled};
             }""")
+            # Surface a real render failure before waiting for an autosave
+            # response that cannot occur when rendering did not succeed.
+            print(f"Replacement worker result: {result}")
+            assert result["outcome"]["ok"] and result["exportEnabled"], result
+            assert "box(27,29,31)" in result["currentCode"], result
         assert result["unavailable"], result
-        assert result["outcome"]["ok"] and result["exportEnabled"], result
         assert abs(result["bounds"]["max"][0] - result["bounds"]["min"][0] - 27) < 0.001, result
         assert abs(result["bounds"]["max"][2] - result["bounds"]["min"][2] - 31) < 0.001, result
     finally:
