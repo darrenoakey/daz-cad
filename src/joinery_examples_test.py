@@ -166,7 +166,9 @@ def test_connector_projects_bundled_for_standalone(tmp_path):
 # Exercise the actual release selector: only the declared example-only surface
 # can narrow coverage; every real infrastructure/core path retains regressions.
 def test_showcase_change_impact_selection():
-    selection = runpy.run_path(str(ROOT / 'run'))['showcase_only_changes']
+    runner = runpy.run_path(str(ROOT / 'run'))
+    selection = runner['showcase_only_changes']
+    browser_selection = runner['showcase_browser_changes']
     examples = [f'examples/{filename}' for filename, _, _ in EXAMPLES]
     assert selection(examples + ['docs/joinery-gallery.md', 'src/joinery_examples_test.py'])
     assert not selection([])
@@ -174,6 +176,10 @@ def test_showcase_change_impact_selection():
     for path in ['run', 'src/conftest.py', 'src/server.py', 'static/joinery.js', 'static/editor.js', 'greenline.toml']:
         assert (ROOT / path).is_file()
         assert not selection(examples + [path]), path
+    assert browser_selection(examples + ['run', 'src/conftest.py', 'static/editor.js'])
+    assert not browser_selection(['run'])
+    for path in ['src/server.py', 'src/agentd3_chat.py', 'static/cad.js', 'static/joinery.js', 'greenline.toml']:
+        assert not browser_selection(examples + ['run', path]), path
 
 
 # Real editor lifecycle integration (separate from the UI-only picker scenario):

@@ -141,6 +141,15 @@ def showcase_only_changes(paths: list[str]) -> bool:
     )
 
 
+def showcase_browser_changes(paths: list[str]) -> bool:
+    # Project switching and its test harness do not change the CAD kernel or
+    # assistant backend. Retain all editor/worker regressions, and validate all
+    # ten real gallery geometries instead of rerunning unrelated backend/math
+    # suites. Any unlisted production component keeps the full plan.
+    browser = {"static/editor.js", "src/conftest.py", "run"}
+    return showcase_only_changes([path for path in paths if path not in browser])
+
+
 def command_check(_: argparse.Namespace) -> int:
     _ensure_venv()
     _ensure_dependencies()
@@ -191,9 +200,14 @@ def command_check(_: argparse.Namespace) -> int:
     if showcase_only_changes(paths):
         lanes = {"examples": examples}
         print("Impact: connector demonstrations only; verifying every project through OC, UI export and standalone packaging")
+    elif showcase_browser_changes(paths):
+        lanes = {"cad": [examples[0], regression, ["src/joinery_ui_test.py"], examples[1]]}
+        print("Impact: all gallery geometries plus every editor/worker regression; kernel and assistant code unchanged")
     else:
-        lanes = {"chat": [chat], "cad": [geometry, regression, ["src/joinery_ui_test.py"]], "examples": examples}
-        print("Impact: full regressions plus connector demonstrations")
+        # CAD runtimes are a scarce native-memory resource: never run the
+        # gallery browser beside another OC browser lane (measured crashes).
+        lanes = {"chat": [chat], "cad": [geometry, regression, ["src/joinery_ui_test.py"], *examples]}
+        print("Impact: full regressions plus connector demonstrations; CAD browsers serialized")
 
     def run_lane(name, batches):
         lane_path = TEST_OUT / f"gate_{name}.log"
