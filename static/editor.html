@@ -768,23 +768,28 @@
     <!-- Dynamic import map with cache busters for local modules -->
     <script>
         const cacheBuster = `?v=${Date.now()}`;
-        // Store globally so editor.js can use same cache buster
+        // Auto-gui serves this page at /proxy/daz-cad/ on port 2000. Root-absolute
+        // imports would otherwise request http://127.0.0.1:2000/static/editor.js.
+        const appBase = (location.pathname.match(/^(\/proxy\/[^/]+)(?:\/|$)/) || ['', ''])[1];
+        const joineryCss = document.querySelector('link[href="/static/joinery-ui.css"]');
+        if (joineryCss) joineryCss.href = `${appBase}/static/joinery-ui.css`;
         window.__cacheBuster = cacheBuster;
+        window.__dazCadBase = appBase;
+        const localStatic = (path) => `${appBase}${path}${cacheBuster}`;
         const importMap = {
             imports: {
                 "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
                 "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
                 "jszip": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
-                // Local modules with cache busters - use absolute paths
-                "/static/cad.js": `/static/cad.js${cacheBuster}`,
-                "/static/viewer.js": `/static/viewer.js${cacheBuster}`,
-                "/static/gridfinity.js": `/static/gridfinity.js${cacheBuster}`,
-                "/static/patterns.js": `/static/patterns.js${cacheBuster}`,
-                "/static/naming.js": `/static/naming.js${cacheBuster}`,
-                "/static/joinery.js": `/static/joinery.js${cacheBuster}`,
-                "/static/joinery-ui.js": `/static/joinery-ui.js${cacheBuster}`,
-                "/static/threemf.js": `/static/threemf.js${cacheBuster}`,
-                "/static/opentype.module.js": `/static/opentype.module.js${cacheBuster}`
+                "/static/cad.js": localStatic('/static/cad.js'),
+                "/static/viewer.js": localStatic('/static/viewer.js'),
+                "/static/gridfinity.js": localStatic('/static/gridfinity.js'),
+                "/static/patterns.js": localStatic('/static/patterns.js'),
+                "/static/naming.js": localStatic('/static/naming.js'),
+                "/static/joinery.js": localStatic('/static/joinery.js'),
+                "/static/joinery-ui.js": localStatic('/static/joinery-ui.js'),
+                "/static/threemf.js": localStatic('/static/threemf.js'),
+                "/static/opentype.module.js": localStatic('/static/opentype.module.js')
             }
         };
         const script = document.createElement('script');
@@ -917,14 +922,16 @@
     <script type="module">
         // Add cache buster to force fresh loads during development
         const cacheBuster = `?v=${Date.now()}`;
+        const appBase = window.__dazCadBase || (location.pathname.match(/^(\/proxy\/[^/]+)(?:\/|$)/) || ['', ''])[1];
 
-        // Dynamically import the main editor module with cache buster
-        import(`/static/editor.js${cacheBuster}`);
+        // Dynamically import the main editor module with cache buster.
+        // Must include the proxy prefix: import() is not rewritten by auto-gui.
+        import(`${appBase}/static/editor.js${cacheBuster}`);
     </script>
     <script>
         // Cache-busted non-module script
         const testScript = document.createElement('script');
-        testScript.src = `/static/cad-tests.js?v=${Date.now()}`;
+        testScript.src = `${window.__dazCadBase || ''}/static/cad-tests.js?v=${Date.now()}`;
         document.body.appendChild(testScript);
     </script>
 

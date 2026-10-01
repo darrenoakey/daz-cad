@@ -12,7 +12,7 @@
  *   box.extrudeOn("front", 5, 5, 3)  // extrude box outward from front face
  */
 
-import { Workplane, getOC } from '/static/cad.js';
+import { Workplane, getOC } from './cad.js';
 
 
 // ============================================================

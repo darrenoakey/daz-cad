@@ -5,14 +5,16 @@
  * for live preview of CAD code.
  */
 
-// Use absolute paths so import map cache busters work
-import { CADViewer } from '/static/viewer.js';
-import { initCAD, Workplane, Assembly, Profiler } from '/static/cad.js';
-import { Gridfinity } from '/static/gridfinity.js';
-import '/static/patterns.js';  // Extends Workplane with unified cutPattern()
-import '/static/naming.js';    // Extends Workplane with named references
-import { Joinery } from '/static/joinery.js';
-import { JoineryUI } from '/static/joinery-ui.js';
+// Relative imports resolve beside this file, including under /proxy/daz-cad/.
+import { CADViewer } from './viewer.js';
+import { initCAD, Workplane, Assembly, Profiler } from './cad.js';
+import { Gridfinity } from './gridfinity.js';
+import './patterns.js';  // Extends Workplane with unified cutPattern()
+import './naming.js';    // Extends Workplane with named references
+import { Joinery } from './joinery.js';
+import { JoineryUI } from './joinery-ui.js';
+import { appUrl } from './app-base.js';
+import { loadOpenCascade } from './opencascade.js';
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
 import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
 
@@ -135,7 +137,15 @@ class CADEditor {
 
         // Initialize CAD Worker (background thread for OpenCascade)
         // The worker handles rendering; main thread OC is for tests/direct API use
-        await this._initWorker();
+        try {
+            await this._initWorker();
+        } catch (error) {
+            console.error('Failed to start CAD engine:', error);
+            this._setStatus('error', 'Error');
+            this._showError(error.message || 'CAD engine failed to start');
+            this.viewer.showError();
+            return;
+        }
 
         // Initialize main-thread OpenCascade for testing and direct API calls
         await this._initOpenCascade();
@@ -586,7 +596,14 @@ class CADEditor {
     // Create a worker instance and return promise when initialized
     _createWorkerInstance(isMainWorker = true) {
         return new Promise((resolve, reject) => {
-            const worker = new Worker('/static/cad-worker.js', { type: 'module' });
+            const epoch = this._workerEpoch || 0;
+            const worker = new Worker(appUrl('/static/cad-worker.js'), { type: 'module' });
+            if (!this._pendingWorkers) this._pendingWorkers = new Set();
+            this._pendingWorkers.add(worker);
+            const settle = (fn, value) => {
+                this._pendingWorkers?.delete(worker);
+                fn(value);
+            };
 
             worker.onmessage = (e) => {
                 const { type, status, message, error, meshData, id } = e.data;
@@ -597,7 +614,12 @@ class CADEditor {
                         break;
 
                     case 'initialized':
-                        resolve(worker);
+                        if (epoch !== (this._workerEpoch || 0)) {
+                            worker.terminate();
+                            settle(reject, new Error('Worker init superseded'));
+                            break;
+                        }
+                        settle(resolve, worker);
                         break;
 
                     case 'status':
@@ -669,9 +691,24 @@ class CADEditor {
 
             worker.onerror = (e) => {
                 console.error('[Worker Fatal Error]', e);
-                reject(new Error('Worker failed to load: ' + e.message));
+                settle(reject, new Error('Worker failed to load: ' + e.message));
             };
         });
+    }
+
+    // Drop in-flight OpenCascade workers so a second cancel cannot compile two
+    // wasm heaps at once and crash the renderer.
+    _abandonPendingWorkers() {
+        this._workerEpoch = (this._workerEpoch || 0) + 1;
+        for (const worker of this._pendingWorkers || []) {
+            worker.terminate();
+        }
+        this._pendingWorkers = new Set();
+        if (this._spareWorker) {
+            this._spareWorker.terminate();
+            this._spareWorker = null;
+        }
+        this._spareWorkerReady = false;
     }
 
     // Attach the main worker message handlers to a worker
@@ -859,19 +896,7 @@ class CADEditor {
         this._setStatus('loading', 'Loading CAD engine...');
 
         try {
-            const cdnBase = 'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist';
-            const initOC = await import(`${cdnBase}/opencascade.full.js`);
-
-            this.oc = await initOC.default({
-                locateFile: (file) => {
-                    if (file.endsWith('.wasm')) {
-                        return `${cdnBase}/${file}`;
-                    }
-                    return file;
-                }
-            });
-
-            await this.oc.ready;
+            this.oc = await loadOpenCascade();
 
             // Initialize CAD library and expose to window for testing
             initCAD(this.oc);
@@ -1476,6 +1501,7 @@ result;
                 this._worker = null;
                 this._workerReady = false;
                 this._setStatus('loading', 'Restarting...');
+                this._abandonPendingWorkers();
                 this._recreateWorker();
             }
         }

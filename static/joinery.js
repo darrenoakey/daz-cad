@@ -1,28 +1,28 @@
 /** Plane split, placement and presentation framework for the joinery families. */
-import { Workplane, Assembly, getOC } from "/static/cad.js";
+import { Workplane, Assembly, getOC } from "./cad.js";
 import {
   localBox,
   bounds,
   volume,
   valid,
   common,
-} from "/static/joinery-kernel.js";
+} from "./joinery-kernel.js";
 import {
   makeDovetail,
   makeJigsaw,
   makeScarfWedge,
-} from "/static/joinery-families-sliding.js";
+} from "./joinery-families-sliding.js";
 import {
   makeSnapKey,
   makeCantilever,
   makeSnapDowel,
-} from "/static/joinery-families-snaps.js";
+} from "./joinery-families-snaps.js";
 import {
   makeButterfly,
   makeCrossKey,
   makeBayonet,
   makeBridgeClip,
-} from "/static/joinery-families-locks.js";
+} from "./joinery-families-locks.js";
 
 const METHODS = [
   [

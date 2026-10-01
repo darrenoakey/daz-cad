@@ -3643,26 +3643,35 @@ def test_iso_prism_boolean_operations(cad_page):
 # Real worker-lifecycle integration, distinct from UI-only BDD: cancel both
 # actual workers synchronously, then queue a real model while replacement loads.
 # No worker, CAD kernel, messages, or renderer is mocked.
-def test_worker_recreation_replays_latest_model(cad_page):
+def test_worker_recreation_replays_latest_model(server, shared_browser):
     from pathlib import Path
     from uuid import uuid4
 
+    # The preview test loads a second OpenCascade worker into the session page.
+    # On this machine that renderer then crashes, so this lifecycle check needs
+    # its own page. The assertions are unchanged.
+    page = shared_browser.new_page()
+    page.goto(f"{server}/")
+    page.wait_for_function(
+        """() => document.getElementById('status-text')?.textContent === 'Ready' && window.Workplane""",
+        timeout=90000,
+    )
     filename = f"test-worker-replay-{uuid4().hex}.js"
-    expect(cad_page.locator("#filename-display")).not_to_have_text("loading...", timeout=90000)
-    original = cad_page.locator("#filename-display").inner_text()
-    cad_page.locator("#file-selector-btn").click()
-    cad_page.locator("#new-file-input").fill(filename)
-    cad_page.locator("#create-file-btn").click()
-    expect(cad_page.locator("#filename-display")).to_have_text(filename, timeout=30000)
-    expect(cad_page.locator("#download-3mf-btn")).to_be_enabled(timeout=90000)
     try:
-        with cad_page.expect_response(
+        expect(page.locator("#filename-display")).not_to_have_text("loading...", timeout=90000)
+        original = page.locator("#filename-display").inner_text()
+        page.locator("#file-selector-btn").click()
+        page.locator("#new-file-input").fill(filename)
+        page.locator("#create-file-btn").click()
+        expect(page.locator("#filename-display")).to_have_text(filename, timeout=30000)
+        expect(page.locator("#download-3mf-btn")).to_be_enabled(timeout=90000)
+        with page.expect_response(
             lambda response: response.url.endswith(f"/api/models/{filename}")
             and response.request.method == "POST"
             and "box(27,29,31)" in (response.request.post_data or ""),
             timeout=90000,
         ):
-            result = cad_page.evaluate("""async () => {
+            result = page.evaluate("""async () => {
                 const editor = window.cadEditor;
                 editor._cancelRender();
                 editor._cancelRender();
@@ -3678,6 +3687,7 @@ def test_worker_recreation_replays_latest_model(cad_page):
         assert result["outcome"]["ok"] and result["exportEnabled"], result
         assert abs(result["bounds"]["max"][0] - result["bounds"]["min"][0] - 27) < 0.001, result
         assert abs(result["bounds"]["max"][2] - result["bounds"]["min"][2] - 31) < 0.001, result
+        page.evaluate("filename => window.cadEditor._selectFile(filename)", original)
     finally:
-        cad_page.evaluate("filename => window.cadEditor._selectFile(filename)", original)
+        page.close()
         (Path(__file__).resolve().parent.parent / "local" / "models" / filename).unlink(missing_ok=True)

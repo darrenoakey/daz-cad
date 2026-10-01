@@ -6,6 +6,7 @@
  */
 
 import { initCAD, Workplane, Assembly, Profiler, loadFont, getDefaultFont } from './cad.js';
+import { loadOpenCascade } from './opencascade.js';
 import { Gridfinity } from './gridfinity.js';
 import './patterns.js';  // Extends Workplane with unified cutPattern()
 import './naming.js';    // Extends Workplane with named references
@@ -79,21 +80,7 @@ async function initOpenCascade() {
     postStatus('loading', 'Loading OpenCascade...');
 
     try {
-        const cdnBase = 'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist';
-
-        // Dynamic import for OpenCascade
-        const initOC = await import(`${cdnBase}/opencascade.full.js`);
-
-        oc = await initOC.default({
-            locateFile: (file) => {
-                if (file.endsWith('.wasm')) {
-                    return `${cdnBase}/${file}`;
-                }
-                return file;
-            }
-        });
-
-        await oc.ready;
+        oc = await loadOpenCascade();
 
         // Initialize CAD library with this OpenCascade instance
         initCAD(oc);

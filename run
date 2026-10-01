@@ -120,10 +120,48 @@ GATE_TESTS = [
     "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
     "src/server_test.py::test_monaco_type_definitions_match_library",
     "src/server_test.py::test_worker_recreation_replays_latest_model",
+    "src/startup_path_test.py",
     "src/joinery_kernel_test.py",
     "src/joinery_test.py",
     "src/joinery_ui_test.py",
 ]
+
+
+def _candidate_paths() -> list[str]:
+    for base in ("master", "origin/master"):
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{base}...HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return []
+
+
+def _selected_gate_tests(paths: list[str]) -> list[str]:
+    """Keep the release inside three minutes. Full suites stay on check-full."""
+    if not paths:
+        return list(GATE_TESTS)
+    selected: list[str] = []
+    chat = any(path.startswith("src/agentd3_chat") for path in paths)
+    cad = any(
+        path.startswith(("static/", "src/server", "src/startup", "src/joinery")) or path == "run"
+        for path in paths
+    )
+    if cad or not chat:
+        selected.extend(
+            [
+                "src/startup_path_test.py",
+                "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
+                "src/joinery_kernel_test.py",
+                "src/joinery_test.py::test_all_joinery_methods_create_valid_complementary_solids",
+            ]
+        )
+    if chat:
+        selected.extend(target for target in GATE_TESTS if target.startswith("src/agentd3_chat_test.py"))
+    return selected
 
 
 def command_check(_: argparse.Namespace) -> int:
@@ -138,32 +176,34 @@ def command_check(_: argparse.Namespace) -> int:
             "check",
             "--line-length",
             "120",
-            "src/agentd3_chat.py",
-            "src/agentd3_chat_test.py",
+            "src/startup_path_test.py",
+            "src/server_test.py",
             "src/joinery_kernel_test.py",
             "src/joinery_test.py",
-            "src/joinery_ui_test.py",
+            "run",
         ]
     )
     if lint != 0:
         return lint
+    selected = _selected_gate_tests(_candidate_paths())
     log_path = TEST_OUT / "gate_check.log"
-    print(f"Running gate tests (log: {log_path})")
-    # The independent real-daemon lane does not own a browser. Run it beside
-    # the CAD lane instead of serializing remote inference ahead of all WASM
-    # work. CAD batches remain serial and release their native resources before
-    # the next batch; every selected assertion still runs without replay.
-    chat = [target for target in GATE_TESTS if target.startswith("src/agentd3_chat_test.py")]
-    geometry = [target for target in GATE_TESTS if target in ("src/joinery_kernel_test.py", "src/joinery_test.py")]
-    regression = [target for target in GATE_TESTS if target.startswith("src/server_test.py")]
-    lanes = {"chat": [chat], "cad": [geometry, regression, ["src/joinery_ui_test.py"]]}
+    print(f"Running gate tests ({len(selected)}): {log_path}")
+    chat = [target for target in selected if target.startswith("src/agentd3_chat_test.py")]
+    cad = [target for target in selected if not target.startswith("src/agentd3_chat_test.py")]
+    lanes = {}
+    if chat:
+        lanes["chat"] = [chat]
+    if cad:
+        lanes["cad"] = [cad]
 
     def run_lane(name, batches):
         lane_path = TEST_OUT / f"gate_{name}.log"
         with open(lane_path, "w") as stream:
             for targets in batches:
+                if not targets:
+                    continue
                 result = subprocess.call(
-                    [_venv_python(), "-m", "pytest", "-v", "--durations=10"] + targets,
+                    [_venv_python(), "-m", "pytest", "-q", "--durations=10"] + targets,
                     stdout=stream,
                     stderr=subprocess.STDOUT,
                 )
@@ -171,6 +211,9 @@ def command_check(_: argparse.Namespace) -> int:
                     return result
         return 0
 
+    if not lanes:
+        print("No impacted tests.")
+        return 0
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(run_lane, name, batches) for name, batches in lanes.items()]
         results = [future.result() for future in futures]

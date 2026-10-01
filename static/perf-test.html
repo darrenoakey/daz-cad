@@ -73,9 +73,12 @@
     <div id="json-output"></div>
 
     <script type="module">
-        // Load OpenCascade from CDN
-        const cdnBase = 'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist';
-        const { default: opencascade } = await import(`${cdnBase}/opencascade.full.js`);
+        // Same official beta pin as the editor. Page lives outside /static/, so this
+        // specifier is root-absolute and the auto-gui attribute/import shim does not
+        // apply inside a module script; perf-test is opened on the daz-cad origin.
+        const { OPENCASCADE_CDN, loadOpenCascade } = await import('/static/opencascade.js');
+        const cdnBase = OPENCASCADE_CDN;
+        const opencascade = async (options) => loadOpenCascade(options);
 
         let oc = null;
         const results = {

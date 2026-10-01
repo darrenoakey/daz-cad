@@ -5,6 +5,8 @@
  * with comprehensive error handling and status reporting.
  */
 
+import { loadOpenCascade, OPENCASCADE_VERSION } from './opencascade.js';
+
 // Global state for OpenCascade instance
 let ocInstance = null;
 
@@ -76,28 +78,8 @@ async function initOpenCascade() {
         // Import opencascade.js - the beta version exports a default init function
         log('Loading OpenCascade.js module...');
 
-        // Use dynamic import with the full URL to the ES module version
-        // The beta version provides opencascade.full.mjs as an ES module
-        const cdnBase = 'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist';
-
-        // Import the main module
-        const initOC = await import(`${cdnBase}/opencascade.full.js`);
-
-        log('Module loaded, initializing WASM...');
-
-        // The module exports a default function that initializes the WASM
-        // We need to provide the WASM file location
-        const oc = await initOC.default({
-            locateFile: (file) => {
-                if (file.endsWith('.wasm')) {
-                    return `${cdnBase}/${file}`;
-                }
-                return file;
-            }
-        });
-
-        // Wait for the module to be ready
-        await oc.ready;
+        log(`Loading OpenCascade.js ${OPENCASCADE_VERSION}...`);
+        const oc = await loadOpenCascade();
 
         log('WASM module initialized successfully', LogLevel.SUCCESS);
 

@@ -13,7 +13,8 @@
  */
 
 // Import opentype.js for font parsing (absolute path for import map cache busting)
-import * as opentype from '/static/opentype.module.js';
+import * as opentype from './opentype.module.js';
+import { appUrl } from './app-base.js';
 
 // Import JSZip for 3MF export (using jsDelivr ESM conversion)
 import JSZip from 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm';
@@ -198,7 +199,7 @@ async function loadFont(url, fontName = null) {
     }
 
     // Fetch the font file
-    const response = await fetch(url);
+    const response = await fetch(appUrl(url));
     if (!response.ok) {
         throw new Error(`Failed to fetch font from ${url}: ${response.status}`);
     }
@@ -269,7 +270,7 @@ class ThreeMFExporter {
      */
     static async generate(parts) {
         // Load the Bambu template
-        const response = await fetch('/static/template.3mf');
+        const response = await fetch(appUrl('/static/template.3mf'));
         const templateData = await response.arrayBuffer();
         const zip = await JSZip.loadAsync(templateData);
 

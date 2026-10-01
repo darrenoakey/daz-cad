@@ -17,7 +17,7 @@
  */
 
 // Absolute path for import map cache busting
-import { Workplane, getOC } from '/static/cad.js';
+import { Workplane, getOC } from './cad.js';
 
 // ============================================================
 // GRIDFINITY CONSTANTS
