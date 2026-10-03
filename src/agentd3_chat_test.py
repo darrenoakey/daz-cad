@@ -37,13 +37,14 @@ def make_chat(
     base_dir: Path = WORKTREE_ROOT,
     source: str = TEST_SOURCE,
     timeout_seconds: float = 240.0,
+    model: str = "agentic-low",
 ) -> Agentd3Chat:
     config_path = state_path.parent / "config.toml"
     config_path.write_text(
         f"[agentd3]\n"
         f'base_url = "{DAEMON_BASE_URL}"\n'
         f'source = "{source}"\n'
-        f'model = "agentic-low"\n'
+        f'model = "{model}"\n'
         f"timeout_seconds = {timeout_seconds}\n"
     )
     return Agentd3Chat(base_dir=base_dir, state_path=state_path, config_path=config_path)
@@ -450,6 +451,72 @@ async def test_interrupted_conversation_counts_as_settled(tmp_path: Path):
         assert not conversation.get("running"), conversation.get("status")
         assert conversation.get("status") not in ("idle", "sleeping"), conversation.get("status")
         assert is_settled(conversation), conversation.get("status")
+    finally:
+        archive_conversation(conversation_id)
+
+
+# ##################################################################
+# test queued message keeps its posted id
+# a conversation left "interrupted" by a timed-out chat is settled, but the
+# daemon queues (not appends) the next message into it; when the daemon admits
+# it, its user.message must carry the id the post returned, or the reply
+# tracker never matches and the chat hangs until its timeout
+async def test_queued_message_keeps_posted_id(tmp_path: Path):
+    state_path = tmp_path / "agentd3-chat.json"
+    conversation_id = ""
+    chat = make_chat(state_path)
+    try:
+        hasty = make_chat(state_path, timeout_seconds=1.0)
+        try:
+            with pytest.raises(Agentd3ChatError, match="timed out"):
+                await hasty.send_message("Count slowly from 1 to 200, one number per line.")
+        finally:
+            await hasty.close()
+        conversation_id = conversation_id_of(state_path)
+        assert await chat.ensure_ready() == conversation_id
+        conversation = await chat.fetch_conversation_required(conversation_id)
+        assert conversation.get("status") == "interrupted", conversation.get("status")
+
+        cursor = await chat.latest_event_seq(conversation_id)
+        queued = await chat.post_message(conversation_id, "Reply with exactly the word QUEUED and nothing else.")
+        assert queued.get("disposition") == "queued", queued
+
+        tracker = TurnReplyTracker(queued["message_id"])
+        deadline = asyncio.get_running_loop().time() + 240.0
+        while tracker.completed_data is None and asyncio.get_running_loop().time() < deadline:
+            events, cursor = await chat.poll_events(conversation_id, cursor)
+            for event in events:
+                tracker.feed(event)
+        assert tracker.turn_id, "queued message's user.message never carried the posted message id"
+        assert "QUEUED" in tracker.result()
+    finally:
+        await chat.close()
+        archive_conversation(conversation_id)
+
+
+# ##################################################################
+# test configured model change switches the conversation
+# the conversation keeps the model it was created with; a changed configured
+# model must be applied to it before the next turn, with no model call needed
+async def test_configured_model_change_switches_conversation(tmp_path: Path):
+    state_path = tmp_path / "agentd3-chat.json"
+    conversation_id = ""
+    try:
+        first = make_chat(state_path)
+        try:
+            conversation_id = await first.ensure_ready()
+            created = await first.fetch_conversation_required(conversation_id)
+            assert created.get("requested_model") == "agentic-low", created.get("requested_model")
+        finally:
+            await first.close()
+
+        switched = make_chat(state_path, model="agentic-medium")
+        try:
+            assert await switched.ensure_ready() == conversation_id
+            conversation = await switched.fetch_conversation_required(conversation_id)
+        finally:
+            await switched.close()
+        assert conversation.get("requested_model") == "agentic-medium", conversation.get("requested_model")
     finally:
         archive_conversation(conversation_id)
 

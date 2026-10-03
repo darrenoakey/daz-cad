@@ -25,7 +25,9 @@ class Agentd3ChatError(Exception):
 # defaults
 # stable base configuration; machine-local overrides live in local/config.toml
 DEFAULT_BASE_URL = "http://127.0.0.1:8620"
-DEFAULT_MODEL = "agentic-high"
+# the assistant is pinned to a concrete model: an alias like agentic-high lets
+# the daemon route each turn to whichever pool member it picks
+DEFAULT_MODEL = "claude/opus-5.5"
 DEFAULT_POLICY = "yolo"
 DEFAULT_PRIORITY = True
 DEFAULT_TIMEOUT_SECONDS = 300.0
@@ -490,7 +492,25 @@ class Agentd3Chat:
     async def ensure_ready(self) -> str:
         conversation_id = await self.get_or_create_conversation()
         await self.settle_outstanding_turn(conversation_id)
+        await self.align_model(conversation_id)
         return conversation_id
+
+    # ##################################################################
+    # align model
+    # a conversation keeps the model it was created with, so when the
+    # configured model changes the settled conversation is switched to it
+    # before the next turn (the daemon refuses a change mid-turn)
+    async def align_model(self, conversation_id: str) -> None:
+        conversation = await self.fetch_conversation_required(conversation_id)
+        if conversation.get("requested_model") == self.model:
+            return
+        status, payload = await self.request_json(
+            "PATCH", f"/v1/conversations/{conversation_id}", {"model": self.model}
+        )
+        if status != 200:
+            raise Agentd3ChatError(
+                f"agentd3 daemon refused switching the assistant to {self.model}: HTTP {status} {payload.get('error', '')}"
+            )
 
     # ##################################################################
     # latest event seq
@@ -505,10 +525,15 @@ class Agentd3Chat:
     # ##################################################################
     # post message
     # sends the user turn; the daemon appends it or queues it behind a
-    # settling turn, so the turn id is learned from the user.message event
+    # settling turn, so the turn id is learned from the user.message event.
+    # every post carries a unique idempotency key: without one the daemon
+    # mints a fresh message id again when a queued message is admitted, so
+    # the user.message event would never match the id this post returned
     async def post_message(self, conversation_id: str, text: str) -> dict:
         status, payload = await self.request_json(
-            "POST", f"/v1/conversations/{conversation_id}/messages", {"text": text}
+            "POST",
+            f"/v1/conversations/{conversation_id}/messages",
+            {"text": text, "idempotency_key": f"{self.source}-msg-{uuid.uuid4().hex}"},
         )
         if status != 202:
             raise Agentd3ChatError(
