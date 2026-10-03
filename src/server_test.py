@@ -1,3 +1,5 @@
+import time
+
 import httpx
 from playwright.sync_api import expect
 
@@ -1100,23 +1102,43 @@ def test_chat_message_endpoint(server):
     test_file = "_test_chat_temp.js"
     test_code = "const result = new Workplane('XY').box(20, 20, 20);\nresult;"
 
-    response = httpx.post(
+    started = httpx.post(
         f"{server}/api/chat/message",
         json={
             "message": "What shape is in this model?",
             "current_file": test_file,
             "current_code": test_code
         },
-        timeout=60.0
+        timeout=10.0
     )
-    assert response.status_code == 200
-    data = response.json()
+    # the turn runs as a job so no proxy has to hold the request open
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    deadline = time.monotonic() + 240.0
+    while True:
+        polled = httpx.get(f"{server}/api/chat/jobs/{job_id}", timeout=10.0)
+        assert polled.status_code == 200
+        data = polled.json()
+        if data["status"] == "done":
+            break
+        assert data["status"] == "running"
+        assert time.monotonic() < deadline, "chat job did not finish"
+        time.sleep(1.0)
     assert "response" in data
     assert len(data["response"]) > 0
     assert "file_changed" in data
     # the response should be a non-trivial reply (LLM output is non-deterministic,
     # so we only check it gave a substantive response, not specific keywords)
     assert len(data["response"]) > 10, f"Response too short: {data['response']}"
+
+
+# ##################################################################
+# test chat job unknown
+# polling a job the server never started (or lost to a restart) is a 404,
+# which the editor surfaces instead of polling forever
+def test_chat_job_unknown(server):
+    response = httpx.get(f"{server}/api/chat/jobs/not-a-real-job", timeout=10.0)
+    assert response.status_code == 404
 
 
 # ##################################################################

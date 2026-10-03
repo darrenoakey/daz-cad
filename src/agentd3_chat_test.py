@@ -50,6 +50,24 @@ def make_chat(
 
 
 # ##################################################################
+# chat via endpoint
+# drives the editor's job contract: POST starts the turn and returns a job id
+# at once, then short GETs poll the job until it carries the reply
+async def chat_via_endpoint(client: httpx.AsyncClient, payload: dict) -> dict:
+    started = await client.post("/api/chat/message", json=payload)
+    assert started.status_code == 202, started.text
+    job_id = started.json()["job_id"]
+    while True:
+        polled = await client.get(f"/api/chat/jobs/{job_id}")
+        assert polled.status_code == 200, polled.text
+        job = polled.json()
+        if job["status"] == "done":
+            return job
+        assert job["status"] == "running", job
+        await asyncio.sleep(0.5)
+
+
+# ##################################################################
 # archive conversation
 # closes out a test conversation so the daemon never re-prompts it
 def archive_conversation(conversation_id: str) -> None:
@@ -87,6 +105,10 @@ async def endpoint_app_config():
     )
     state_path = server.BASE_DIR / "local" / "agentd3-chat.json"
     prior_state = state_path.read_text() if state_path.exists() else None
+    # each endpoint test starts a fresh conversation; a state file left by an
+    # interrupted earlier run points at an archived conversation and would
+    # (correctly) fail closed
+    state_path.unlink(missing_ok=True)
     try:
         yield server, state_path
     finally:
@@ -418,31 +440,29 @@ async def test_chat_endpoint_round_trip(tmp_path: Path):
             async with server.lifespan(server.app):
                 transport = httpx.ASGITransport(app=server.app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://daz-cad-test") as client:
-                    first = await client.post(
-                        "/api/chat/message",
-                        json={
+                    first = await chat_via_endpoint(
+                        client,
+                        {
                             "message": "Reply with exactly the word BANANA and nothing else. Do not modify the file.",
                             "current_file": "endpoint-chat-test.js",
                             "current_code": "const box = new Workplane().box(10, 10, 10);\nresult;",
                         },
                     )
-                    assert first.status_code == 200, first.text
-                    assert "BANANA" in first.json()["response"].upper()
-                    assert first.json()["file_changed"] is False
+                    assert "BANANA" in first["response"].upper()
+                    assert first["file_changed"] is False
 
                     conversation_id = conversation_id_of(state_path)
                     assert conversation_id.startswith("conv-")
 
-                    second = await client.post(
-                        "/api/chat/message",
-                        json={
+                    second = await chat_via_endpoint(
+                        client,
+                        {
                             "message": "Reply with exactly the word CHERRY and nothing else. Do not modify the file.",
                             "current_file": "endpoint-chat-test.js",
                             "current_code": "const box = new Workplane().box(10, 10, 10);\nresult;",
                         },
                     )
-                    assert second.status_code == 200, second.text
-                    assert "CHERRY" in second.json()["response"].upper()
+                    assert "CHERRY" in second["response"].upper()
                     assert conversation_id_of(state_path) == conversation_id
         finally:
             model_file.unlink(missing_ok=True)
@@ -471,17 +491,17 @@ async def test_endpoint_serializes_same_file_chats(tmp_path: Path):
                 transport = httpx.ASGITransport(app=server.app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://daz-cad-test") as client:
                     first, second = await asyncio.gather(
-                        client.post(
-                            "/api/chat/message",
-                            json={
+                        chat_via_endpoint(
+                            client,
+                            {
                                 "message": f"The file is {model_file}. {question}",
                                 "current_file": model_file.name,
                                 "current_code": version_one,
                             },
                         ),
-                        client.post(
-                            "/api/chat/message",
-                            json={
+                        chat_via_endpoint(
+                            client,
+                            {
                                 "message": f"The file is {model_file}. {question}",
                                 "current_file": model_file.name,
                                 "current_code": version_two,
@@ -489,17 +509,15 @@ async def test_endpoint_serializes_same_file_chats(tmp_path: Path):
                         ),
                     )
                     conversation_id = conversation_id_of(state_path)
-                    assert first.status_code == 200, first.text
-                    assert second.status_code == 200, second.text
-                    first_reply = first.json()["response"]
-                    second_reply = second.json()["response"]
+                    first_reply = first["response"]
+                    second_reply = second["response"]
                     # each turn must have read exactly its own request's code
                     assert "version-one" in first_reply, first_reply
                     assert "version-two" not in first_reply, first_reply
                     assert "version-two" in second_reply, second_reply
                     # neither agent edited the file
-                    assert first.json()["file_changed"] is False
-                    assert second.json()["file_changed"] is False
+                    assert first["file_changed"] is False
+                    assert second["file_changed"] is False
                     assert model_file.read_text() == version_two
         finally:
             model_file.unlink(missing_ok=True)

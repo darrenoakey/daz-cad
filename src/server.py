@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -228,6 +229,10 @@ async def lifespan(_app: FastAPI):
     yield
     if file_watcher:
         file_watcher.stop()
+    for job in chat_jobs.values():
+        job.task.cancel()
+    await asyncio.gather(*(job.task for job in chat_jobs.values()), return_exceptions=True)
+    chat_jobs.clear()
     if agentd3_chat:
         await agentd3_chat.close()
         agentd3_chat = None
@@ -414,10 +419,38 @@ async def has_template(filename: str):
 
 
 # ##################################################################
-# chat message endpoint
-# sends a message to the cad assistant agent and returns the response
-@app.post("/api/chat/message")
-async def chat_message(request: ChatMessageRequest):
+# chat jobs
+# an assistant turn runs for minutes, far longer than any proxy in front of
+# the app (auto-gui gives non-stream requests 8s) will hold a request open,
+# so a chat is a background job: POST starts it and returns at once, and the
+# editor polls the job with short GETs until it finishes
+CHAT_JOB_RETENTION_SECONDS = 3600.0
+
+
+class ChatJob:
+    def __init__(self, task: asyncio.Task):
+        self.task = task
+        self.finished_at: float | None = None
+
+
+chat_jobs: dict[str, ChatJob] = {}
+
+
+# ##################################################################
+# prune chat jobs
+# finished jobs stay fetchable for a while (a poll may be retried) and are
+# then dropped so the registry cannot grow without bound
+def prune_chat_jobs() -> None:
+    cutoff = time.monotonic() - CHAT_JOB_RETENTION_SECONDS
+    for job_id in [k for k, job in chat_jobs.items() if job.finished_at is not None and job.finished_at < cutoff]:
+        del chat_jobs[job_id]
+
+
+# ##################################################################
+# run chat turn
+# sends one message to the cad assistant agent and returns the reply plus
+# any change the agent made to the model file
+async def run_chat_turn(request: ChatMessageRequest) -> dict:
     safe_name = Path(request.current_file).name
     file_path = MODELS_DIR / safe_name
 
@@ -454,6 +487,34 @@ Please help them modify the CAD model as requested. Use the Read tool to see the
         return {"response": f"Error communicating with assistant: {e!s}", "file_changed": False, "new_content": None}
 
     return {"response": response_text, "file_changed": file_changed, "new_content": new_content}
+
+
+# ##################################################################
+# chat message endpoint
+# starts an assistant turn as a background job and returns its id at once
+@app.post("/api/chat/message", status_code=202)
+async def chat_message(request: ChatMessageRequest):
+    prune_chat_jobs()
+    job_id = uuid.uuid4().hex
+    job = ChatJob(asyncio.create_task(run_chat_turn(request)))
+    job.task.add_done_callback(lambda _task: setattr(job, "finished_at", time.monotonic()))
+    chat_jobs[job_id] = job
+    return {"job_id": job_id}
+
+
+# ##################################################################
+# chat job endpoint
+# reports a chat job's state without waiting; once done it carries the reply
+@app.get("/api/chat/jobs/{job_id}")
+async def chat_job(job_id: str):
+    job = chat_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown chat job (the server may have restarted)")
+    if not job.task.done():
+        return {"status": "running"}
+    if job.task.cancelled():
+        return {"status": "done", "response": "Error communicating with assistant: the chat job was cancelled", "file_changed": False, "new_content": None}
+    return {"status": "done", **job.task.result()}
 
 
 # ##################################################################

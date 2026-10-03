@@ -2165,8 +2165,11 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
             'Return the complete corrected script.';
     }
 
+    // An assistant turn runs for minutes, longer than any proxy in front of the
+    // app holds a request open, so the server runs it as a job: POST starts it
+    // and this polls the job with short GETs until the reply is ready.
     async _chatViaServer(message) {
-        const response = await fetch('/api/chat/message', {
+        const started = await fetch('/api/chat/message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2175,12 +2178,20 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
                 current_code: this.editor.getValue()
             })
         });
-
-        if (!response.ok) {
-            throw new Error(`Server error: ${response.status}`);
+        if (!started.ok) {
+            throw new Error(`Server error: ${started.status}`);
         }
+        const { job_id: jobId } = await started.json();
 
-        return await response.json();
+        while (true) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const response = await fetch(`/api/chat/jobs/${encodeURIComponent(jobId)}`);
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+            const job = await response.json();
+            if (job.status === 'done') return job;
+        }
     }
 
     async _chatViaLocalLLM(message) {

@@ -117,6 +117,7 @@ GATE_TESTS = [
     "src/agentd3_chat_test.py::test_concurrent_create_yields_single_conversation",
     "src/agentd3_chat_test.py::test_state_key_recovery",
     "src/agentd3_chat_test.py::test_chat_endpoint_round_trip",
+    "src/server_test.py::test_chat_job_unknown",
     "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
     "src/server_test.py::test_monaco_type_definitions_match_library",
     "src/server_test.py::test_worker_recreation_replays_latest_model",
@@ -154,6 +155,7 @@ def _selected_gate_tests(paths: list[str]) -> list[str]:
         selected.extend(
             [
                 "src/startup_path_test.py",
+                "src/server_test.py::test_chat_job_unknown",
                 "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
                 "src/joinery_kernel_test.py",
                 "src/joinery_test.py::test_all_joinery_methods_create_valid_complementary_solids",
