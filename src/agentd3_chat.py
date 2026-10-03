@@ -35,7 +35,6 @@ SETTLE_POLL_WAIT_SECONDS = 10.0
 STATE_FILE_NAME = "agentd3-chat.json"
 STATE_SCHEMA_VERSION = 1
 CONVERSATION_SOURCE = "daz-cad"
-SETTLED_STATUSES = ("idle", "sleeping")
 
 
 # ##################################################################
@@ -202,6 +201,15 @@ class TurnReplyTracker:
         if stop_reason == "interrupted":
             raise Agentd3ChatError("the assistant turn was interrupted on the agentd3 daemon")
         return self.reply_text
+
+
+# ##################################################################
+# is settled
+# a conversation is safe to post into once no turn is running and nothing is
+# queued behind one. the status name is not enough: a turn that ended by
+# interrupt or error leaves status "interrupted"/"error" with nothing running
+def is_settled(conversation: dict) -> bool:
+    return not conversation.get("running") and not conversation.get("queue_depth")
 
 
 # ##################################################################
@@ -434,7 +442,7 @@ class Agentd3Chat:
     async def settle_outstanding_turn(self, conversation_id: str) -> None:
         conversation = await self.fetch_conversation_required(conversation_id)
         self.validate_conversation(conversation, conversation_id)
-        if conversation.get("status") in SETTLED_STATUSES:
+        if is_settled(conversation):
             return
 
         cursor = await self.latest_event_seq(conversation_id)
@@ -449,7 +457,7 @@ class Agentd3Chat:
             # here and are irrelevant except as proof the turn finished
             _, cursor = await self.poll_events(conversation_id, cursor, wait_seconds=SETTLE_POLL_WAIT_SECONDS)
             conversation = await self.fetch_conversation_required(conversation_id)
-            if conversation.get("status") in SETTLED_STATUSES:
+            if is_settled(conversation):
                 return
         raise Agentd3ChatError(
             f"agentd3 conversation {conversation_id} still has an unfinished turn from an earlier chat "

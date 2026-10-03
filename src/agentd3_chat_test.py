@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from src.agentd3_chat import STATE_SCHEMA_VERSION, Agentd3Chat, Agentd3ChatError, TurnReplyTracker
+from src.agentd3_chat import STATE_SCHEMA_VERSION, Agentd3Chat, Agentd3ChatError, TurnReplyTracker, is_settled
 
 # Standing real TEST daemon: production can restart during unrelated releases.
 # Never send test mutations to its production datastore or fall back to it.
@@ -422,6 +422,34 @@ async def test_next_chat_settles_outstanding_turn(tmp_path: Path):
             await patient.close()
         assert "CHERRY" in reply.upper()
         assert conversation_id_of(state_path) == conversation_id
+    finally:
+        archive_conversation(conversation_id)
+
+
+# ##################################################################
+# test interrupted conversation counts as settled
+# once a timed-out turn is interrupted the daemon reports status
+# "interrupted" with nothing running; that must count as settled, or the next
+# chat waits out the whole settle timeout and fails
+async def test_interrupted_conversation_counts_as_settled(tmp_path: Path):
+    state_path = tmp_path / "agentd3-chat.json"
+    conversation_id = ""
+    try:
+        hasty = make_chat(state_path, timeout_seconds=1.0)
+        try:
+            with pytest.raises(Agentd3ChatError, match="timed out"):
+                await hasty.send_message("Count slowly from 1 to 200, one number per line.")
+            conversation_id = conversation_id_of(state_path)
+            for _ in range(120):
+                conversation = await hasty.fetch_conversation_required(conversation_id)
+                if not conversation.get("running"):
+                    break
+                await asyncio.sleep(1.0)
+        finally:
+            await hasty.close()
+        assert not conversation.get("running"), conversation.get("status")
+        assert conversation.get("status") not in ("idle", "sleeping"), conversation.get("status")
+        assert is_settled(conversation), conversation.get("status")
     finally:
         archive_conversation(conversation_id)
 

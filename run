@@ -116,6 +116,7 @@ GATE_TESTS = [
     "src/agentd3_chat_test.py::test_fail_closed_on_cwd_mismatch",
     "src/agentd3_chat_test.py::test_concurrent_create_yields_single_conversation",
     "src/agentd3_chat_test.py::test_state_key_recovery",
+    "src/agentd3_chat_test.py::test_interrupted_conversation_counts_as_settled",
     "src/agentd3_chat_test.py::test_chat_endpoint_round_trip",
     "src/server_test.py::test_chat_job_unknown",
     "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
