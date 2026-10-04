@@ -36,16 +36,17 @@ def make_chat(
     state_path: Path,
     base_dir: Path = WORKTREE_ROOT,
     source: str = TEST_SOURCE,
-    timeout_seconds: float = 240.0,
+    timeout_seconds: float | None = 240.0,
     model: str = "agentic-low",
 ) -> Agentd3Chat:
     config_path = state_path.parent / "config.toml"
+    timeout_line = f"timeout_seconds = {timeout_seconds}\n" if timeout_seconds else ""
     config_path.write_text(
         f"[agentd3]\n"
         f'base_url = "{DAEMON_BASE_URL}"\n'
         f'source = "{source}"\n'
         f'model = "{model}"\n'
-        f"timeout_seconds = {timeout_seconds}\n"
+        f"{timeout_line}"
     )
     return Agentd3Chat(base_dir=base_dir, state_path=state_path, config_path=config_path)
 
@@ -97,12 +98,15 @@ async def endpoint_app_config():
     config_existed = config_path.exists()
     prior_config = config_path.read_text() if config_existed else None
     config_path.parent.mkdir(parents=True, exist_ok=True)
+    # the endpoint tests drive the production prompt through the app; the
+    # daemon wraps each turn with board notices and recalled memories, and
+    # the cheapest tier (haiku) intermittently mistakes that wrapper for the
+    # whole message, so these run on the medium tier (prod pins opus)
     config_path.write_text(
         f"[agentd3]\n"
         f'base_url = "{DAEMON_BASE_URL}"\n'
         f'source = "{TEST_SOURCE}"\n'
-        f'model = "agentic-low"\n'
-        f"timeout_seconds = 240.0\n"
+        f'model = "agentic-medium"\n'
     )
     state_path = server.BASE_DIR / "local" / "agentd3-chat.json"
     prior_state = state_path.read_text() if state_path.exists() else None
@@ -357,6 +361,20 @@ def test_tracker_ignores_other_turns_events():
 
 
 # ##################################################################
+# test tracker keeps every message of its turn
+# a turn can emit several assistant messages (the answer, then a closing note
+# after tool steps); the reply must keep all of them, not just the last
+def test_tracker_keeps_every_message_of_its_turn():
+    tracker = TurnReplyTracker("msg-1")
+    tracker.feed({"type": "user.message", "data": {"message_id": "msg-1", "turn_id": "turn-1", "text": "q"}})
+    tracker.feed({"type": "message.completed", "data": {"turn_id": "turn-1", "role": "assistant", "text": "CHERRY"}})
+    tracker.feed({"type": "message.completed", "data": {"turn_id": "turn-1", "role": "assistant", "text": ""}})
+    tracker.feed({"type": "message.completed", "data": {"turn_id": "turn-1", "role": "assistant", "text": "Done."}})
+    tracker.feed({"type": "turn.completed", "data": {"turn_id": "turn-1", "stop_reason": "end_turn"}})
+    assert tracker.result() == "CHERRY\n\nDone."
+
+
+# ##################################################################
 # test crash recovery via persisted idempotency key
 # a crash between persisting the key and persisting the conversation id
 # recovers into the same conversation instead of forking a second one
@@ -424,6 +442,34 @@ async def test_next_chat_settles_outstanding_turn(tmp_path: Path):
         assert "CHERRY" in reply.upper()
         assert conversation_id_of(state_path) == conversation_id
     finally:
+        archive_conversation(conversation_id)
+
+
+# ##################################################################
+# test uncapped chat ends when its turn ends
+# with no configured timeout the client waits on the daemon turn itself, not
+# a clock; a turn stopped on the daemon side must end the wait with an error
+# instead of hanging the chat job forever
+async def test_uncapped_chat_ends_when_turn_is_interrupted(tmp_path: Path):
+    state_path = tmp_path / "agentd3-chat.json"
+    conversation_id = ""
+    chat = make_chat(state_path, timeout_seconds=None)
+    assert chat.timeout_seconds is None
+    try:
+        send = asyncio.create_task(chat.send_message("Count slowly from 1 to 500, one number per line."))
+        for _ in range(120):
+            if state_path.exists() and json.loads(state_path.read_text()).get("conversation_id"):
+                conversation_id = conversation_id_of(state_path)
+                conversation = await chat.fetch_conversation_required(conversation_id)
+                if conversation.get("running"):
+                    break
+            await asyncio.sleep(0.5)
+        assert conversation_id
+        await chat.interrupt_conversation(conversation_id)
+        with pytest.raises(Agentd3ChatError, match="interrupted|stopped without a reply"):
+            await asyncio.wait_for(send, timeout=150)
+    finally:
+        await chat.close()
         archive_conversation(conversation_id)
 
 

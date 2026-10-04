@@ -2183,12 +2183,26 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
         }
         const { job_id: jobId } = await started.json();
 
+        // The turn has no time limit, so a poll may span a network blip or a
+        // proxy hiccup; those are retried for a while instead of abandoning a
+        // turn that is still running on the server.
+        let transientFailures = 0;
         while (true) {
             await new Promise(resolve => setTimeout(resolve, 1000));
-            const response = await fetch(`/api/chat/jobs/${encodeURIComponent(jobId)}`);
+            let response;
+            try {
+                response = await fetch(`/api/chat/jobs/${encodeURIComponent(jobId)}`);
+            } catch (err) {
+                if (++transientFailures > 60) throw err;
+                continue;
+            }
+            if ([502, 503, 504].includes(response.status) && ++transientFailures <= 60) {
+                continue;
+            }
             if (!response.ok) {
                 throw new Error(`Server error: ${response.status}`);
             }
+            transientFailures = 0;
             const job = await response.json();
             if (job.status === 'done') return job;
         }

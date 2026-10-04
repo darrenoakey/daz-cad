@@ -30,7 +30,11 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8620"
 DEFAULT_MODEL = "claude/opus-5.5"
 DEFAULT_POLICY = "yolo"
 DEFAULT_PRIORITY = True
-DEFAULT_TIMEOUT_SECONDS = 300.0
+# no wall-clock limit on a turn by default: the daemon turn is durable and the
+# app serves it as a background job, so a long agentic turn is simply waited
+# out. the wait ends only when the daemon reports the turn finished or gone.
+# an optional timeout_seconds in local/config.toml re-imposes a hard cap
+DEFAULT_TIMEOUT_SECONDS = None
 DEFAULT_SETTLE_TIMEOUT_SECONDS = 300.0
 EVENT_POLL_WAIT_SECONDS = 25.0
 SETTLE_POLL_WAIT_SECONDS = 10.0
@@ -154,7 +158,7 @@ class TurnReplyTracker:
     def __init__(self, message_id: str) -> None:
         self.message_id = message_id
         self.turn_id = ""
-        self.reply_text = ""
+        self.reply_parts: list[str] = []
         self.completed_data: dict | None = None
         self.failure: Agentd3ChatError | None = None
 
@@ -168,7 +172,11 @@ class TurnReplyTracker:
             if not self.turn_id:
                 self.turn_id = str(data.get("turn_id", ""))
         elif event_type == "message.completed" and self.turn_id and data.get("turn_id") == self.turn_id:
-            self.reply_text = str(data.get("text", self.reply_text))
+            # a turn can speak more than once (answer, tool steps, then a
+            # closing note); keeping only the last message drops the answer
+            text = str(data.get("text") or "").strip()
+            if text:
+                self.reply_parts.append(text)
         elif event_type == "turn.completed" and self.turn_id and data.get("turn_id") == self.turn_id:
             self.completed_data = data
         elif event_type == "error":
@@ -204,6 +212,13 @@ class TurnReplyTracker:
             raise Agentd3ChatError("the assistant turn was interrupted on the agentd3 daemon")
         return self.reply_text
 
+    # ##################################################################
+    # reply text
+    # every assistant message of our turn, in order
+    @property
+    def reply_text(self) -> str:
+        return "\n\n".join(self.reply_parts)
+
 
 # ##################################################################
 # is settled
@@ -233,7 +248,8 @@ class Agentd3Chat:
         self.model = str(merged.get("model", DEFAULT_MODEL))
         self.policy = str(merged.get("policy", DEFAULT_POLICY))
         self.priority = bool(merged.get("priority", DEFAULT_PRIORITY))
-        self.timeout_seconds = float(merged.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS))
+        raw_timeout = merged.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+        self.timeout_seconds = float(raw_timeout) if raw_timeout else None
         self.settle_timeout_seconds = float(merged.get("settle_timeout_seconds", DEFAULT_SETTLE_TIMEOUT_SECONDS))
         self.source = str(merged.get("source", CONVERSATION_SOURCE))
         self.base_dir = base_dir.resolve()
@@ -244,6 +260,7 @@ class Agentd3Chat:
         # turn, and reading the result back - without that, a second request
         # could overwrite the model file before the first turn even reads it
         self.chat_lock = asyncio.Lock()
+        self.last_status = ""
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(EVENT_POLL_WAIT_SECONDS + 10.0, connect=10.0))
 
     # ##################################################################
@@ -581,8 +598,8 @@ class Agentd3Chat:
         post = await self.post_message(conversation_id, text)
         tracker = TurnReplyTracker(post["message_id"])
 
-        deadline = time.monotonic() + self.timeout_seconds
-        while time.monotonic() < deadline:
+        deadline = time.monotonic() + self.timeout_seconds if self.timeout_seconds else None
+        while deadline is None or time.monotonic() < deadline:
             events, cursor = await self.poll_events(conversation_id, cursor)
             for event in events:
                 tracker.feed(event)
@@ -590,11 +607,38 @@ class Agentd3Chat:
                     raise tracker.failure
                 if tracker.completed_data is not None:
                     return tracker.result()
-        # our caller gave up, but the daemon turn keeps running unless we ask
-        # it to stop; interrupt now so the NEXT chat usually finds an idle
-        # conversation instead of waiting out the settle path
+            if not events and await self.turn_vanished(conversation_id, tracker):
+                # one last non-waiting drain closes the race where the turn
+                # finished between the long-poll returning and the status read
+                events, cursor = await self.poll_events(conversation_id, cursor, wait_seconds=0)
+                for event in events:
+                    tracker.feed(event)
+                if tracker.failure:
+                    raise tracker.failure
+                if tracker.completed_data is not None:
+                    return tracker.result()
+                raise Agentd3ChatError(
+                    f"the assistant turn in conversation {conversation_id} stopped without a reply "
+                    f"(daemon status {self.last_status!r}); retry your message"
+                )
+        # an explicitly configured cap was hit; the daemon turn keeps running
+        # unless we ask it to stop, so interrupt it now so the NEXT chat
+        # usually finds an idle conversation instead of waiting out settle
         await self.interrupt_conversation(conversation_id)
         raise Agentd3ChatError(
             f"timed out after {self.timeout_seconds:.0f}s waiting for the assistant reply "
             f"(conversation {conversation_id}); an interrupt was requested - retry your message"
         )
+
+    # ##################################################################
+    # turn vanished
+    # liveness check used instead of a wall-clock deadline: once our message
+    # has been admitted as a turn, a conversation that is settled (nothing
+    # running, nothing queued) yet never delivered our turn.completed means
+    # the turn is gone and waiting longer would hang forever
+    async def turn_vanished(self, conversation_id: str, tracker: TurnReplyTracker) -> bool:
+        if not tracker.turn_id:
+            return False
+        conversation = await self.fetch_conversation_required(conversation_id)
+        self.last_status = str(conversation.get("status", ""))
+        return is_settled(conversation)
