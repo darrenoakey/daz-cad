@@ -449,7 +449,16 @@ class CADEditor {
                             infillDensity(percent: number): Workplane;
 
                             /** Set infill pattern for 3MF export */
-                            infillPattern(pattern: 'grid' | 'gyroid' | 'honeycomb' | 'triangles' | 'cubic' | 'line' | 'concentric'): Workplane;
+                            infillPattern(pattern: InfillPattern): Workplane;
+
+                            /** Set wall (perimeter loop) count for 3MF export */
+                            walls(count: number): Workplane;
+
+                            /** Turn supports on (default) or off for 3MF export */
+                            supports(enabled?: boolean): Workplane;
+
+                            /** Set several print settings at once for 3MF export */
+                            printSettings(settings: PrintSettings): Workplane;
 
                             /** Set part name for 3MF export */
                             partName(name: string): Workplane;
@@ -505,9 +514,15 @@ class CADEditor {
                         }
                         declare const Joinery: { methods: Array<{ id: JoineryMethod; label: string; description: string }> };
 
+                        type InfillPattern = 'concentric' | 'zig-zag' | 'grid' | 'line' | 'cubic' | 'triangles' | 'tri-hexagon' | 'gyroid' | 'honeycomb' | 'adaptivecubic' | 'alignedrectilinear' | '3dhoneycomb' | 'hilbertcurve' | 'archimedeanchords' | 'octagramspiral' | 'supportcubic' | 'lightning' | 'crosshatch' | 'zigzag' | 'crosszag' | 'lockedzag';
+                        /** Print settings written into the Bambu 3MF */
+                        interface PrintSettings { walls?: number; supports?: boolean; infillDensity?: number; infillPattern?: InfillPattern; }
+
                         /** Assembly of multiple parts */
                         declare class Assembly {
                             constructor();
+                            /** Set project-wide print settings for 3MF export (per-part settings override) */
+                            printSettings(settings: PrintSettings): Assembly;
                             /** Add a part to the assembly */
                             add(part: Workplane): Assembly;
                             /** Check if this is an assembly */

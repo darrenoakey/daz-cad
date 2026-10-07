@@ -288,6 +288,26 @@ For oversized objects, split individual solids successively and preserve an asse
 - Use CSS hex colors: `"#ff0000"` (red), `"#00ff00"` (green), `"#0000ff"` (blue)
 - Common colors: `"#e74c3c"` (red), `"#2ecc71"` (green), `"#3498db"` (blue), `"#f39c12"` (orange), `"#9b59b6"` (purple)
 
+### Print Settings (written into the 3MF)
+
+These set Bambu Studio process settings in the exported 3MF. They are optional; anything not set keeps the slicer preset. Settings survive boolean operations.
+
+- **walls(count)** - wall (perimeter) loops, e.g. `3`
+- **supports(enabled = true)** - turn support generation on/off
+- **infillDensity(percent)** - sparse infill percentage, 0-100, e.g. `5`
+- **infillPattern(pattern)** - one of `concentric`, `zig-zag`, `grid`, `line`, `cubic`, `triangles`, `tri-hexagon`, `gyroid`, `honeycomb`, `adaptivecubic`, `alignedrectilinear`, `3dhoneycomb`, `hilbertcurve`, `archimedeanchords`, `octagramspiral`, `supportcubic`, `lightning`, `crosshatch`, `zigzag`, `crosszag`, `lockedzag`
+- **printSettings({ walls, supports, infillDensity, infillPattern })** - set several at once
+- **partName(name)** - object name shown in the slicer
+
+On a Workplane these apply to that part. `Assembly.printSettings({...})` sets them for the whole project; a part's own settings override the project's. Unknown names or invalid values throw.
+
+```javascript
+const result = new Assembly()
+    .printSettings({ walls: 3, supports: true, infillDensity: 5, infillPattern: "lightning" })
+    .add(new Workplane("XY").box(40, 40, 20).color("#3498db"))
+    .add(new Workplane("XY").cylinder(10, 30).translate(50, 0, 0).walls(5).color("#e74c3c"));
+```
+
 ## Assembly Class
 
 For multi-part models with different colors (useful for multi-material 3D printing).
@@ -302,6 +322,9 @@ new Assembly()
 **add(workplane)**
 - Adds a Workplane part to the assembly
 - Each part can have its own color
+
+**printSettings({ walls, supports, infillDensity, infillPattern })**
+- Project-wide print settings for the 3MF (see Print Settings above); returns the assembly
 
 ## Examples
 

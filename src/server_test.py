@@ -1,4 +1,8 @@
+import io
+import json
+import re
 import time
+import zipfile
 
 import httpx
 from playwright.sync_api import expect
@@ -783,6 +787,60 @@ def test_3mf_export(cad_page):
     print(f"Box 3MF size: {result.get('box3MFSize')} bytes")
     print(f"Assembly 3MF size: {result.get('assembly3MFSize')} bytes")
     print(f"Text modifier 3MF size: {result.get('textModifier3MFSize')} bytes")
+
+
+# ##################################################################
+# test 3mf print settings
+# verifies walls, supports, infill density and pattern set in code land in the 3MF
+# as project settings (Assembly), per-object overrides and modifier part settings
+def test_3mf_print_settings(cad_page):
+    result = cad_page.evaluate("""async () => {
+        const bytes = async (blob) => Array.from(new Uint8Array(await blob.arrayBuffer()));
+        const errors = [];
+        for (const bad of [() => new Workplane('XY').walls(2.5), () => new Workplane('XY').infillPattern('lightening'),
+                           () => new Workplane('XY').infillDensity(150), () => new Assembly().printSettings({ wall: 3 })]) {
+            try { bad(); errors.push(null); } catch (e) { errors.push(e.message); }
+        }
+        const plain = new Workplane('XY').box(20, 20, 10).color('#3498db').partName('Plain');
+        const thick = new Workplane('XY').box(10, 10, 10).translate(30, 0, 0).color('#e67e22')
+            .walls(6).partName('Thick')
+            .withModifier(new Workplane('XY').box(4, 4, 4).translate(30, 0, 0).infillDensity(40).asModifier());
+        const assembly = new Assembly()
+            .printSettings({ walls: 3, supports: true, infillDensity: 5, infillPattern: 'lightning' })
+            .add(plain).add(thick);
+        const single = new Workplane('XY').box(10, 10, 10).infillDensity(12).infillPattern('gyroid').supports(false);
+        return { errors, assembly: await bytes(await assembly.to3MF(0.1, 0.3)), single: await bytes(await single.to3MF(0.1, 0.3)) };
+    }""")
+    assert all(result["errors"]), f"invalid print settings were accepted: {result['errors']}"
+
+    def read(data, name):
+        return zipfile.ZipFile(io.BytesIO(bytes(data))).read(name).decode()
+
+    project = json.loads(read(result["assembly"], "Metadata/project_settings.config"))
+    assert project["wall_loops"] == "3"
+    assert project["enable_support"] == "1"
+    assert project["sparse_infill_density"] == "5%"
+    assert project["skeleton_infill_density"] == "5%"
+    assert project["skin_infill_density"] == "5%"
+    assert project["sparse_infill_pattern"] == "lightning"
+    assert project["different_settings_to_system"][0] == (
+        "enable_support;skeleton_infill_density;skin_infill_density;sparse_infill_density;sparse_infill_pattern;wall_loops")
+
+    model = read(result["assembly"], "Metadata/model_settings.config")
+    objects = re.findall(r'<object id="\d+">(.*?)</object>', model, re.DOTALL)
+    assert len(objects) == 2
+    plain_xml, thick_xml = objects
+    assert 'value="Plain"' in plain_xml and "wall_loops" not in plain_xml
+    thick_object_level = thick_xml.split("<part", 1)[0]
+    assert '<metadata key="wall_loops" value="6"/>' in thick_object_level
+    modifier_xml = thick_xml.split('subtype="modifier_part"', 1)[1]
+    assert '<metadata key="sparse_infill_density" value="40%"/>' in modifier_xml
+
+    single = json.loads(read(result["single"], "Metadata/project_settings.config"))
+    assert single["sparse_infill_density"] == "12%"
+    assert single["sparse_infill_pattern"] == "gyroid"
+    assert single["enable_support"] == "0"
+    assert "wall_loops" not in single["different_settings_to_system"][0]
 
 
 # ##################################################################
@@ -1740,7 +1798,7 @@ def test_monaco_type_definitions_match_library(cad_page):
                 'addTab', 'addSlot', 'splitAndJoin',
                 'toSTL', 'to3MF', 'toMesh',
                 'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val',
-                'meta', 'infillDensity', 'infillPattern', 'partName',
+                'meta', 'infillDensity', 'infillPattern', 'walls', 'supports', 'printSettings', 'partName',
                 'name', 'nameFace', 'nameEdge', 'face', 'faceInfo', 'getFaceLabels',
                 'extrudeOn', 'cutInto', 'centerOn', 'alignTo', 'attachTo'
             ];
@@ -1748,7 +1806,7 @@ def test_monaco_type_definitions_match_library(cad_page):
             const expectedGridfinityMethods = ['baseplate', 'bin', 'fitBin', 'plug'];
             const expectedGridfinityConstants = ['UNIT_SIZE', 'UNIT_HEIGHT', 'BASE_HEIGHT', 'BP_HEIGHT', 'BP_FLOOR'];
 
-            const expectedAssemblyMethods = ['add', 'toMesh', 'toSTL', 'to3MF'];
+            const expectedAssemblyMethods = ['add', 'printSettings', 'toMesh', 'toSTL', 'to3MF'];
             const expectedProfilerMethods = ['checkpoint', 'finished', 'elapsed'];
 
             // Check Workplane methods

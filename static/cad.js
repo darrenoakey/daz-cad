@@ -259,6 +259,90 @@ function initCAD(openCascadeInstance) {
     }
 }
 
+/** Bambu Studio sparse infill pattern identifiers (sparse_infill_pattern values). */
+const INFILL_PATTERNS = [
+    'concentric', 'zig-zag', 'grid', 'line', 'cubic', 'triangles', 'tri-hexagon', 'gyroid',
+    'honeycomb', 'adaptivecubic', 'alignedrectilinear', '3dhoneycomb', 'hilbertcurve',
+    'archimedeanchords', 'octagramspiral', 'supportcubic', 'lightning', 'crosshatch',
+    'zigzag', 'crosszag', 'lockedzag'
+];
+
+/**
+ * Print settings that can be set from model code and are written into the 3MF.
+ * Each entry maps a friendly setting name (also its Workplane meta key) to the Bambu
+ * Studio process keys it controls, with a formatter that validates the value and
+ * returns the Bambu string form. Bambu keeps skeleton/skin density in step with the
+ * sparse density, so infillDensity writes all three.
+ */
+const PRINT_SETTINGS = {
+    walls: {
+        keys: ['wall_loops'],
+        format: (v) => {
+            if (!Number.isInteger(v) || v < 0) throw new Error(`walls must be a non-negative integer, got ${v}`);
+            return String(v);
+        }
+    },
+    supports: {
+        keys: ['enable_support'],
+        format: (v) => {
+            if (typeof v !== 'boolean') throw new Error(`supports must be true or false, got ${v}`);
+            return v ? '1' : '0';
+        }
+    },
+    infillDensity: {
+        keys: ['sparse_infill_density', 'skeleton_infill_density', 'skin_infill_density'],
+        format: (v) => {
+            if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 100) {
+                throw new Error(`infillDensity must be a percentage from 0 to 100, got ${v}`);
+            }
+            return `${v}%`;
+        }
+    },
+    infillPattern: {
+        keys: ['sparse_infill_pattern'],
+        format: (v) => {
+            if (!INFILL_PATTERNS.includes(v)) {
+                throw new Error(`infillPattern must be one of ${INFILL_PATTERNS.join(', ')}; got ${v}`);
+            }
+            return v;
+        }
+    }
+};
+
+/**
+ * Validate friendly print settings ({walls, supports, infillDensity, infillPattern})
+ * and return a copy. Throws on unknown names or invalid values.
+ */
+function validatePrintSettings(settings) {
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        throw new Error('printSettings expects an object such as { walls: 3, supports: true }');
+    }
+    for (const [name, value] of Object.entries(settings)) {
+        const def = PRINT_SETTINGS[name];
+        if (!def) {
+            throw new Error(`Unknown print setting "${name}"; supported: ${Object.keys(PRINT_SETTINGS).join(', ')}`);
+        }
+        def.format(value);
+    }
+    return { ...settings };
+}
+
+/**
+ * Convert the print settings found in a meta/settings object into Bambu process keys.
+ * Keys that are not print settings (partName, minCutZ, ...) are ignored.
+ * @returns {Object<string,string>} Bambu key -> value
+ */
+function bambuPrintSettings(source) {
+    const out = {};
+    for (const [name, def] of Object.entries(PRINT_SETTINGS)) {
+        if (source && source[name] !== undefined) {
+            const value = def.format(source[name]);
+            for (const key of def.keys) out[key] = value;
+        }
+    }
+    return out;
+}
+
 /**
  * Helper class for generating Bambu-compatible 3MF files
  */
@@ -266,9 +350,10 @@ class ThreeMFExporter {
     /**
      * Generate 3MF file from parts array using Bambu template
      * @param {Array} parts - Array of {mesh, color, name, modifiers} objects
+     * @param {Object} [printSettings] - Friendly print settings applied to the whole project
      * @returns {Promise<Blob>} - The 3MF file as a Blob
      */
-    static async generate(parts) {
+    static async generate(parts, printSettings = {}) {
         // Load the Bambu template
         const response = await fetch(appUrl('/static/template.3mf'));
         const templateData = await response.arrayBuffer();
@@ -277,6 +362,15 @@ class ThreeMFExporter {
         // Build the object structure
         // Group parts with their modifiers into objects
         const objects = this._buildObjects(parts);
+
+        // Project-wide process settings: explicit project settings, plus any setting that
+        // every object agrees on (so a single part's settings become the project's).
+        const projectPrint = { ...this._commonPrintSettings(objects), ...bambuPrintSettings(printSettings) };
+        // Per-object overrides are only needed where an object differs from the project.
+        for (const obj of objects) {
+            obj.printOverrides = Object.fromEntries(
+                Object.entries(bambuPrintSettings(obj.meta)).filter(([k, v]) => projectPrint[k] !== v));
+        }
 
         // Generate all the 3MF components
         const modelData = this._model(objects);
@@ -310,25 +404,13 @@ class ThreeMFExporter {
             projectSettings.filament_colour[i] = hexColor;
         }
 
-        // Set infill settings from first object's metadata (as project defaults)
-        // Also track which settings differ from system defaults
-        const differentSettings = [];
-        if (objects.length > 0 && objects[0].volumes[0]?.meta) {
-            const meta = objects[0].volumes[0].meta;
-            if (meta.infillDensity !== undefined) {
-                projectSettings.sparse_infill_density = `${meta.infillDensity}%`;
-                differentSettings.push('sparse_infill_density');
-                console.log(`[3MF] Setting infill density to ${meta.infillDensity}%`);
-            }
-            if (meta.infillPattern !== undefined) {
-                projectSettings.sparse_infill_pattern = meta.infillPattern;
-                differentSettings.push('sparse_infill_pattern');
-                console.log(`[3MF] Setting infill pattern to ${meta.infillPattern}`);
-            }
+        // Apply project-wide process settings and record which ones differ from the system
+        // preset (Bambu shows these as modified and keeps them instead of the preset values)
+        const differentSettings = Object.keys(projectPrint).sort();
+        for (const key of differentSettings) {
+            projectSettings[key] = projectPrint[key];
         }
 
-        // Add different_settings_to_system if we have overrides
-        // This tells BambuStudio which settings are intentionally different from defaults
         if (differentSettings.length > 0) {
             // Array entries correspond to: [print, printer, filament1, filament2, ...]
             const settingsStr = differentSettings.join(';');
@@ -391,6 +473,15 @@ class ThreeMFExporter {
         }
 
         return objects;
+    }
+
+    /**
+     * Bambu print settings shared, with identical values, by every object.
+     */
+    static _commonPrintSettings(objects) {
+        if (objects.length === 0) return {};
+        const [first, ...rest] = objects.map(obj => bambuPrintSettings(obj.meta));
+        return Object.fromEntries(Object.entries(first).filter(([k, v]) => rest.every(s => s[k] === v)));
     }
 
     // Weld vertices to create manifold mesh (merge duplicate vertices)
@@ -583,16 +674,11 @@ ${resources} </resources>
             for (let volIdx = 0; volIdx < obj.volumes.length; volIdx++) {
                 const vol = obj.volumes[volIdx];
 
-                // Build custom metadata from vol.meta
-                let customMeta = '';
-                if (vol.meta) {
-                    if (vol.meta.infillDensity !== undefined) {
-                        customMeta += `      <metadata key="sparse_infill_density" value="${vol.meta.infillDensity}%"/>\n`;
-                    }
-                    if (vol.meta.infillPattern !== undefined) {
-                        customMeta += `      <metadata key="sparse_infill_pattern" value="${vol.meta.infillPattern}"/>\n`;
-                    }
-                }
+                // Modifier volumes carry their own print settings; the main part's
+                // settings live at object level (enable_support is object-only in Bambu)
+                const customMeta = vol.subtype === 'modifier_part'
+                    ? this._settingsXml(bambuPrintSettings(vol.meta), '      ')
+                    : '';
 
                 partsXml += `    <part id="${vol.volumeId}" subtype="${vol.subtype}">
       <metadata key="name" value="${vol.name}"/>
@@ -611,7 +697,7 @@ ${customMeta}    </part>\n`;
             objectsXml += `  <object id="${parentId}">
     <metadata key="name" value="${obj.name}"/>
     <metadata key="extruder" value="1"/>
-${partsXml}  </object>\n`;
+${this._settingsXml(obj.printOverrides, '    ')}${partsXml}  </object>\n`;
         }
 
         return `<?xml version="1.0" encoding="UTF-8"?>
@@ -624,6 +710,15 @@ ${partsXml}  </object>\n`;
 ${objectsXml}  <assemble>
   </assemble>
 </config>`;
+    }
+
+    /**
+     * Render Bambu key/value settings as model_settings.config metadata lines
+     */
+    static _settingsXml(settings, indent) {
+        return Object.entries(settings || {})
+            .map(([key, value]) => `${indent}<metadata key="${key}" value="${value}"/>\n`)
+            .join('');
     }
 
     /**
@@ -768,7 +863,7 @@ class Workplane {
      * @returns {Workplane} New Workplane with infill density set
      */
     infillDensity(percent) {
-        return this.meta('infillDensity', percent);
+        return this.printSettings({ infillDensity: percent });
     }
 
     /**
@@ -777,7 +872,39 @@ class Workplane {
      * @returns {Workplane} New Workplane with infill pattern set
      */
     infillPattern(pattern) {
-        return this.meta('infillPattern', pattern);
+        return this.printSettings({ infillPattern: pattern });
+    }
+
+    /**
+     * Set the number of walls (perimeter loops) for this object (used in 3MF export)
+     * @param {number} count - Wall loop count (e.g., 3)
+     * @returns {Workplane} New Workplane with wall count set
+     */
+    walls(count) {
+        return this.printSettings({ walls: count });
+    }
+
+    /**
+     * Turn support generation on or off for this object (used in 3MF export)
+     * @param {boolean} [enabled=true]
+     * @returns {Workplane} New Workplane with supports set
+     */
+    supports(enabled = true) {
+        return this.printSettings({ supports: enabled });
+    }
+
+    /**
+     * Set several print settings at once for this object (used in 3MF export)
+     * @param {{walls?: number, supports?: boolean, infillDensity?: number, infillPattern?: string}} settings
+     * @returns {Workplane} New Workplane with the settings stored as metadata
+     */
+    printSettings(settings) {
+        const valid = validatePrintSettings(settings);
+        const result = new Workplane(this._plane);
+        result._shape = this._shape;
+        result._cloneProperties(this);
+        result._meta = { ...this._meta, ...valid };
+        return result;
     }
 
     /**
@@ -3404,6 +3531,18 @@ class Workplane {
 class Assembly {
     constructor() {
         this._parts = [];
+        this._printSettings = {};
+    }
+
+    /**
+     * Set project-wide print settings written into the exported 3MF
+     * (walls, supports, infillDensity, infillPattern). Per-part settings still override.
+     * @param {{walls?: number, supports?: boolean, infillDensity?: number, infillPattern?: string}} settings
+     * @returns {Assembly} this, for chaining
+     */
+    printSettings(settings) {
+        this._printSettings = { ...this._printSettings, ...validatePrintSettings(settings) };
+        return this;
     }
 
     /**
@@ -3543,7 +3682,7 @@ class Assembly {
 
         if (parts.length === 0) return null;
 
-        return await ThreeMFExporter.generate(parts);
+        return await ThreeMFExporter.generate(parts, this._printSettings || {});
     }
 }
 
