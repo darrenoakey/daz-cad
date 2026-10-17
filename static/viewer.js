@@ -197,6 +197,63 @@ class CADViewer {
         return box.isEmpty() ? null : { min: box.min.toArray(), max: box.max.toArray() };
     }
 
+    /** Render only the saved geometry to a small transparent PNG, without changing the viewport. */
+    captureThumbnail(size = 192) {
+        const bounds = new THREE.Box3().setFromObject(this.meshGroup);
+        if (bounds.isEmpty()) return null;
+        const center = bounds.getCenter(new THREE.Vector3());
+        const radius = Math.max(bounds.getBoundingSphere(new THREE.Sphere()).radius, 0.001);
+        const scene = new THREE.Scene();
+        scene.add(this.meshGroup.clone(true));
+        for (const child of this.scene.children) {
+            if (child.isLight) scene.add(child.clone());
+        }
+        const extent = radius * 1.12;
+        const camera = new THREE.OrthographicCamera(-extent, extent, extent, -extent, radius * 0.01, radius * 20);
+        camera.up.set(0, 0, 1);
+        camera.position.copy(center).add(new THREE.Vector3(2, -2, 1.6).multiplyScalar(radius));
+        camera.lookAt(center);
+        const target = new THREE.WebGLRenderTarget(size, size);
+        target.texture.colorSpace = THREE.SRGBColorSpace;
+        const previousTarget = this.renderer.getRenderTarget();
+        const previousColor = this.renderer.getClearColor(new THREE.Color());
+        const previousAlpha = this.renderer.getClearAlpha();
+        try {
+            this.renderer.setRenderTarget(target);
+            this.renderer.setClearColor(0x000000, 0);
+            this.renderer.clear();
+            this.renderer.render(scene, camera);
+            const pixels = new Uint8Array(size * size * 4);
+            this.renderer.readRenderTargetPixels(target, 0, 0, size, size, pixels);
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = size;
+            const context = canvas.getContext('2d');
+            const image = context.createImageData(size, size);
+            for (let row = 0; row < size; row++) {
+                image.data.set(pixels.subarray(row * size * 4, (row + 1) * size * 4), (size - row - 1) * size * 4);
+            }
+            // The sRGB framebuffer blends in linear space; undo alpha there before encoding ImageData.
+            for (let index = 0; index < image.data.length; index += 4) {
+                const alpha = image.data[index + 3];
+                if (alpha > 0 && alpha < 255) {
+                    for (let channel = 0; channel < 3; channel++) {
+                        const encoded = image.data[index + channel] / 255;
+                        const linear = encoded <= 0.04045 ? encoded / 12.92 : ((encoded + 0.055) / 1.055) ** 2.4;
+                        const straight = Math.min(1, linear * 255 / alpha);
+                        image.data[index + channel] = Math.round(255 * (straight <= 0.0031308
+                            ? straight * 12.92 : 1.055 * straight ** (1 / 2.4) - 0.055));
+                    }
+                }
+            }
+            context.putImageData(image, 0, 0);
+            return canvas.toDataURL('image/png');
+        } finally {
+            this.renderer.setRenderTarget(previousTarget);
+            this.renderer.setClearColor(previousColor, previousAlpha);
+            target.dispose();
+        }
+    }
+
     /**
      * Set global opacity for all parts
      * @param {number} opacity - Value from 0 to 1

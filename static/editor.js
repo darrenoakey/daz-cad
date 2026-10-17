@@ -13,7 +13,7 @@ import './patterns.js';  // Extends Workplane with unified cutPattern()
 import './naming.js';    // Extends Workplane with named references
 import { Joinery } from './joinery.js';
 import { JoineryUI } from './joinery-ui.js';
-import { appUrl } from './app-base.js';
+import { appBase, appUrl } from './app-base.js';
 import { loadOpenCascade } from './opencascade.js';
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
 import * as astring from 'https://cdn.jsdelivr.net/npm/astring@1.9.0/+esm';
@@ -56,7 +56,7 @@ class CADEditor {
 
         // Chat state
         this._isProcessing = false; // True when waiting for agent response
-        this._skipSave = false; // True when file update came from agent
+        this._skipSave = null; // Exact already-saved source supplied by an external update
         this._chatInput = null;
         this._chatSendBtn = null;
         this._chatMessages = null;
@@ -83,6 +83,9 @@ class CADEditor {
         this._createFileBtn = null;
         this._resetFileBtn = null;
         this._availableFiles = [];
+        this._fileMetadata = new Map();
+        this._previewJobs = new Map();
+        this._renderSource = null;
         this._hasTemplate = false;
 
         // Hot reload state
@@ -835,7 +838,7 @@ class CADEditor {
                     this._setStatus('ready', 'Ready');
                     this._downloadSTLBtn.disabled = false;
                     this._download3MFBtn.disabled = false;
-                    this._saveFile();
+                    this._saveRenderedFile(this._renderSource, requestId);
                 } else {
                     throw new Error('Assembly has no valid parts');
                 }
@@ -847,7 +850,7 @@ class CADEditor {
                     this._setStatus('ready', 'Ready');
                     this._downloadSTLBtn.disabled = false;
                     this._download3MFBtn.disabled = false;
-                    this._saveFile();
+                    this._saveRenderedFile(this._renderSource, requestId);
                 } else {
                     throw new Error('Failed to generate mesh');
                 }
@@ -951,7 +954,7 @@ class CADEditor {
             // If we have a target file, try to load it
             if (targetFile) {
                 try {
-                    const fileResponse = await fetch(`/api/models/${targetFile}`);
+                    const fileResponse = await fetch(`/api/models/${encodeURIComponent(targetFile)}`);
                     if (fileResponse.ok) {
                         const fileData = await fileResponse.json();
                         this._currentFile = fileData.filename;
@@ -975,7 +978,7 @@ class CADEditor {
             const data = await response.json();
             const filename = data.default || 'default.js';
 
-            const fileResponse = await fetch(`/api/models/${filename}`);
+            const fileResponse = await fetch(`/api/models/${encodeURIComponent(filename)}`);
             if (!fileResponse.ok) throw new Error(`Failed to load ${filename}`);
 
             const fileData = await fileResponse.json();
@@ -1029,10 +1032,10 @@ class CADEditor {
 
     _getModelFromPath() {
         // Extract model name from URL path (e.g., /anker_holder → anker_holder.js)
-        const path = window.location.pathname;
+        const path = window.location.pathname.slice(appBase().length);
         if (path && path !== '/') {
-            // Remove leading slash and add .js if needed
-            let modelName = path.substring(1);
+            // Remove the app prefix and decode the filename before adding its extension.
+            let modelName = decodeURIComponent(path.substring(1));
             if (!modelName.endsWith('.js')) {
                 modelName += '.js';
             }
@@ -1045,7 +1048,7 @@ class CADEditor {
         if (!this._currentFile) return;
 
         // Use path-based URL (e.g., /anker_holder instead of /?model=anker_holder.js)
-        const modelPath = '/' + this._currentFile.replace('.js', '');
+        const modelPath = appUrl('/' + encodeURIComponent(this._currentFile.replace(/\.js$/, '')));
 
         // Use replaceState to update URL without adding to history
         window.history.replaceState({}, '', modelPath);
@@ -1075,7 +1078,7 @@ class CADEditor {
         }
 
         try {
-            const response = await fetch(`/api/models/${this._currentFile}/has-template`);
+            const response = await fetch(`/api/models/${encodeURIComponent(this._currentFile)}/has-template`);
             if (response.ok) {
                 const data = await response.json();
                 this._hasTemplate = data.has_template;
@@ -1098,7 +1101,7 @@ class CADEditor {
             const examples = window.DAZ_CAD_EXAMPLES || {};
             if (examples[this._currentFile]) {
                 localStorage.removeItem(`cad-standalone-${this._currentFile}`);
-                this._skipSave = true;
+                this._skipSave = { filename: this._currentFile, content: examples[this._currentFile] };
                 this.editor.setValue(examples[this._currentFile]);
                 if (this.debounceTimer) {
                     clearTimeout(this.debounceTimer);
@@ -1110,7 +1113,7 @@ class CADEditor {
         }
 
         try {
-            const response = await fetch(`/api/models/${this._currentFile}/reset`, {
+            const response = await fetch(`/api/models/${encodeURIComponent(this._currentFile)}/reset`, {
                 method: 'POST'
             });
 
@@ -1122,7 +1125,7 @@ class CADEditor {
             this._fileMtime = data.mtime;
 
             // Update editor without triggering save
-            this._skipSave = true;
+            this._skipSave = { filename: this._currentFile, content: data.content };
             this.editor.setValue(data.content);
 
             // Clear any pending debounce and render immediately
@@ -1158,7 +1161,7 @@ class CADEditor {
         if (this._isRendering || this._isProcessing) return;
 
         try {
-            const response = await fetch(`/api/models/${this._currentFile}/mtime`);
+            const response = await fetch(`/api/models/${encodeURIComponent(this._currentFile)}/mtime`);
             if (!response.ok) return;
 
             const data = await response.json();
@@ -1175,14 +1178,14 @@ class CADEditor {
         if (!this._currentFile) return;
 
         try {
-            const response = await fetch(`/api/models/${this._currentFile}`);
+            const response = await fetch(`/api/models/${encodeURIComponent(this._currentFile)}`);
             if (!response.ok) return;
 
             const data = await response.json();
             this._fileMtime = data.mtime;
 
             // Update editor without triggering save
-            this._skipSave = true;
+            this._skipSave = { filename: this._currentFile, content: data.content };
             this.editor.setValue(data.content);
 
             // Clear any pending debounce and render immediately
@@ -1205,6 +1208,22 @@ class CADEditor {
         this._newFileInput = document.getElementById('new-file-input');
         this._createFileBtn = document.getElementById('create-file-btn');
         this._resetFileBtn = document.getElementById('reset-file-btn');
+
+        this._fileSort = document.getElementById('file-sort');
+        this._fileSearch = document.getElementById('file-search');
+        const savedSort = localStorage.getItem('cad-file-sort');
+        if (['recent', 'name', 'name-desc'].includes(savedSort)) this._fileSort.value = savedSort;
+        this._fileSort.addEventListener('change', () => {
+            localStorage.setItem('cad-file-sort', this._fileSort.value);
+            this._renderFileList();
+        });
+        this._fileSearch.addEventListener('input', () => this._renderFileList());
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && this._fileDropdown.classList.contains('open')) {
+                this._closeFileDropdown();
+                this._fileSelectorBtn.focus();
+            }
+        });
 
         // Toggle dropdown on button click
         this._fileSelectorBtn.addEventListener('click', (e) => {
@@ -1243,12 +1262,15 @@ class CADEditor {
     async _openFileDropdown() {
         this._fileSelectorBtn.classList.add('open');
         this._fileDropdown.classList.add('open');
+        this._fileSelectorBtn.setAttribute('aria-expanded', 'true');
+        this._fileSearch.focus();
         await this._loadFileList();
     }
 
     _closeFileDropdown() {
         this._fileSelectorBtn.classList.remove('open');
         this._fileDropdown.classList.remove('open');
+        this._fileSelectorBtn.setAttribute('aria-expanded', 'false');
     }
 
     async _loadFileList() {
@@ -1262,11 +1284,15 @@ class CADEditor {
 
             const data = await response.json();
             this._availableFiles = data.files || [];
-
+            this._fileMetadata = new Map((data.models || []).map(model => [model.filename, model]));
             this._renderFileList();
         } catch (error) {
             console.error('Failed to load file list:', error);
-            this._fileList.innerHTML = '<div class="file-item">Error loading files</div>';
+            this._fileList.replaceChildren();
+            const message = document.createElement('p');
+            message.className = 'file-browser-empty';
+            message.textContent = 'Could not load models. Close and reopen to retry.';
+            this._fileList.append(message);
         }
     }
 
@@ -1285,21 +1311,68 @@ class CADEditor {
             }
         }
 
+        this._fileMetadata = new Map(this._availableFiles.map(filename => {
+            const metadata = JSON.parse(localStorage.getItem(`cad-preview:${filename}`) || 'null');
+            const content = localStorage.getItem(`cad-standalone-${filename}`) ?? examples[filename];
+            return [filename, metadata?.content === content ? metadata : { filename }];
+        }));
         this._renderFileList();
     }
 
     _renderFileList() {
-        this._fileList.innerHTML = '';
-        for (const filename of this._availableFiles) {
-            const item = document.createElement('div');
+        this._fileList.replaceChildren();
+        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+        const query = this._fileSearch.value.trim().toLocaleLowerCase();
+        const files = this._availableFiles.filter(filename => filename.toLocaleLowerCase().includes(query));
+        const sort = this._fileSort.value;
+        files.sort((a, b) => {
+            const byName = collator.compare(a, b) || a.localeCompare(b);
+            if (sort === 'recent') {
+                return ((this._fileMetadata.get(b)?.mtime || 0) - (this._fileMetadata.get(a)?.mtime || 0)) || byName;
+            }
+            return sort === 'name-desc' ? -byName : byName;
+        });
+        document.getElementById('file-count').textContent = `${files.length} of ${this._availableFiles.length} models`;
+        if (!files.length) {
+            const empty = document.createElement('p');
+            empty.className = 'file-browser-empty';
+            empty.textContent = query ? 'No matching models.' : 'No models yet. Create one below.';
+            this._fileList.append(empty);
+        }
+        for (const filename of files) {
+            const metadata = this._fileMetadata.get(filename) || {};
+            const item = document.createElement('button');
+            item.type = 'button';
             item.className = 'file-item' + (filename === this._currentFile ? ' active' : '');
-            item.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                </svg>
-                <span>${filename}</span>
-            `;
+            item.dataset.filename = filename;
+            item.title = filename;
+            item.setAttribute('aria-label', `Open ${filename}`);
+            item.setAttribute('aria-current', filename === this._currentFile ? 'true' : 'false');
+            const preview = document.createElement('span');
+            preview.className = 'file-preview-area';
+            preview.textContent = 'Render to preview';
+            if (metadata.thumbnail) {
+                const image = document.createElement('img');
+                image.className = 'file-preview';
+                image.alt = `Preview of ${filename}`;
+                image.loading = 'lazy';
+                image.width = image.height = 192;
+                image.src = appUrl(metadata.thumbnail);
+                image.addEventListener('error', () => { preview.textContent = 'Preview unavailable'; });
+                preview.replaceChildren(image);
+            }
+            const name = document.createElement('span');
+            name.className = 'file-name';
+            name.textContent = filename;
+            const modified = document.createElement('time');
+            if (metadata.mtime) {
+                const date = new Date(metadata.mtime * 1000);
+                modified.dateTime = date.toISOString();
+                modified.textContent = date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+            } else {
+                modified.textContent = 'Not saved yet';
+            }
+            item.append(preview, name, modified);
             item.addEventListener('click', () => this._selectFile(filename));
             this._fileList.appendChild(item);
         }
@@ -1316,7 +1389,7 @@ class CADEditor {
         }
 
         try {
-            const response = await fetch(`/api/models/${filename}`);
+            const response = await fetch(`/api/models/${encodeURIComponent(filename)}`);
             if (!response.ok) throw new Error(`Failed to load ${filename}`);
 
             const data = await response.json();
@@ -1403,7 +1476,7 @@ result;
         }
 
         try {
-            const response = await fetch(`/api/models/${filename}`, {
+            const response = await fetch(`/api/models/${encodeURIComponent(filename)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content: templateContent })
@@ -1430,44 +1503,77 @@ result;
         }
     }
 
-    async _saveFile() {
-        if (!this._currentFile) return;
-
-        // Skip save if file update came from agent
-        if (this._skipSave) {
-            this._skipSave = false;
-            return;
-        }
-
-        if (STANDALONE) {
-            // Save to localStorage
-            const content = this.editor.getValue();
-            localStorage.setItem(`cad-standalone-${this._currentFile}`, content);
-            return;
-        }
-
+    async _saveRenderedFile(source, requestId) {
+        if (!source?.filename || source.filename !== this._currentFile || source.content !== this.editor.getValue()) return;
         try {
-            const content = this.editor.getValue();
-            this._lastSaveTime = Date.now();
-            const response = await fetch(`/api/models/${this._currentFile}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content })
-            });
-
-            if (response.ok) {
-                // Update our known mtime to avoid triggering hot reload
-                const mtimeResponse = await fetch(`/api/models/${this._currentFile}/mtime`);
-                if (mtimeResponse.ok) {
-                    const data = await mtimeResponse.json();
-                    this._fileMtime = data.mtime;
-                }
+            let metadata;
+            if (STANDALONE) {
+                const key = `cad-standalone-${source.filename}`;
+                const previous = localStorage.getItem(key);
+                const cached = JSON.parse(localStorage.getItem(`cad-preview:${source.filename}`) || 'null');
+                localStorage.setItem(key, source.content);
+                metadata = cached?.content === source.content ? cached : {
+                    filename: source.filename, content: source.content, mtime: Date.now() / 1000,
+                    revision: source.content, thumbnail: null
+                };
+                if (previous !== source.content) metadata.mtime = Date.now() / 1000;
             } else {
-                console.warn('Failed to save file:', response.statusText);
+                const skipSave = this._skipSave?.filename === source.filename && this._skipSave.content === source.content;
+                this._skipSave = null;
+                this._lastSaveTime = Date.now();
+                const response = await fetch(`/api/models/${encodeURIComponent(source.filename)}`, skipSave ? {} : {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: source.content })
+                });
+                if (!response.ok) throw new Error(`Save failed: HTTP ${response.status}`);
+                metadata = await response.json();
+                if (skipSave && metadata.content !== source.content) return;
+                if (this._currentFile === source.filename) this._fileMtime = metadata.mtime;
             }
+            this._fileMetadata.set(source.filename, metadata);
+            if (metadata.thumbnail) return;
+            this._scheduleThumbnail(source, metadata, requestId);
         } catch (error) {
-            console.warn('Failed to save file:', error);
+            console.warn(`Could not save ${source.filename}:`, error);
         }
+    }
+
+    _scheduleThumbnail(source, metadata, requestId) {
+        const key = `${source.filename}:${metadata.revision}`;
+        const alreadyScheduled = this._previewJobs.has(key);
+        this._previewJobs.set(key, requestId);
+        if (alreadyScheduled) return;
+        const capture = async () => {
+            try {
+                // Never associate a newer mesh or a different file with this saved source.
+                if (this._previewJobs.get(key) !== this._renderRequestId || this._currentFile !== source.filename ||
+                    this.editor.getValue() !== source.content || this._isRendering) return;
+                const thumbnail = this.viewer.captureThumbnail();
+                if (!thumbnail) return;
+                if (STANDALONE) {
+                    metadata.thumbnail = thumbnail;
+                    localStorage.setItem(`cad-preview:${source.filename}`, JSON.stringify(metadata));
+                } else {
+                    const binary = atob(thumbnail.split(',')[1]);
+                    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+                    const response = await fetch(`/api/models/${encodeURIComponent(source.filename)}/thumbnail?revision=${metadata.revision}`, {
+                        method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: bytes
+                    });
+                    if (response.status === 409) return;
+                    if (!response.ok) throw new Error(`Preview save failed: HTTP ${response.status}`);
+                    metadata = await response.json();
+                }
+                this._fileMetadata.set(source.filename, metadata);
+                if (this._fileDropdown.classList.contains('open')) this._renderFileList();
+            } catch (error) {
+                console.warn(`Could not cache preview for ${source.filename}:`, error);
+            } finally {
+                this._previewJobs.delete(key);
+            }
+        };
+        if ('requestIdleCallback' in window) window.requestIdleCallback(capture, { timeout: 2000 });
+        else setTimeout(capture, 0);
     }
 
     _onCodeChange() {
@@ -1581,6 +1687,7 @@ result;
         if (!this._workerReady || this._isRendering) return;
 
         this._isRendering = true;
+        this._renderSource = { filename: this._currentFile, content: code };
         this._renderRequestId++;
         this._clearConsole(); // Clear console for new render
         this._setStatus('loading', 'Compiling...');
@@ -2152,7 +2259,7 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
 
             // Apply the change and wait for the resulting render to settle.
             const settled = this._nextRenderResult();
-            this._skipSave = true; // The change originates from the assistant.
+            this._skipSave = { filename: this._currentFile, content: result.new_content };
             this.editor.setValue(result.new_content);
             const outcome = await settled;
 

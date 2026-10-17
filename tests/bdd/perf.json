@@ -1,0 +1,196 @@
+{
+  "last_run": "2026-10-17T21:34:12.180535+00:00",
+  "total_duration_ms": 116890,
+  "scenarios": {
+    "file_browser.feature::Reach the CAD editor from the application root": {
+      "duration_ms": 9164,
+      "history": [
+        6201,
+        5589,
+        4256,
+        4935,
+        8349,
+        19052,
+        29277,
+        7725,
+        6011,
+        9164
+      ]
+    },
+    "file_browser.feature::Open the file browser panel": {
+      "duration_ms": 9164,
+      "history": [
+        6201,
+        5589,
+        4256,
+        4935,
+        8349,
+        19052,
+        29277,
+        7725,
+        6011,
+        9164
+      ]
+    },
+    "file_browser.feature::Example models without previews invite a render": {
+      "duration_ms": 18,
+      "history": [
+        5058,
+        10,
+        11,
+        15,
+        70,
+        150,
+        260,
+        23,
+        18
+      ]
+    },
+    "file_browser.feature::Create a new model from the browser": {
+      "duration_ms": 5375,
+      "history": [
+        5793,
+        6303,
+        5368,
+        9661,
+        10663,
+        5772,
+        6541,
+        5375
+      ]
+    },
+    "file_browser.feature::A successful render caches a transparent thumbnail": {
+      "duration_ms": 5375,
+      "history": [
+        5793,
+        6303,
+        5368,
+        9661,
+        10663,
+        5772,
+        6541,
+        5375
+      ]
+    },
+    "file_browser.feature::Editing a model refreshes its cached thumbnail once": {
+      "duration_ms": 5375,
+      "history": [
+        5793,
+        6303,
+        5368,
+        9661,
+        10663,
+        5772,
+        6541,
+        5375
+      ]
+    },
+    "file_browser.feature::Sort by name uses natural alphabetical order": {
+      "duration_ms": 10932,
+      "history": [
+        1960,
+        6309,
+        10337,
+        11631,
+        18857,
+        8944,
+        12115,
+        10932
+      ]
+    },
+    "file_browser.feature::Reverse name sort lists Z to A": {
+      "duration_ms": 10932,
+      "history": [
+        1960,
+        6309,
+        10337,
+        11631,
+        18857,
+        8944,
+        12115,
+        10932
+      ]
+    },
+    "file_browser.feature::Sort by recent lists newest modified first": {
+      "duration_ms": 10932,
+      "history": [
+        1960,
+        6309,
+        10337,
+        11631,
+        18857,
+        8944,
+        12115,
+        10932
+      ]
+    },
+    "file_browser.feature::Sort preference persists across reload": {
+      "duration_ms": 41521,
+      "history": [
+        35485,
+        95390,
+        91754,
+        38320,
+        52712,
+        41521
+      ]
+    },
+    "file_browser.feature::Search filters filenames and updates the count": {
+      "duration_ms": 431,
+      "history": [
+        1163,
+        396,
+        1650,
+        431
+      ]
+    },
+    "file_browser.feature::Escape closes the panel and refocuses the selector": {
+      "duration_ms": 164,
+      "history": [
+        30740,
+        136,
+        506,
+        164
+      ]
+    },
+    "file_browser.feature::Clicking outside closes the panel": {
+      "duration_ms": 164,
+      "history": [
+        30740,
+        136,
+        506,
+        164
+      ]
+    },
+    "file_browser.feature::Selecting a card loads the model and persists across reload": {
+      "duration_ms": 24808,
+      "history": [
+        34808,
+        27948,
+        24808
+      ]
+    },
+    "file_browser.feature::A failed render keeps the last saved preview and source": {
+      "duration_ms": 23774,
+      "history": [
+        21486,
+        31791,
+        23774
+      ]
+    },
+    "file_browser.feature::Reopening an unchanged model reuses its cached preview": {
+      "duration_ms": 668,
+      "history": [
+        1304,
+        668
+      ]
+    },
+    "file_browser.feature::Browsing and sorting never re-render models": {
+      "duration_ms": 35,
+      "history": [
+        152,
+        35
+      ]
+    }
+  }
+}

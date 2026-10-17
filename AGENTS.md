@@ -26,3 +26,11 @@ greenline never discards commits on `master`.
 
 Diagnose with `greenline status` and `greenline doctor` (`--fix` to reconcile).
 <!-- <<< greenline <<< -->
+
+## Model browser and preview cache
+
+- `static/file-browser.css` styles the searchable model grid. Its URL in `static/editor.html` contains the CSS SHA-256 prefix; `src/startup_path_test.py` enforces the match and standalone packaging.
+- Successful renders save an exact filename/source snapshot, then create a 192px transparent PNG during browser idle time. `CADViewer.captureThumbnail()` uses an isolated mesh-only render target, sRGB output and linear-space alpha correction without changing the viewport.
+- `src/model_preview.py` stores immutable source-SHA256 PNGs in `local/model-previews/`, outside the models git repository. Unchanged saves retain source mtime and cached previews; stale uploads return 409. Existing files acquire previews when next successfully rendered.
+- Browser scenarios live in `tests/bdd/features/file_browser.feature` and run through `src/file_browser_test.py`; real color/scheduling/save-race integrations live in `src/preview_race_test.py`. The test server uses the test-harness-only `DAZCAD_MODELS_DIR` and file-backed logs under `output/testing/`. Never capture an active uvicorn server in unread PIPE streams, which can block request handling when logs fill the pipe.
+- Local release selection includes committed, dirty and untracked paths, so `./run check` covers edits before the first commit. Every check retains the browser, preview, worker/export and affected geometry coverage.

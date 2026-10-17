@@ -765,6 +765,7 @@
         }
     </style>
     <link rel="stylesheet" href="/static/joinery-ui.css">
+    <link rel="stylesheet" href="/static/file-browser.css?v=724b1078bf12" data-app-style="file-browser.css">
     <!-- Dynamic import map with cache busters for local modules -->
     <script>
         const cacheBuster = `?v=${Date.now()}`;
@@ -773,6 +774,8 @@
         const appBase = (location.pathname.match(/^(\/proxy\/[^/]+)(?:\/|$)/) || ['', ''])[1];
         const joineryCss = document.querySelector('link[href="/static/joinery-ui.css"]');
         if (joineryCss) joineryCss.href = `${appBase}/static/joinery-ui.css`;
+        const browserCss = document.querySelector('[data-app-style="file-browser.css"]');
+        if (browserCss && appBase) browserCss.href = `${appBase}${browserCss.getAttribute('href')}`;
         window.__cacheBuster = cacheBuster;
         window.__dazCadBase = appBase;
         const localStatic = (path) => `${appBase}${path}${cacheBuster}`;
@@ -804,7 +807,7 @@
         <div class="editor-pane">
             <div class="editor-header">
                 <div class="file-selector">
-                    <button id="file-selector-btn" class="file-selector-btn">
+                    <button id="file-selector-btn" class="file-selector-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="file-dropdown">
                         <span id="filename-display">loading...</span>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="6 9 12 15 18 9"></polyline>
@@ -816,8 +819,21 @@
                             <path d="M3 3v5h5"/>
                         </svg>
                     </button>
-                    <div id="file-dropdown" class="file-dropdown">
-                        <div id="file-list" class="file-list"></div>
+                    <div id="file-dropdown" class="file-dropdown" role="dialog" aria-labelledby="file-browser-title">
+                        <div class="file-browser-heading">
+                            <h2 id="file-browser-title">Your models</h2>
+                            <span id="file-count" aria-live="polite"></span>
+                        </div>
+                        <div class="file-browser-tools">
+                            <label>Find a model<input id="file-search" type="search" placeholder="Search filenames" autocomplete="off"></label>
+                            <label>Sort by<select id="file-sort">
+                                <option value="recent">Most recent first</option>
+                                <option value="name">Name A-Z</option>
+                                <option value="name-desc">Name Z-A</option>
+                            </select></label>
+                        </div>
+                        <div id="file-list" class="file-list" aria-label="Models"></div>
+                        <p class="file-browser-note">Previews are cached after a successful render. Unrendered models get a preview when you open them.</p>
                         <div class="file-create">
                             <input type="text" id="new-file-input" placeholder="new-model.js">
                             <button id="create-file-btn">Create</button>

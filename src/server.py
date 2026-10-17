@@ -18,11 +18,13 @@ from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.agentd3_chat import Agentd3Chat
+from src.model_preview import MAX_PNG_BYTES, ModelPreviews
+from src.model_preview import model_path as preview_model_path
 
 PORT = 8766
 BASE_DIR = Path(__file__).parent.parent
 WATCH_DIR = BASE_DIR / "static"
-MODELS_DIR = BASE_DIR / "local" / "models"
+MODELS_DIR = Path(os.environ.get("DAZCAD_MODELS_DIR", BASE_DIR / "local" / "models"))
 EXAMPLES_DIR = BASE_DIR / "examples"
 DEFAULT_FILE = "default.js"
 
@@ -319,68 +321,114 @@ class ChatMessageRequest(BaseModel):
 
 
 # ##################################################################
+# checked model path
+# use one strict rule for source and preview operations
+def checked_model_path(filename: str) -> Path:
+    try:
+        return preview_model_path(MODELS_DIR, filename)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+# ##################################################################
+# model metadata
+# translate missing models without exposing filesystem failures as successful reads
+def model_metadata(filename: str, content: bytes | None = None) -> dict:
+    checked_model_path(filename)
+    try:
+        return ModelPreviews(MODELS_DIR).metadata(filename, content)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}") from error
+
+
+# ##################################################################
 # get model file
-# loads a model file from the models directory
+# source and revision come from the same read
 @app.get("/api/models/{filename}")
 async def get_model(filename: str):
-    if not filename.endswith(".js"):
-        raise HTTPException(status_code=400, detail="Only .js files allowed")
-
-    safe_name = Path(filename).name
-    file_path = MODELS_DIR / safe_name
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-
-    content = file_path.read_text()
-    mtime = file_path.stat().st_mtime
-    return {"filename": safe_name, "content": content, "mtime": mtime}
+    path = checked_model_path(filename)
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}") from error
+    return {**model_metadata(filename, content), "content": content.decode("utf-8")}
 
 
 # ##################################################################
 # get model file modification time
-# returns only the modification time for polling
+# preserves polling protocol with strict filename validation
 @app.get("/api/models/{filename}/mtime")
 async def get_model_mtime(filename: str):
-    if not filename.endswith(".js"):
-        raise HTTPException(status_code=400, detail="Only .js files allowed")
-
-    safe_name = Path(filename).name
-    file_path = MODELS_DIR / safe_name
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-
-    mtime = file_path.stat().st_mtime
-    return {"filename": safe_name, "mtime": mtime}
+    metadata = model_metadata(filename)
+    return {"filename": filename, "mtime": metadata["mtime"]}
 
 
 # ##################################################################
 # save model file
-# saves content to a model file in the models directory
+# unchanged source keeps its real modification time and cached preview
 @app.post("/api/models/{filename}")
 async def save_model(filename: str, request: FileSaveRequest):
-    if not filename.endswith(".js"):
-        raise HTTPException(status_code=400, detail="Only .js files allowed")
-
-    safe_name = Path(filename).name
-    file_path = MODELS_DIR / safe_name
-
-    file_path.write_text(request.content)
-
-    # commit changes with AI-generated message
-    asyncio.create_task(commit_changes(safe_name))
-
-    return {"filename": safe_name, "saved": True}
+    path = checked_model_path(filename)
+    content = request.content.encode("utf-8")
+    if not path.exists() or path.read_bytes() != content:
+        path.write_bytes(content)
+        asyncio.create_task(commit_changes(filename))
+    return {**model_metadata(filename), "saved": True}
 
 
 # ##################################################################
 # list model files
-# returns list of available model files
+# retain legacy files while adding revision-bound preview metadata
 @app.get("/api/models")
 async def list_models():
-    files = sorted([f.name for f in MODELS_DIR.glob("*.js")])
-    return {"files": files, "default": DEFAULT_FILE}
+    files = []
+    for path in sorted(MODELS_DIR.glob("*.js")):
+        try:
+            preview_model_path(MODELS_DIR, path.name)
+        except ValueError:
+            continue
+        files.append(path.name)
+    return {"files": files, "default": DEFAULT_FILE, "models": [model_metadata(name) for name in files]}
+
+
+# ##################################################################
+# get thumbnail
+# old immutable revisions remain readable after a source edit
+@app.get("/api/models/{filename}/thumbnail")
+async def get_thumbnail(filename: str, revision: str):
+    checked_model_path(filename)
+    try:
+        path = ModelPreviews(MODELS_DIR).path(revision)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Preview not found: {revision}")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+# ##################################################################
+# put thumbnail
+# bounded raw uploads are accepted only for the current source revision
+@app.put("/api/models/{filename}/thumbnail")
+async def put_thumbnail(filename: str, revision: str, request: Request):
+    metadata = model_metadata(filename)
+    if revision != metadata["revision"]:
+        raise HTTPException(status_code=409, detail=f"Stale model revision: {revision}")
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "image/png":
+        raise HTTPException(status_code=415, detail=f"Expected image/png for {filename}")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_PNG_BYTES:
+            raise HTTPException(status_code=413, detail=f"Preview exceeds {MAX_PNG_BYTES} bytes")
+        data.extend(chunk)
+    if model_metadata(filename)["revision"] != revision:
+        raise HTTPException(status_code=409, detail=f"Source changed during preview upload: {filename}")
+    try:
+        ModelPreviews(MODELS_DIR).put(revision, bytes(data))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return model_metadata(filename)
+
 
 
 # ##################################################################

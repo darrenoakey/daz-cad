@@ -14,6 +14,7 @@ DAZ-CAD is a web-based CAD application that allows you to create and edit 3D mod
 - Export to Bambu Lab-compatible 3MF files for direct printing
 - Global opacity controls for visualization
 - Built-in Gridfinity bin and insert generator
+- Scrollable model browser with transparent previews, filename search, and name/date sorting
 
 ## Documentation
 
@@ -43,6 +44,12 @@ This installs Python dependencies, development tools, and the Playwright browser
 ```
 
 The server starts at `http://127.0.0.1:8766`. Open this URL in your browser to access the CAD editor.
+
+### Browsing models
+
+Click the filename in the editor header to open the model grid. Search filenames or sort by most recent, A-Z, or Z-A. The browser remembers the sort order.
+
+A successful render saves a small transparent preview in the background. Opening or sorting the grid reuses that image without compiling the model. Existing files get their first preview when opened and rendered. Previews persist across server restarts in `local/model-previews/`, outside the models git repository.
 
 ### Running Tests
 

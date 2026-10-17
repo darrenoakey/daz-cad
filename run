@@ -128,6 +128,9 @@ GATE_TESTS = [
     "src/joinery_kernel_test.py",
     "src/joinery_test.py",
     "src/joinery_ui_test.py",
+    "src/model_preview_test.py",
+    "src/file_browser_test.py",
+    "src/preview_race_test.py",
 ]
 
 
@@ -140,7 +143,16 @@ def _candidate_paths() -> list[str]:
             check=False,
         )
         if result.returncode == 0:
-            return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            paths = set(result.stdout.splitlines())
+            for command in (
+                ["git", "diff", "--name-only", "HEAD", "--"],
+                ["git", "ls-files", "--others", "--exclude-standard"],
+            ):
+                working = subprocess.run(command, capture_output=True, text=True, check=False)
+                if working.returncode != 0:
+                    raise RuntimeError(f"Cannot determine candidate paths: {working.stderr}")
+                paths.update(working.stdout.splitlines())
+            return sorted(path for path in paths if path)
     return []
 
 
@@ -158,6 +170,9 @@ def _selected_gate_tests(paths: list[str]) -> list[str]:
         selected.extend(
             [
                 "src/startup_path_test.py",
+                "src/model_preview_test.py",
+                "src/file_browser_test.py",
+                "src/preview_race_test.py",
                 "src/server_test.py::test_chat_job_unknown",
                 "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
                 "src/joinery_kernel_test.py",
@@ -182,6 +197,11 @@ def command_check(_: argparse.Namespace) -> int:
             "--line-length",
             "120",
             "src/startup_path_test.py",
+            "src/model_preview.py",
+            "src/model_preview_test.py",
+            "src/file_browser_test.py",
+            "src/preview_race_test.py",
+            "src/conftest.py",
             "src/server_test.py",
             "src/joinery_kernel_test.py",
             "src/joinery_test.py",
@@ -208,7 +228,7 @@ def command_check(_: argparse.Namespace) -> int:
                 if not targets:
                     continue
                 result = subprocess.call(
-                    [_venv_python(), "-m", "pytest", "-q", "--durations=10"] + targets,
+                    [_venv_python(), "-m", "pytest", "-v", "--maxfail=1", "--durations=10"] + targets,
                     stdout=stream,
                     stderr=subprocess.STDOUT,
                 )

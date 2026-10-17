@@ -42,6 +42,10 @@ def server(server_port, tmp_path_factory):
     import os
 
     state_path = tmp_path_factory.mktemp("agentd3-state") / "agentd3-chat.json"
+    models_path = tmp_path_factory.mktemp("cad-models") / "models"
+    log_path = project_root / "output" / "testing" / f"server-{server_port}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_stream = log_path.open("w")
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -54,10 +58,11 @@ def server(server_port, tmp_path_factory):
             str(server_port),
         ],
         cwd=project_root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_stream,
+        stderr=subprocess.STDOUT,
         env={
             **os.environ,
+            "DAZCAD_MODELS_DIR": str(models_path),
             "DAZCAD_AGENTD3_STATE": str(state_path),
             "DAZCAD_AGENTD3_SOURCE": "daz-cad-test",
             "DAZCAD_AGENTD3_MODEL": "agentic-low",
@@ -77,7 +82,8 @@ def server(server_port, tmp_path_factory):
         time.sleep(0.5)
     else:
         proc.terminate()
-        raise RuntimeError(f"Server failed to start on port {server_port}: {last_error}")
+        log_stream.close()
+        raise RuntimeError(f"Server failed to start on port {server_port}: {last_error}; log={log_path}")
 
     yield server_url
 
@@ -87,6 +93,7 @@ def server(server_port, tmp_path_factory):
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=2)
+    log_stream.close()
 
 
 # ##################################################################

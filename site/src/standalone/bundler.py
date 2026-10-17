@@ -81,6 +81,7 @@ def _bust_js(content: str, build_hash: str) -> str:
 JS_FILES = [
     "cad.js",
     "editor.js",
+    "app-base.js",
     "viewer.js",
     "patterns.js",
     "naming.js",
@@ -94,6 +95,7 @@ JS_FILES = [
 
 CSS_FILES = [
     "joinery-ui.css",
+    "file-browser.css",
 ]
 
 FONT_FILES = [
@@ -167,6 +169,12 @@ def _build_editor_html(source_html: str, examples: dict[str, str], build_hash: s
     html = html.replace(
         'href="/static/joinery-ui.css"',
         f'href="./static/joinery-ui.css?v={build_hash}"',
+    )
+
+    html = re.sub(
+        r'href="/static/file-browser\.css\?v=[^"]+"',
+        f'href="./static/file-browser.css?v={build_hash}"',
+        html,
     )
 
     # Remove the hot reload script
