@@ -182,6 +182,98 @@ async def test_reuse_across_restart(tmp_path: Path):
 
 
 # ##################################################################
+# restarting front relay
+# a real ASGI relay in front of the real test daemon that reproduces what the
+# agentd3 front proxy did during a 2026-10-17 deploy: its restart cancelled
+# an in-flight events long-poll and answered 200 with an EMPTY body, and a
+# front mid-restart answers 503. the first event polls get those answers,
+# every other request is relayed to the daemon untouched
+class RestartingFrontRelay:
+    def __init__(self, upstream: str, interrupted_polls: list[tuple[int, bytes]]) -> None:
+        self.upstream = upstream
+        self.interrupted_polls = list(interrupted_polls)
+        self.interrupted_count = 0
+        self.upstream_http = httpx.AsyncClient(timeout=httpx.Timeout(70.0, connect=10.0))
+
+    async def __call__(self, scope, receive, send) -> None:
+        assert scope["type"] == "http"
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if not message.get("more_body"):
+                break
+        is_event_poll = scope["method"] == "GET" and b"after=" in scope["query_string"]
+        if is_event_poll and self.interrupted_polls:
+            status, interrupted_body = self.interrupted_polls.pop(0)
+            self.interrupted_count += 1
+            await self.respond(send, status, interrupted_body)
+            return
+        url = self.upstream + scope["path"]
+        if scope["query_string"]:
+            url += "?" + scope["query_string"].decode()
+        headers = {"content-type": "application/json"} if body else {}
+        upstream_response = await self.upstream_http.request(scope["method"], url, content=body, headers=headers)
+        await self.respond(send, upstream_response.status_code, upstream_response.content)
+
+    async def respond(self, send, status: int, body: bytes) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
+# ##################################################################
+# test turn survives a front restart mid long-poll
+# an empty-bodied 200 and a 503 on the events long-poll are the transport
+# path restarting, not a daemon verdict: the chat must keep polling and
+# still return its own reply instead of failing the user's message
+async def test_turn_survives_front_restart_mid_poll(tmp_path: Path):
+    state_path = tmp_path / "agentd3-chat.json"
+    chat = make_chat(state_path)
+    relay = RestartingFrontRelay(
+        DAEMON_BASE_URL,
+        [(200, b""), (503, b'{"error":"agentd3 front shutting down; retry"}')],
+    )
+    await chat.http.aclose()
+    chat.http = httpx.AsyncClient(transport=httpx.ASGITransport(app=relay), timeout=httpx.Timeout(70.0))
+    conversation_id = ""
+    try:
+        reply = await chat.send_message("Reply with exactly the word MANGO and nothing else.")
+        conversation_id = conversation_id_of(state_path)
+        assert "MANGO" in reply.upper()
+        assert relay.interrupted_count == 2
+    finally:
+        await chat.close()
+        await relay.upstream_http.aclose()
+        archive_conversation(conversation_id)
+
+
+# ##################################################################
+# test reads fail loudly once the retry window is spent
+# a daemon path that never recovers must surface an error naming the cause,
+# never hang or report success
+async def test_read_fails_loudly_after_retry_window(tmp_path: Path):
+    state_path = tmp_path / "agentd3-chat.json"
+    chat = make_chat(state_path)
+    chat.read_retry_seconds = 2.0
+    relay = RestartingFrontRelay(DAEMON_BASE_URL, [(200, b"")] * 50)
+    await chat.http.aclose()
+    chat.http = httpx.AsyncClient(transport=httpx.ASGITransport(app=relay), timeout=httpx.Timeout(70.0))
+    try:
+        with pytest.raises(Agentd3ChatError, match="non-JSON response.*still failing after retrying"):
+            await chat.poll_events("conv-0000000000000000dead", 0, wait_seconds=0)
+        assert 2 <= relay.interrupted_count < 50
+    finally:
+        await chat.close()
+        await relay.upstream_http.aclose()
+
+
+# ##################################################################
 # test fail closed when stored identity is absent remotely
 # a stored conversation that no longer exists on the daemon must raise, never
 # silently create a replacement

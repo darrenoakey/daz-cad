@@ -22,6 +22,17 @@ class Agentd3ChatError(Exception):
 
 
 # ##################################################################
+# agentd3 transient error
+# the transport path to the daemon failed rather than the daemon answering:
+# unreachable, a body that is not JSON (the front proxy restarting mid
+# long-poll answered 200 with an empty body), or a 502/503/504 from the front
+# while a blue/green flip or restart is in progress. reads retry these for a
+# bounded window; writes never do
+class Agentd3TransientError(Agentd3ChatError):
+    pass
+
+
+# ##################################################################
 # defaults
 # stable base configuration; machine-local overrides live in local/config.toml
 DEFAULT_BASE_URL = "http://127.0.0.1:8620"
@@ -38,6 +49,13 @@ DEFAULT_TIMEOUT_SECONDS = None
 DEFAULT_SETTLE_TIMEOUT_SECONDS = 300.0
 EVENT_POLL_WAIT_SECONDS = 25.0
 SETTLE_POLL_WAIT_SECONDS = 10.0
+# GETs are idempotent (the event cursor makes a re-poll return the same
+# events), so a read that hits a deploy-time front/daemon restart is retried
+# with backoff for this long before the failure is surfaced to the user
+DEFAULT_READ_RETRY_SECONDS = 120.0
+READ_RETRY_INITIAL_DELAY_SECONDS = 0.5
+READ_RETRY_MAX_DELAY_SECONDS = 5.0
+TRANSIENT_READ_STATUSES = frozenset({502, 503, 504})
 STATE_FILE_NAME = "agentd3-chat.json"
 STATE_SCHEMA_VERSION = 1
 CONVERSATION_SOURCE = "daz-cad"
@@ -251,6 +269,7 @@ class Agentd3Chat:
         raw_timeout = merged.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
         self.timeout_seconds = float(raw_timeout) if raw_timeout else None
         self.settle_timeout_seconds = float(merged.get("settle_timeout_seconds", DEFAULT_SETTLE_TIMEOUT_SECONDS))
+        self.read_retry_seconds = float(merged.get("read_retry_seconds", DEFAULT_READ_RETRY_SECONDS))
         self.source = str(merged.get("source", CONVERSATION_SOURCE))
         self.base_dir = base_dir.resolve()
         self.state_path = state_path if state_path else base_dir / "local" / STATE_FILE_NAME
@@ -281,18 +300,51 @@ class Agentd3Chat:
 
     # ##################################################################
     # request json
-    # one place for agentd3 http calls with agentd3-specific failure context
+    # one place for agentd3 http calls with agentd3-specific failure context.
+    # reads ride out transient transport failures (a front or daemon restart
+    # during a deploy) for a bounded window, then fail loudly; writes are sent
+    # exactly once because a blind replay could double-apply them
     async def request_json(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        if method != "GET":
+            return await self.request_json_once(method, path, body)
+        deadline = time.monotonic() + self.read_retry_seconds
+        delay = READ_RETRY_INITIAL_DELAY_SECONDS
+        while True:
+            try:
+                status, payload = await self.request_json_once(method, path, body)
+                if status not in TRANSIENT_READ_STATUSES:
+                    return status, payload
+                failure = Agentd3TransientError(
+                    f"agentd3 daemon unavailable for {method} {path}: HTTP {status} {payload.get('error', '')}"
+                )
+            except Agentd3TransientError as err:
+                failure = err
+            if time.monotonic() + delay > deadline:
+                raise Agentd3ChatError(
+                    f"{failure} (still failing after retrying for {self.read_retry_seconds:.0f}s)"
+                ) from failure
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, READ_RETRY_MAX_DELAY_SECONDS)
+
+    # ##################################################################
+    # request json once
+    # a single http exchange; transport-path failures are typed transient so
+    # request_json can tell them apart from a daemon's real answer
+    async def request_json_once(self, method: str, path: str, body: dict | None) -> tuple[int, dict]:
         try:
             response = await self.http.request(method, self.base_url + path, json=body)
         except httpx.HTTPError as err:
-            raise Agentd3ChatError(f"cannot reach the agentd3 daemon at {self.base_url}: {err}") from err
+            raise Agentd3TransientError(f"cannot reach the agentd3 daemon at {self.base_url}: {err}") from err
         try:
             payload = response.json()
         except ValueError as err:
-            raise Agentd3ChatError(
+            raise Agentd3TransientError(
                 f"agentd3 daemon returned a non-JSON response for {method} {path} (HTTP {response.status_code})"
             ) from err
+        if not isinstance(payload, dict):
+            raise Agentd3ChatError(
+                f"agentd3 daemon returned a non-object JSON response for {method} {path} (HTTP {response.status_code})"
+            )
         return response.status_code, payload
 
     # ##################################################################
