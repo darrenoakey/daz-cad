@@ -1,3 +1,4 @@
+import re
 import socket
 import subprocess
 import sys
@@ -8,6 +9,8 @@ from pathlib import Path
 import httpx
 import pytest
 from playwright.sync_api import sync_playwright
+
+from src.cdn_cache import RecordedBrowser, recorded_resource
 
 
 # ##################################################################
@@ -97,15 +100,41 @@ def server(server_port, tmp_path_factory):
 
 
 # ##################################################################
-# shared browser fixture
-# single chromium instance reused across all tests (WASM compile cache)
+# shared playwright runtime
+# all browser integrations use one sync event loop per pytest process,
+# including cache transport checks after session-scoped CAD pages
 @pytest.fixture(scope="session")
-def shared_browser():
-    pw = sync_playwright().start()
-    browser = pw.chromium.launch(headless=True, args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"])
-    yield browser
-    browser.close()
-    pw.stop()
+def playwright_runtime():
+    with sync_playwright() as runtime:
+        yield runtime
+
+
+# ##################################################################
+# shared browser fixture
+# fresh browser contexts have no shared HTTP cache; record the pinned 50MB OC
+# dependency once, under a cross-process lock, instead of downloading per heap
+@pytest.fixture(scope="session")
+def shared_browser(playwright_runtime):
+    root = Path(__file__).resolve().parents[1]
+    common = subprocess.check_output(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=root, text=True,
+    ).strip()
+    cache = Path(common) / "greenline" / "cdn-cache"
+    source = (root / "static/opencascade.js").read_text()
+    version = re.search(r'OPENCASCADE_VERSION = "([^"]+)"', source).group(1)
+    base = f"https://cdn.jsdelivr.net/npm/opencascade.js@{version}/dist"
+    recordings = {
+        url: recorded_resource(cache, url)
+        for url in (f"{base}/opencascade.full.js", f"{base}/opencascade.full.wasm")
+    }
+    browser = playwright_runtime.chromium.launch(
+        headless=True, args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"],
+    )
+    recorded = RecordedBrowser(browser, recordings)
+    try:
+        yield recorded
+    finally:
+        recorded.close()
 
 
 # ##################################################################

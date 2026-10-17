@@ -221,6 +221,15 @@ def _create_model(page, filename):
 
 
 # ##################################################################
+# reload the document
+# scope in-flight observations to the new document while preserving the full
+# write and preview history, including requests owned by the replaced document.
+def _reload_page(page):
+    page._fb_pending.clear()
+    page.reload(wait_until="domcontentloaded")
+
+
+# ##################################################################
 # type source
 # replaces the whole script through the Monaco surface and waits for the
 # render that follows the debounce to finish
@@ -448,7 +457,7 @@ def test_sort_preference_persists_across_reload(browser_page):
     _open_panel(page)
     page.locator("#file-sort").select_option("name-desc")
     expect(page.locator("#file-sort")).to_have_value("name-desc")
-    page.reload(wait_until="domcontentloaded")
+    _reload_page(page)
     _await_editor_ready(page)
     _open_panel(page)
     expect(page.locator("#file-sort")).to_have_value("name-desc")
@@ -520,7 +529,7 @@ def test_selecting_card_loads_model_and_persists_across_reload(browser_page):
     expect(page.locator("#filename-display")).to_contain_text(first)
     expect(page.locator("#file-dropdown")).not_to_be_visible()
 
-    page.reload(wait_until="domcontentloaded")
+    _reload_page(page)
     _await_editor_ready(page)
     expect(page.locator("#filename-display")).to_contain_text(first, timeout=15000)
 
@@ -552,7 +561,7 @@ def test_failed_render_preserves_saved_preview_and_source(browser_page):
     expect(image).to_be_visible()
     page.wait_for_function("img => img.complete && img.naturalWidth > 0", arg=image.element_handle(), timeout=15000)
 
-    page.reload(wait_until="domcontentloaded")
+    _reload_page(page)
     _await_editor_ready(page)
     expect(page.locator("#filename-display")).to_contain_text(filename, timeout=15000)
     expect(page.locator(".monaco-editor .view-lines")).to_contain_text("box(20, 20, 20)", use_inner_text=True)

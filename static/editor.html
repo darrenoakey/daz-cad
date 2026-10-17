@@ -775,7 +775,9 @@
         const joineryCss = document.querySelector('link[href="/static/joinery-ui.css"]');
         if (joineryCss) joineryCss.href = `${appBase}/static/joinery-ui.css`;
         const browserCss = document.querySelector('[data-app-style="file-browser.css"]');
-        if (browserCss && appBase) browserCss.href = `${appBase}${browserCss.getAttribute('href')}`;
+        if (browserCss && appBase && browserCss.getAttribute('href').startsWith('/static/')) {
+            browserCss.href = `${appBase}${browserCss.getAttribute('href')}`;
+        }
         window.__cacheBuster = cacheBuster;
         window.__dazCadBase = appBase;
         const localStatic = (path) => `${appBase}${path}${cacheBuster}`;

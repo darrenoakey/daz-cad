@@ -59,6 +59,35 @@ for (const [actual, expected] of cases) {
 
 
 # ##################################################################
+# proxy stylesheet prefixing
+# execute the real inline initializer against browser link elements; an HTML
+# proxy may already have rewritten the href before JavaScript starts
+def test_file_browser_stylesheet_prefixing_is_idempotent(server, shared_browser):
+    html = (STATIC / "editor.html").read_text()
+    initializer = re.search(r"const browserCss = .*?\n        }", html, re.DOTALL)
+    assert initializer is not None
+    page = shared_browser.new_page()
+    try:
+        page.goto(server + "/health", wait_until="domcontentloaded")
+        for initial in ("/static/file-browser.css?v=1", "/proxy/daz-cad/static/file-browser.css?v=1"):
+            actual = page.evaluate(
+                """({initializer, initial}) => {
+                    document.querySelector('[data-app-style]')?.remove();
+                    const link = document.createElement('link');
+                    link.dataset.appStyle = 'file-browser.css';
+                    link.setAttribute('href', initial);
+                    document.head.append(link);
+                    new Function('appBase', initializer)('/proxy/daz-cad');
+                    return link.getAttribute('href');
+                }""",
+                {"initializer": initializer.group(), "initial": initial},
+            )
+            assert actual == "/proxy/daz-cad/static/file-browser.css?v=1"
+    finally:
+        page.close()
+
+
+# ##################################################################
 # file browser stylesheet version
 # the checked-in URL must change with CSS bytes rather than remaining a stale literal
 def test_file_browser_stylesheet_version_matches_content():
