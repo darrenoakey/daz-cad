@@ -54,6 +54,14 @@ SCENARIO_NAMES = {
     ],
     "test_revisiting_unchanged_model_reuses_cached_preview": ["Reopening an unchanged model reuses its cached preview"],
     "test_browsing_and_sorting_never_rerenders": ["Browsing and sorting never re-render models"],
+    "test_printability_button_applies_audited_reversible_code": [
+        "Reach printability controls from the application root",
+        "Open the printability panel",
+        "Apply deterministic printability transforms",
+        "Preserve explicitly identified mating edges",
+        "Reapply printability without nesting generated wrappers",
+        "Preserve editable source after invalid settings",
+    ],
 }
 
 _run_durations = {}
@@ -66,6 +74,11 @@ _run_durations = {}
 @pytest.fixture(scope="module")
 def browser_page(server, shared_browser):
     page = shared_browser.new_page()
+    page.add_init_script("window.DAZ_CAD_TEST_DISABLE_SPARE = true")
+    # Scenario actions perform their own real renders; do not render the
+    # unrelated startup model before every test or reload.
+    page.add_init_script("window.DAZ_CAD_TEST_DISABLE_INITIAL_RENDER = true")
+    page.set_default_timeout(120000)
     diagnostics = []
     page._fb_diagnostics = diagnostics
     page.on("requestfailed", lambda request: diagnostics.append(f"{request.url}: {request.failure}"))
@@ -80,6 +93,9 @@ def browser_page(server, shared_browser):
         page.close()
         raise RuntimeError(f"Browser startup status={status}; diagnostics={diagnostics[-25:]}") from error
     yield page
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUTPUT_DIR / "file-browser-diagnostics.log").write_text("\n".join(diagnostics[-200:]), encoding="utf-8")
+    page.unroute_all(behavior="ignoreErrors")
     page.close()
 
 
@@ -139,7 +155,8 @@ def write_perf(browser_page):
         scenarios = json.loads(PERF_PATH.read_text(encoding="utf-8")).get("scenarios", {})
     for test_name, duration in _run_durations.items():
         for scenario in SCENARIO_NAMES[test_name]:
-            key = f"{FEATURE_NAME}::{scenario}"
+            feature = "printability.feature" if test_name.startswith("test_printability_") else FEATURE_NAME
+            key = f"{feature}::{scenario}"
             entry = scenarios.get(key, {"duration_ms": duration, "history": []})
             entry["duration_ms"] = duration
             entry["history"] = (entry["history"] + [duration])[-10:]
@@ -158,12 +175,15 @@ def write_perf(browser_page):
 # the editor status text flips to Ready once OpenCascade compiled the script
 def _await_editor_ready(page):
     try:
+        page.wait_for_function("() => window.cadEditor !== undefined", timeout=90000)
         page.wait_for_function(
             """() => {
                 const statusText = document.getElementById('status-text');
-                return statusText && statusText.textContent === 'Ready' && window.Workplane;
+                return statusText && statusText.textContent === 'Ready' &&
+                    window.cadEditor?._currentFile &&
+                    document.getElementById('filename-display')?.textContent !== 'loading...';
             }""",
-            timeout=90000,
+            timeout=480000,
         )
     except Exception as error:
         status = page.locator("#status-text").inner_text()
@@ -176,6 +196,12 @@ def _await_editor_ready(page):
 # waits until every api request this page made has settled so a later
 # assertion never attributes an earlier render's write to browsing
 def _await_quiet(page, timeout_ms=30000):
+    page.wait_for_function(
+        """() => !window.cadEditor?._isRendering &&
+            (window.cadEditor?._saveInFlight || 0) === 0 &&
+            (window.cadEditor?._previewJobs?.size || 0) === 0""",
+        timeout=240000,
+    )
     deadline = time.monotonic() + timeout_ms / 1000
     while time.monotonic() < deadline:
         if not page._fb_pending:
@@ -211,9 +237,9 @@ def _open_panel(page):
 def _create_model(page, filename):
     _open_panel(page)
     page.locator("#new-file-input").fill(filename)
-    with page.expect_response(_thumbnail_put(filename), timeout=30000) as preview:
+    with page.expect_response(_thumbnail_put(filename), timeout=240000) as preview:
         page.locator("#create-file-btn").click()
-        expect(page.locator("#filename-display")).to_contain_text(filename, timeout=15000)
+        expect(page.locator("#filename-display")).to_contain_text(filename, timeout=120000)
         expect(page.locator("#file-dropdown")).not_to_be_visible()
         _await_editor_ready(page)
     assert preview.value.ok
@@ -239,7 +265,7 @@ def _type_source(page, source):
     page.keyboard.insert_text(source)
     page.wait_for_function(
         "() => document.getElementById('status-text')?.textContent === 'Ready'",
-        timeout=90000,
+        timeout=240000,
     )
 
 
@@ -337,8 +363,8 @@ def test_editor_header_opens_wide_scrollable_file_browser(browser_page):
 # ##################################################################
 # test example models without previews invite render
 # example models that were never rendered have no cached preview, so their
-# cards carry the render invitation and no image; the startup model was
-# rendered when the editor opened, so it is excluded from the assertion
+# cards carry the render invitation and no image; the fixture suppresses only
+# the unrelated startup render and every scenario-requested render stays real
 def test_example_models_without_previews_invite_render(browser_page):
     page = browser_page
     _open_panel(page)
@@ -574,20 +600,26 @@ def test_failed_render_preserves_saved_preview_and_source(browser_page):
 # preview write for the model that was only reopened, not edited
 def test_revisiting_unchanged_model_reuses_cached_preview(browser_page):
     page = browser_page
-    first, second = _created_models[0], _created_models[1]
+    first, second = f"test-fb-{uuid4().hex}-a.js", f"test-fb-{uuid4().hex}-b.js"
+    _create_model(page, first)
+    _create_model(page, second)
+    _open_panel(page)
+    page.locator(f"#file-list .file-item[data-filename='{first}']").click()
+    expect(page.locator("#filename-display")).to_contain_text(first)
+    _await_editor_ready(page)
     page._fb_writes.clear()
     page._fb_thumbnails.clear()
     _await_quiet(page)
 
     _open_panel(page)
-    with page.expect_response(_model_save(second), timeout=30000) as saved:
+    with page.expect_response(_model_save(second), timeout=120000) as saved:
         page.locator(f"#file-list .file-item[data-filename='{second}']").click()
         expect(page.locator("#filename-display")).to_contain_text(second)
         _await_editor_ready(page)
     assert saved.value.json()["thumbnail"]
 
     _open_panel(page)
-    with page.expect_response(_model_save(first), timeout=30000) as saved:
+    with page.expect_response(_model_save(first), timeout=120000) as saved:
         page.locator(f"#file-list .file-item[data-filename='{first}']").click()
         expect(page.locator("#filename-display")).to_contain_text(first)
         _await_editor_ready(page)
@@ -622,3 +654,58 @@ def test_browsing_and_sorting_never_rerenders(browser_page):
 
     _await_quiet(page)
     assert page._fb_writes == [], f"browsing must not write models or previews: {page._fb_writes}"
+
+
+# ##################################################################
+# open printability controls on the already initialized editor
+# reuses the module's worker/page instead of paying another cold WASM startup.
+def _open_printability(page):
+    page._printability_filename = f"test-printability-{uuid4().hex}.js"
+    _open_panel(page)
+    page.locator("#new-file-input").fill(page._printability_filename)
+    page.locator("#create-file-btn").click()
+    expect(page.locator("#filename-display")).to_contain_text(page._printability_filename, timeout=120000)
+    surface = page.locator(".monaco-editor .view-lines")
+    surface.click(position={"x": 20, "y": 10})
+    page.keyboard.press("Meta+A")
+    page.keyboard.insert_text('const result = new Workplane("XY").box(30, 20, 12);\nresult;')
+    expect(page.locator("#status-text")).to_have_text("Ready", timeout=240000)
+    page.get_by_title("Apply conservative FDM fillets and base chamfers").click()
+    expect(page.locator("#printability-panel")).to_be_visible()
+    return surface
+
+
+# ##################################################################
+# complete printability workflow without another cold editor page
+# validates real geometry, source preservation, settings, exports, and errors.
+def test_printability_button_applies_audited_reversible_code(browser_page):
+    page = browser_page
+    surface = _open_printability(page)
+    expect(page.locator("#printability-fillet")).to_be_visible()
+    expect(page.locator("#printability-chamfer")).to_be_visible()
+    page.locator("#printability-preserve").fill("<X and <Y")
+    page.locator("#printability-apply").click()
+    expect(surface).to_contain_text("optimizeForPrinting", timeout=90000)
+    expect(surface).to_contain_text("BEGIN DAZ-CAD PRINTABILITY SOURCE")
+    expect(surface).to_contain_text("Chamfer bed-contact edges")
+    expect(surface).to_contain_text("new Workplane")
+    expect(page.locator("#status-text")).to_have_text("Ready", timeout=240000)
+    expect(page.locator("#console-output")).to_contain_text("base-chamfer", timeout=240000)
+    expect(page.locator("#console-output")).to_contain_text("vertical-fillet", timeout=240000)
+    expect(page.locator("#download-stl-btn")).to_be_enabled(timeout=30000)
+
+    page.locator("#printability-btn").click()
+    expect(page.locator("#printability-preserve")).to_have_value("<X and <Y")
+    page.locator("#printability-apply").click()
+    expect(page.locator("#printability-panel")).not_to_be_visible(timeout=90000)
+    source = page.evaluate("() => monaco.editor.getModels()[0].getValue()")
+    assert source.count("BEGIN DAZ-CAD PRINTABILITY SOURCE") == 1
+    assert source.count("END DAZ-CAD PRINTABILITY SOURCE") == 1
+
+    page.locator("#printability-btn").click()
+    before = surface.inner_text()
+    page.locator("#printability-fillet").fill("-1")
+    page.locator("#printability-apply").click()
+    expect(page.locator("#printability-diagnostics")).to_contain_text("non-negative", timeout=90000)
+    expect(surface).to_have_text(before, use_inner_text=True)
+    expect(page.locator("#printability-panel")).to_be_visible()

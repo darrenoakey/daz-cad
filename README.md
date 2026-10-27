@@ -20,6 +20,7 @@ DAZ-CAD is a web-based CAD application that allows you to create and edit 3D mod
 
 - **[User Guide](docs/user-guide.md)** - Complete walkthrough of the interface, navigation, and features
 - **[Library Reference](docs/library-reference.md)** - API documentation for all CAD operations
+- **[FDM Printability](docs/printability.md)** - Deterministic edge optimization, sourced design rules, mating-edge preservation, and AI review guidance
 - **[Cut-plane Joinery](docs/joinery.md)** - Ten connector methods for splitting oversized prints into mating parts and separate keys
 
 ## Installation
@@ -90,6 +91,10 @@ This requires Docker to be installed and running.
 3. Use the editor interface to create shapes
 4. Adjust parameters using the properties panel sliders
 5. Export to 3MF for printing
+
+### Printability optimization
+
+Click **Print for FDM** to add a base chamfer and vertical fillets with explicit mating-edge exclusions. Apply validates both the original and generated solid before replacing the editor source. The generated block preserves the model, settings, explanatory comments, and a console change report; reapplying updates it without nesting wrappers. The operation does not replace orientation, support, tolerance, or slicer review.
 
 ### Multi-Material Export
 

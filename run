@@ -129,6 +129,7 @@ GATE_TESTS = [
     "src/joinery_test.py",
     "src/joinery_ui_test.py",
     "src/gridfinity_generator_test.py",
+    "src/printability_test.py",
     "src/model_preview_test.py",
     "src/file_browser_test.py",
     "src/preview_race_test.py",
@@ -225,6 +226,7 @@ def _selected_gate_tests(paths: list[str]) -> list[str]:
                 "src/preview_race_test.py",
                 "src/server_test.py::test_chat_job_unknown",
                 "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
+                "src/printability_test.py",
             ]
         )
         if any(not path.startswith(BROWSER_PATHS) for path in paths):
@@ -235,16 +237,57 @@ def _selected_gate_tests(paths: list[str]) -> list[str]:
     return selected
 
 
+FILE_BROWSER_CORE_TESTS = [
+    "test_editor_header_opens_wide_scrollable_file_browser",
+    "test_example_models_without_previews_invite_render",
+    "test_successful_render_caches_transparent_thumbnail",
+    "test_sorting_by_name_reverse_and_recent",
+    "test_search_filters_filenames_and_updates_the_count",
+    "test_panel_dismissal_via_escape_and_outside_click",
+    "test_browsing_and_sorting_never_rerenders",
+]
+FILE_BROWSER_RELOAD_TESTS = [
+    "test_sort_preference_persists_across_reload",
+    "test_selecting_card_loads_model_and_persists_across_reload",
+    "test_failed_render_preserves_saved_preview_and_source",
+    "test_revisiting_unchanged_model_reuses_cached_preview",
+]
+
+
 # ##################################################################
 # gate lanes
-# OpenCascade-backed UI suites share one browser/WASM lane because running
-# separate Chromium+worker pools concurrently can starve their real renders.
-# Independent AgentD3 chat tests remain parallel in their own session.
+# Split independent browser groups to stay within the release deadline while
+# avoiding redundant main-thread OC and ordinary-edit worker cancellations.
 def _gate_lanes(selected: list[str]) -> dict[str, list[str]]:
     lanes: dict[str, list[str]] = {}
-    for target in selected:
-        lane = "chat" if target.startswith("src/agentd3_chat_test.py") else "cad"
+
+    def add(lane, target):
         lanes.setdefault(lane, []).append(target)
+
+    for target in selected:
+        if target == "src/file_browser_test.py":
+            for name in FILE_BROWSER_CORE_TESTS:
+                add("browser-core", f"src/file_browser_test.py::{name}")
+            for index, name in enumerate(FILE_BROWSER_RELOAD_TESTS):
+                add(f"browser-reload-{index}", f"src/file_browser_test.py::{name}")
+            add("cad", "src/file_browser_test.py::test_printability_button_applies_audited_reversible_code")
+        elif target in {"src/model_preview_test.py", "src/startup_path_test.py"}:
+            add("cad-support", target)
+        elif target == "src/cdn_cache_test.py":
+            add("cad-cache", target)
+        elif target == "src/preview_race_test.py":
+            add("cad-preview", target)
+        elif target == "src/server_test.py::test_worker_direct_opencascade_preview_and_exports":
+            add("cad-worker", target)
+        elif target == "src/joinery_test.py::test_all_joinery_methods_create_valid_complementary_solids":
+            for group in ("snap", "slide", "spring", "locks"):
+                add(f"cad-joinery-{group}", f"{target}[{group}]")
+        elif target in GEOMETRY_TESTS or target == "src/printability_test.py":
+            add("cad-geometry", target)
+        elif target.startswith("src/agentd3_chat_test.py"):
+            add("chat", target)
+        else:
+            add("cad", target)
     return lanes
 
 
@@ -273,6 +316,7 @@ def command_check(_: argparse.Namespace) -> int:
             "src/joinery_kernel_test.py",
             "src/joinery_test.py",
             "src/gridfinity_generator_test.py",
+            "src/printability_test.py",
             "run",
         ]
     )

@@ -10,7 +10,8 @@
 .joinery-axis { display:flex; gap:4px; margin-bottom:5px; }
 .joinery-axis button { flex:1; background:#21262d; color:#c9d1d9; border:1px solid #30363d; border-radius:4px; padding:4px; cursor:pointer; }
 .joinery-axis button.active { background:#388bfd; color:white; }
-#joinery-diagnostics { min-height:32px; line-height:1.35; color:#8b949e; margin:8px 0; }
-#joinery-diagnostics.error { color:#ff7b72; }
-#joinery-apply { width:100%; justify-content:center; background:#238636; border-color:#2ea043; }
-#joinery-apply:hover { background:#2ea043; }
+#joinery-diagnostics, #printability-diagnostics { min-height:32px; line-height:1.35; color:#8b949e; margin:8px 0; }
+#joinery-diagnostics.error, #printability-diagnostics.error { color:#ff7b72; }
+#joinery-apply, #printability-apply { width:100%; justify-content:center; background:#238636; border-color:#2ea043; }
+#joinery-apply:hover, #printability-apply:hover { background:#2ea043; }
+.printability-panel p { color:#8b949e; line-height:1.4; }

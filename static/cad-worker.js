@@ -11,6 +11,7 @@ import { Gridfinity } from './gridfinity.js';
 import './patterns.js';  // Extends Workplane with unified cutPattern()
 import './naming.js';    // Extends Workplane with named references
 import { Joinery } from './joinery.js'; // Extends Workplane with splitAndJoin()
+import './printability.js'; // Extends Workplane with optimizeForPrinting()
 
 let oc = null;
 let isInitialized = false;

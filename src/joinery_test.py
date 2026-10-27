@@ -50,7 +50,12 @@ METHOD_IDS = [
 # test complete connector catalogue creates complementary solid joinery
 # runs every public mechanism on actual OpenCascade solids and verifies solid
 # validity, paired cut geometry, source immutability, and assembly modes.
-def test_all_joinery_methods_create_valid_complementary_solids(joinery_page):
+@pytest.mark.parametrize(
+    "method_ids",
+    [METHOD_IDS[:2], METHOD_IDS[2:5], METHOD_IDS[5:7], METHOD_IDS[7:]],
+    ids=["snap", "slide", "spring", "locks"],
+)
+def test_all_joinery_methods_create_valid_complementary_solids(joinery_page, method_ids):
     result = joinery_page.evaluate(
         """(methodIds) => {
             const volume = (workplane) => {
@@ -160,7 +165,7 @@ def test_all_joinery_methods_create_valid_complementary_solids(joinery_page):
                 return { ok: false, error: error.message, stack: error.stack };
             }
         }""",
-        METHOD_IDS,
+        method_ids,
     )
 
     report = Path(__file__).resolve().parents[1] / "output" / "testing" / f"joinery-{uuid4().hex}.json"
@@ -169,9 +174,9 @@ def test_all_joinery_methods_create_valid_complementary_solids(joinery_page):
     print(f"Joinery geometry report: {report}")
     assert result["ok"], json.dumps(result.get("failures", result), indent=2)
     assert result["catalogue"] == METHOD_IDS
-    assert len(result["rows"]) == len(METHOD_IDS)
+    assert len(result["rows"]) == len(method_ids)
     signatures = {repr(row["solidSignature"]) for row in result["rows"]}
-    assert len(signatures) == len(METHOD_IDS), "Connector families must create distinct solid geometry, not metadata aliases"
+    assert len(signatures) == len(method_ids), "Connector families must create distinct solid geometry, not metadata aliases"
     for row in result["rows"]:
         assert row["methodField"] == row["method"]
         assert row["partCount"] == 2, row

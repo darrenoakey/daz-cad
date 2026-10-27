@@ -874,6 +874,7 @@
                                 <button class="segmented-btn" data-mode="none">None</button>
                             </div>
                         </div>
+                        <button id="printability-btn" class="toolbar-btn" title="Apply conservative FDM fillets and base chamfers">Print for FDM</button>
                         <button id="cut-join-btn" class="toolbar-btn" title="Split a Workplane and add printable joinery">Cut &amp; Join</button>
                         <button id="generator-btn" class="toolbar-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="generator-panel">Generators</button>
                         <div class="opacity-control">
@@ -914,6 +915,16 @@
                     </div>
                     <p id="generator-summary" role="status"></p>
                     <button id="generator-create" class="toolbar-btn">Generate baseplate</button>
+                </section>
+                <section id="printability-panel" class="joinery-panel printability-panel" hidden aria-label="FDM Printability">
+                    <header><strong>Print for FDM</strong><button id="printability-close" aria-label="Close Printability">×</button></header>
+                    <p>Conservative geometry only. Complex overhangs, walls, and joins still need design review.</p>
+                    <label>Vertical fillet radius (mm)<input id="printability-fillet" type="number" value="1" min="0" step="0.1"></label>
+                    <label>Base chamfer distance (mm)<input id="printability-chamfer" type="number" value="0.4" min="0" step="0.1"></label>
+                    <label>Mating edge selectors to keep square<input id="printability-preserve" type="text" placeholder="e.g. &lt;X and &lt;Y" aria-describedby="printability-mating-help"></label>
+                    <p id="printability-mating-help">Comma-separated CAD selectors. Matching vertical edges stay sharp for butt joints and aligned datums.</p>
+                    <p id="printability-diagnostics" role="status">Generated code includes the source, settings, named operations, and a console change report.</p>
+                    <button id="printability-apply" class="toolbar-btn">Apply Printability</button>
                 </section>
                 <section id="joinery-panel" class="joinery-panel" hidden aria-label="Cut and Join">
                     <header><strong>Cut / Join</strong><button id="joinery-close" aria-label="Close Cut and Join">×</button></header>

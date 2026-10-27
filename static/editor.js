@@ -15,6 +15,8 @@ import { Joinery } from './joinery.js';
 import { JoineryUI } from './joinery-ui.js';
 import './gridfinity-generator.js';
 import { GeneratorUI } from './generator-ui.js';
+import './printability.js';
+import { PrintabilityUI } from './printability-ui.js';
 import { appBase, appUrl } from './app-base.js';
 import { loadOpenCascade } from './opencascade.js';
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
@@ -42,6 +44,7 @@ class CADEditor {
         this._download3MFBtn = null;
         this.joineryUI = null;
         this.generatorUI = null;
+        this.printabilityUI = null;
         this._joineryValidationRequests = new Map();
 
         // Web Worker for background rendering
@@ -94,6 +97,7 @@ class CADEditor {
         // Hot reload state
         this._fileMtime = null; // Last known modification time
         this._lastSaveTime = 0; // Timestamp of last save (to avoid reload loop)
+        this._saveInFlight = 0;
         this._fileWatchInterval = null;
 
         this._init();
@@ -123,6 +127,7 @@ class CADEditor {
         // The plane is visible in the Three.js viewer; methods come from the library.
         this.joineryUI = new JoineryUI(this, Joinery.methods);
         this.generatorUI = new GeneratorUI(this);
+        this.printabilityUI = new PrintabilityUI(this);
 
         // Initialize file manager
         this._initFileManager();
@@ -154,10 +159,9 @@ class CADEditor {
             return;
         }
 
-        // Initialize main-thread OpenCascade for testing and direct API calls
-        await this._initOpenCascade();
-
-        // Load default file from server
+        // The worker is the production CAD engine. Main-thread OC exists only
+        // for direct-API tests and is initialized explicitly by those tests so
+        // its WASM compilation can never freeze ordinary editor interaction.
         await this._loadDefaultFile();
 
         // Set up editor change listener
@@ -179,8 +183,11 @@ class CADEditor {
         // Initial property parsing
         this._parseAndRenderProperties();
 
-        // Initial render
-        this._render();
+        // Initial render. Browser scenarios suppress only this unrelated
+        // startup render; their explicit create/edit actions still render.
+        if (!window.DAZ_CAD_TEST_DISABLE_INITIAL_RENDER) {
+            this._render();
+        }
     }
 
     async _loadMonaco() {
@@ -433,6 +440,9 @@ class CADEditor {
 
                             /** Split this Workplane on a plane and add a printable connector system. */
                             splitAndJoin(options: { plane: { origin: [number, number, number]; normal: [number, number, number]; up?: [number, number, number] }; method: JoineryMethod; size?: number; depth?: number; clearance?: number; positions?: Array<[number, number]>; count?: number; wall?: number; detent?: boolean; wedgePreload?: number; allowPartialAnchors?: boolean }): JointResult;
+
+                            /** Apply deterministic FDM base chamfers and non-mating vertical fillets. */
+                            optimizeForPrinting(options: { verticalFillet?: number, baseChamfer?: number, preserveEdges?: string[] }): Workplane;
 
                             /** Export to STL */
                             toSTL(linearDeflection?: number, angularDeflection?: number): Blob;
@@ -817,19 +827,21 @@ class CADEditor {
     async _initWorker() {
         this._setStatus('loading', 'Starting CAD engine...');
 
-        // Initialize both main and spare workers in parallel
-        const [mainWorker, spareWorker] = await Promise.all([
-            this._createWorkerInstance(true),
-            this._createWorkerInstance(false)
-        ]);
-
+        // Start only the primary worker on the critical path. Compiling two
+        // 50MB WASM runtimes concurrently delayed first use; the spare can warm
+        // after the primary has made the editor available.
+        const mainWorker = await this._createWorkerInstance(true);
         this._worker = mainWorker;
         this._workerReady = true;
+        this.isReady = true;
         this._attachWorkerHandlers(this._worker);
+    }
 
-        this._spareWorker = spareWorker;
-        this._spareWorkerReady = true;
-        console.log('[CAD] Both main and spare workers initialized');
+    _scheduleSpareWorker() {
+        if (window.DAZ_CAD_TEST_DISABLE_SPARE || this._spareWorker || this._spareWorkerStarting) return;
+        const warm = () => { void this._initSpareWorker(); };
+        if ('requestIdleCallback' in window) window.requestIdleCallback(warm, { timeout: 30000 });
+        else setTimeout(warm, 0);
     }
 
     _handleRenderComplete(meshData, requestId) {
@@ -878,6 +890,7 @@ class CADEditor {
 
         // Check if there's a pending render
         this._checkPendingRender();
+        if (!this._isRendering) this._scheduleSpareWorker();
     }
 
     // Resolve everyone awaiting the current render's outcome. Safe to call with
@@ -922,6 +935,7 @@ class CADEditor {
     }
 
     async _initOpenCascade() {
+        if (this.oc) return;
         // Main thread OpenCascade for testing and direct API calls
         // Worker handles the actual rendering for better performance
         this._setStatus('loading', 'Loading CAD engine...');
@@ -1171,7 +1185,7 @@ class CADEditor {
         if (Date.now() - this._lastSaveTime < 3000) return;
 
         // Don't check if currently rendering or processing chat
-        if (this._isRendering || this._isProcessing) return;
+        if (this._isRendering || this._isProcessing || this._saveInFlight > 0) return;
 
         try {
             const response = await fetch(`/api/models/${encodeURIComponent(this._currentFile)}/mtime`);
@@ -1518,6 +1532,7 @@ result;
 
     async _saveRenderedFile(source, requestId) {
         if (!source?.filename || source.filename !== this._currentFile || source.content !== this.editor.getValue()) return;
+        this._saveInFlight++;
         try {
             let metadata;
             if (STANDALONE) {
@@ -1542,13 +1557,17 @@ result;
                 if (!response.ok) throw new Error(`Save failed: HTTP ${response.status}`);
                 metadata = await response.json();
                 if (skipSave && metadata.content !== source.content) return;
-                if (this._currentFile === source.filename) this._fileMtime = metadata.mtime;
+                if (this._currentFile === source.filename && requestId === this._renderRequestId) {
+                    this._fileMtime = metadata.mtime;
+                }
             }
             this._fileMetadata.set(source.filename, metadata);
             if (metadata.thumbnail) return;
             this._scheduleThumbnail(source, metadata, requestId);
         } catch (error) {
             console.warn(`Could not save ${source.filename}:`, error);
+        } finally {
+            this._saveInFlight--;
         }
     }
 
@@ -1590,6 +1609,10 @@ result;
     }
 
     _onCodeChange() {
+        // Monaco can emit a duplicate change notification for the same value.
+        // Never kill an identical in-progress render and cold-restart WASM.
+        const code = this.editor.getValue();
+        if (this._renderSource?.content === code && (this._isRendering || !this._downloadSTLBtn.disabled)) return;
         // A changed script is not export-ready until its own render succeeds.
         this._downloadSTLBtn.disabled = true;
         this._download3MFBtn.disabled = true;
@@ -1598,11 +1621,9 @@ result;
             clearTimeout(this.debounceTimer);
         }
 
-        // If currently rendering, cancel immediately
-        if (this._isRendering) {
-            this._cancelRender();
-        }
-
+        // Queue the latest source behind the active render instead of killing a
+        // warm worker. Explicit cancellation remains available, but ordinary
+        // typing must never force another cold OpenCascade startup.
         // Set new timer - don't show "Compiling" until we actually start
         this.debounceTimer = setTimeout(() => {
             this._render();
@@ -1643,6 +1664,8 @@ result;
 
     // Create a new spare worker in the background
     async _initSpareWorker() {
+        if (this._spareWorkerStarting) return;
+        this._spareWorkerStarting = true;
         try {
             console.log('[CAD] Starting spare worker initialization in background');
             this._spareWorker = await this._createWorkerInstance(false);
@@ -1652,6 +1675,8 @@ result;
             console.error('[CAD] Failed to create spare worker:', error);
             this._spareWorker = null;
             this._spareWorkerReady = false;
+        } finally {
+            this._spareWorkerStarting = false;
         }
     }
 

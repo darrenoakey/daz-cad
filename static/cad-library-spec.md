@@ -71,6 +71,24 @@ new Workplane(plane)
 - `height`: Height of the prism
 - Oriented with a flat edge at the top
 
+### Deterministic FDM printability
+
+**optimizeForPrinting(options)** applies conservative finishing rules to one valid Workplane solid and returns a Workplane with `printReport` containing `settings`, `changes`, and `warnings`.
+
+```javascript
+const result = body.optimizeForPrinting({
+    verticalFillet: 1.0,        // mm; set 0 to disable
+    baseChamfer: 0.4,          // mm; set 0 to disable
+    preserveEdges: ['<X and <Y'] // mating vertical edges remain square
+});
+for (const change of result.printReport.changes) console.log(change);
+result;
+```
+
+The operation chamfers edges at minimum Z to relieve first-layer flare, then fillets non-preserved straight Z-parallel edges. Use comma-separated selectors in the **Print for FDM** panel. Preserve functional mating/datum corners and any required footprint. Invalid dimensions, selectors, assemblies, or failed geometry raise an error rather than silently returning an unchanged model.
+
+This is not a complete printability certification. Review orientation, overhangs, bridges, wall thickness, anisotropic loads, clearances, and the slicer preview. Use `splitAndJoin` when support reduction or assembly requires multiple parts. See `docs/printability.md` for the full AI design-review skill and references.
+
 ### Cut-plane joinery (all ten connector methods)
 
 **splitAndJoin(options)** splits one Workplane on an arbitrary plane and constructs both mating sides and any separate keys together. Returns a `JointResult` (an Assembly), leaving the input unchanged.

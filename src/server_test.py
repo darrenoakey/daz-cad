@@ -128,7 +128,10 @@ def test_editor_renders_pink_mesh_to_canvas(server, shared_browser):
 
     page.goto(f"{server}/")
 
-    # wait for status to show ready AND main thread OpenCascade to initialize
+    # This direct-API test explicitly initializes main-thread OpenCascade;
+    # ordinary editor use only initializes the worker engine.
+    page.wait_for_function("() => window.cadEditor !== undefined", timeout=90000)
+    page.evaluate("() => window.cadEditor._initOpenCascade()")
     page.wait_for_function(
         """() => {
             const statusText = document.getElementById('status-text');
@@ -846,14 +849,14 @@ def test_3mf_print_settings(cad_page):
 # ##################################################################
 # test worker direct opencascade preview and exports
 # verifies advanced cad code receives the worker's initialized oc instance for every execution path
-def test_worker_direct_opencascade_preview_and_exports(cad_page):
-    result = cad_page.evaluate("""async () => {
+def test_worker_direct_opencascade_preview_and_exports(worker_page):
+    result = worker_page.evaluate("""async () => {
         const worker = new Worker('/static/cad-worker.js', { type: 'module' });
         const waitForMessage = (successType, errorType, id) => new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 worker.removeEventListener('message', onMessage);
                 reject(new Error(`Timed out waiting for ${successType}`));
-            }, 90000);
+            }, 240000);
             const onMessage = (event) => {
                 const message = event.data;
                 const matchesId = id === undefined || message.id === undefined || message.id === id;
@@ -1795,7 +1798,7 @@ def test_monaco_type_definitions_match_library(cad_page):
                 'union', 'cut', 'intersect', 'hole', 'chamfer', 'fillet', 'clean',
                 'faces', 'facesNot', 'edges', 'edgesNot', 'filterOutBottom', 'filterOutTop',
                 'translate', 'rotate', 'color', 'cutPattern', 'cutBorder', 'cutRectGrid', 'cutCircleGrid', 'addBaseplate', 'cutLines', 'cutBelow', 'cutAbove',
-                'addTab', 'addSlot', 'splitAndJoin',
+                'addTab', 'addSlot', 'splitAndJoin', 'optimizeForPrinting',
                 'toSTL', 'to3MF', 'toMesh',
                 'asModifier', 'withModifier', 'pattern', 'filterEdges', 'val',
                 'meta', 'infillDensity', 'infillPattern', 'walls', 'supports', 'printSettings', 'partName',

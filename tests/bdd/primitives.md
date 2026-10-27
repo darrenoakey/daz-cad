@@ -57,6 +57,16 @@ The module maps these four scenarios to its Playwright test and records per-run 
 ## Long-running geometry checks
 
 `src/gridfinity_generator_test.py::test_generator_ui_creates_segmented_model_and_one_complete_3mf` runs real OpenCascade segmentation, snap booleans, mouse-ear unions, and 3MF export; a cold run has exceeded five minutes. Always launch this test detached with a logfile and durable exit-code file, then use the AgentD3 `sleep` tool to resume and inspect that exact job's verdict/log. Never run it inline, poll it, or concurrently with another OpenCascade browser test. A failed result must be diagnosed before another run.
+## Printability primitives (`src/file_browser_test.py`)
+
+| Step phrase | Implementation |
+| --- | --- |
+| `the Printability panel is visible` | click the **Print for FDM** toolbar button and expect `#printability-panel` visible |
+| `I preserve mating edges "selector"` | fill `#printability-preserve` with a CAD edge selector |
+| `I click "Apply Printability"` | click `#printability-apply`; the worker validates source and generated solid before Monaco changes |
+| `the editor script contains "optimizeForPrinting"` | inspect Monaco's visible generated source |
+| `the Worker Console reports the printability changes` | expect named `base-chamfer` and `vertical-fillet` audit entries |
+| `the editor script remains unchanged` | compare Monaco text after rejected settings |
 
 ## Recording primitives
 

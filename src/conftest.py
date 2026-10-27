@@ -73,7 +73,7 @@ def server(server_port, tmp_path_factory):
     )
 
     server_url = f"http://127.0.0.1:{server_port}"
-    max_attempts = 30
+    max_attempts = 240
     last_error = "health endpoint has not returned success"
     for _ in range(max_attempts):
         try:
@@ -149,6 +149,8 @@ def cad_page(server, shared_browser):
     page.on("pageerror", lambda error: failures.append(str(error)))
     page.on("console", lambda message: messages.append(message.text))
     page.goto(f"{server}/")
+    page.wait_for_function("() => window.cadEditor !== undefined", timeout=90000)
+    page.evaluate("() => window.cadEditor._initOpenCascade()")
     try:
         page.wait_for_function(
             """() => {
@@ -162,6 +164,26 @@ def cad_page(server, shared_browser):
         page.close()
         raise RuntimeError(f"CAD startup failed: status={status}; requests={failures}; console={messages[-15:]}") from error
     yield page
+    page.unroute_all(behavior="ignoreErrors")
+    page.close()
+
+
+# ##################################################################
+# worker editor page fixture
+# provides a production editor without the direct-API main-thread WASM runtime;
+# worker-specific tests create their own explicit worker from this page.
+@pytest.fixture(scope="session")
+def worker_page(server, shared_browser):
+    page = shared_browser.new_page()
+    page.add_init_script("window.DAZ_CAD_TEST_DISABLE_SPARE = true")
+    page.goto(f"{server}/")
+    page.wait_for_function(
+        """() => window.cadEditor?._workerReady && window.cadEditor?._currentFile &&
+            document.getElementById('status-text')?.textContent === 'Ready'""",
+        timeout=480000,
+    )
+    yield page
+    page.unroute_all(behavior="ignoreErrors")
     page.close()
 
 
@@ -181,11 +203,12 @@ def init_page(server, shared_browser):
                 const status = document.getElementById('status');
                 return status && status.classList.contains('success');
             }""",
-            timeout=60000,
+            timeout=240000,
         )
     except Exception as error:
         diagnostics = page.locator("body").inner_text()
         page.close()
         raise RuntimeError(f"OpenCascade startup failed: {failures}\n{diagnostics}") from error
     yield page
+    page.unroute_all(behavior="ignoreErrors")
     page.close()

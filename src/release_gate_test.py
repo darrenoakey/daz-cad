@@ -48,16 +48,32 @@ def test_gate_lanes_preserve_every_selected_target_once(paths):
     selected = GATE["_selected_gate_tests"](paths)
     lanes = GATE["_gate_lanes"](selected)
     flattened = [target for targets in lanes.values() for target in targets]
-    assert sorted(flattened) == sorted(selected)
+    expected = set(selected)
+    if "src/file_browser_test.py" in expected:
+        expected.remove("src/file_browser_test.py")
+        expected.update(f"src/file_browser_test.py::{name}" for name in GATE["FILE_BROWSER_CORE_TESTS"])
+        expected.update(f"src/file_browser_test.py::{name}" for name in GATE["FILE_BROWSER_RELOAD_TESTS"])
+        expected.add("src/file_browser_test.py::test_printability_button_applies_audited_reversible_code")
+    joinery_target = "src/joinery_test.py::test_all_joinery_methods_create_valid_complementary_solids"
+    if joinery_target in expected:
+        expected.remove(joinery_target)
+        expected.update({f"{joinery_target}[{group}]" for group in ("snap", "slide", "spring", "locks")})
+    assert sorted(flattened) == sorted(expected)
     assert len(flattened) == len(set(flattened))
     for name, targets in lanes.items():
         if name == "chat":
             assert all(target.startswith("src/agentd3_chat_test.py") for target in targets)
+        elif name == "cad" or name.startswith("cad-"):
+            assert all(not target.startswith("src/agentd3_chat_test.py") for target in targets)
         else:
-            assert name == "cad"
+            assert name == "browser-core" or name.startswith("browser-reload-")
+            assert all(target.startswith("src/file_browser_test.py::") for target in targets)
     if "src/file_browser_test.py" in selected:
-        assert "src/file_browser_test.py" in lanes["cad"]
-        assert "src/preview_race_test.py" in lanes["cad"]
+        assert "src/file_browser_test.py::test_printability_button_applies_audited_reversible_code" in lanes["cad"]
+        assert "src/preview_race_test.py" in lanes["cad-preview"]
+        assert len(lanes["browser-core"]) == len(GATE["FILE_BROWSER_CORE_TESTS"])
+        reload_count = sum(len(targets) for name, targets in lanes.items() if name.startswith("browser-reload-"))
+        assert reload_count == len(GATE["FILE_BROWSER_RELOAD_TESTS"])
 
 
 # ##################################################################
@@ -101,5 +117,6 @@ def test_runner_change_keeps_the_measured_release_coverage():
         "src/server_test.py::test_worker_direct_opencascade_preview_and_exports",
         "src/joinery_kernel_test.py",
         "src/joinery_test.py::test_all_joinery_methods_create_valid_complementary_solids",
+        "src/printability_test.py",
     }
     assert set(selected) == previous | {"src/release_gate_test.py", "src/cdn_cache_test.py"}

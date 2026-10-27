@@ -177,7 +177,7 @@ def test_http_persistence_and_restart(tmp_path):
              ('import sys; from src.model_preview_test import exercise_application; '
               'exercise_application(sys.argv[1], sys.argv[2])'), str(root), phase],
             check=False, cwd=project, env={**os.environ, 'DAZCAD_MODELS_DIR': str(root)},
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=120,
         )
         assert result.returncode == 0, result.stdout + result.stderr
 

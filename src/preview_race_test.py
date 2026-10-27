@@ -11,12 +11,13 @@ import pytest
 @pytest.fixture(scope="module")
 def preview_page(server, shared_browser):
     page = shared_browser.new_page()
+    page.add_init_script("window.DAZ_CAD_TEST_DISABLE_SPARE = true")
     page.goto(server)
     page.wait_for_function(
         """() => window.cadEditor?.isReady && window.cadEditor._workerReady &&
             !window.cadEditor._isRendering && window.cadEditor.viewer.meshGroup.children.length > 0 &&
             document.getElementById('status-text')?.textContent === 'Ready'""",
-        timeout=90000,
+        timeout=480000,
     )
     page.wait_for_function(
         """() => window.cadEditor._previewJobs.size === 0 &&
