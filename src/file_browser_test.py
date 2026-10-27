@@ -62,6 +62,7 @@ SCENARIO_NAMES = {
         "Undo printability in one editor step",
         "Reapply printability without nesting generated wrappers",
         "Preserve editable source after invalid settings",
+        "Optimize every solid in an assembly",
     ],
 }
 
@@ -732,3 +733,35 @@ def test_printability_button_applies_audited_reversible_code(browser_page):
     expect(page.locator("#printability-diagnostics")).to_contain_text("non-negative", timeout=90000)
     expect(surface).to_have_text(before, use_inner_text=True)
     expect(page.locator("#printability-panel")).to_be_visible()
+
+    # The default public example is an Assembly: apply the same button to every
+    # solid and require the audit to identify both transformed parts.
+    page.locator("#printability-close").click()
+    surface.click(position={"x": 20, "y": 10})
+    page.keyboard.press("Meta+A")
+    page.keyboard.insert_text(
+        'const first = new Workplane("XY").box(30, 20, 12).color("#e74c3c");\n'
+        'const second = new Workplane("XY").box(16, 14, 10).translate(40, 0, 0).color("#2ecc71");\n'
+        'const result = new Assembly().printSettings({ walls: 3 }).add(first).add(second);\nresult;'
+    )
+    expect(page.locator("#status-text")).to_have_text("Ready", timeout=240000)
+    page.locator("#printability-btn").click()
+    page.locator("#printability-fillet").fill("1")
+    page.locator("#printability-chamfer").fill("0.4")
+    page.locator("#printability-apply").click()
+    page.wait_for_function(
+        """() => monaco.editor.getModels()[0].getValue().includes('optimizeForPrinting') ||
+            document.querySelector('#printability-diagnostics').classList.contains('error')""",
+        timeout=240000,
+    )
+    try:
+        expect(surface).to_contain_text("optimizeForPrinting", timeout=90000)
+    except AssertionError as error:
+        diagnostics = page.locator("#printability-diagnostics").inner_text()
+        raise AssertionError(
+            f"Assembly printability did not apply: {diagnostics}; browser={page._fb_diagnostics[-20:]}"
+        ) from error
+    expect(surface).to_contain_text("new Assembly")
+    expect(page.locator("#console-output")).to_contain_text("part 1, base-chamfer", timeout=240000)
+    expect(page.locator("#console-output")).to_contain_text("part 2, base-chamfer", timeout=240000)
+    expect(page.locator("#download-stl-btn")).to_be_enabled(timeout=30000)

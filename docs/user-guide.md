@@ -12,10 +12,17 @@ A complete guide to using the DAZ-CAD-2 browser-based parametric CAD editor.
 - [CAD Assistant](#cad-assistant)
 - [Exporting Models](#exporting-models)
 - [Working with Gridfinity](#working-with-gridfinity)
+- [FDM printability](#fdm-printability)
 - [Cut-plane Joinery](joinery.md)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 
 ---
+
+## FDM printability
+
+Use **Print for FDM** on either a Workplane solid or a multi-part Assembly. Set the vertical fillet and base chamfer in millimetres, and list comma-separated mating selectors such as `<X and <Y` for corners that must remain square. Assemblies are optimized one solid at a time while retaining part placement, colors, modifiers, and 3MF settings.
+
+Apply validates the original and optimized geometry before making one undoable editor edit. The generated comments and console report identify every rule and affected part. It does not replace orientation, support, tolerance, strength, or slicer review; use **Cut & Join** for explicit support-reducing splits and printable connectors.
 
 ## Cut & Join oversized prints
 

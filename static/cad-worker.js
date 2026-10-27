@@ -167,7 +167,7 @@ function resultForExport(code) {
 
 // Handle messages from main thread
 self.onmessage = async function(e) {
-    const { type, code, id, generated } = e.data;
+    const { type, code, id, generated, printability } = e.data;
 
     if (type === 'init') {
         try {
@@ -214,7 +214,9 @@ self.onmessage = async function(e) {
         try {
             const result = executeForExport(code);
             if (!result) throw new Error('Source did not produce a result variable.');
-            if (generated) {
+            if (printability) {
+                if (typeof result.optimizeForPrinting !== 'function') throw new Error('Printability requires a Workplane or Assembly result.');
+            } else if (generated) {
                 if (!result.isAssembly) throw new Error('Generated Cut/Join result was not an Assembly.');
             } else {
                 if (result.isAssembly) throw new Error('Cut/Join currently accepts one Workplane result; choose or create a single part before splitting.');
@@ -222,7 +224,8 @@ self.onmessage = async function(e) {
             }
             self.postMessage({ type: 'joineryValidation', id, ok: true, warnings: [] });
         } catch (error) {
-            self.postMessage({ type: 'joineryValidation', id, ok: false, error: `Cut/Join was not applied: ${error.message}` });
+            const operation = printability ? 'Printability' : 'Cut/Join';
+            self.postMessage({ type: 'joineryValidation', id, ok: false, error: `${operation} was not applied: ${error.message}` });
         }
     } else if (type === 'exportSTL') {
         if (!isInitialized) {

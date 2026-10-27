@@ -96,6 +96,7 @@ class CADEditor {
 
         // Hot reload state
         this._fileMtime = null; // Last known modification time
+        this._lastSavedContent = null; // Never hot-reload over unsaved editor content
         this._lastSaveTime = 0; // Timestamp of last save (to avoid reload loop)
         this._saveInFlight = 0;
         this._fileWatchInterval = null;
@@ -551,6 +552,8 @@ class CADEditor {
                             printSettings(settings: PrintSettings): Assembly;
                             /** Add a part to the assembly */
                             add(part: Workplane): Assembly;
+                            /** Optimize every part for FDM, preserving colors, placement and print settings */
+                            optimizeForPrinting(options: { verticalFillet?: number, baseChamfer?: number, preserveEdges?: string[] }): Assembly;
                             /** Check if this is an assembly */
                             readonly isAssembly: boolean;
                             /** Convert assembly to mesh data */
@@ -986,6 +989,7 @@ class CADEditor {
                         const fileData = await fileResponse.json();
                         this._currentFile = fileData.filename;
                         this._fileMtime = fileData.mtime;
+                        this._lastSavedContent = fileData.content;
                         this.editor.setValue(fileData.content);
                         this._updateFilenameDisplay();
                         // Update localStorage and URL
@@ -1011,6 +1015,7 @@ class CADEditor {
             const fileData = await fileResponse.json();
             this._currentFile = fileData.filename;
             this._fileMtime = fileData.mtime;
+            this._lastSavedContent = fileData.content;
             this.editor.setValue(fileData.content);
             this._updateFilenameDisplay();
             localStorage.setItem('cad-editor-last-file', this._currentFile);
@@ -1150,6 +1155,7 @@ class CADEditor {
 
             const data = await response.json();
             this._fileMtime = data.mtime;
+            this._lastSavedContent = data.content;
 
             // Update editor without triggering save
             this._skipSave = { filename: this._currentFile, content: data.content };
@@ -1186,6 +1192,7 @@ class CADEditor {
 
         // Don't check if currently rendering or processing chat
         if (this._isRendering || this._isProcessing || this._saveInFlight > 0) return;
+        if (this._lastSavedContent !== null && this.editor.getValue() !== this._lastSavedContent) return;
 
         try {
             const response = await fetch(`/api/models/${encodeURIComponent(this._currentFile)}/mtime`);
@@ -1209,7 +1216,10 @@ class CADEditor {
             if (!response.ok) return;
 
             const data = await response.json();
+            // An edit or undo may have happened while the fetch was pending.
+            if (this._lastSavedContent !== null && this.editor.getValue() !== this._lastSavedContent) return;
             this._fileMtime = data.mtime;
+            this._lastSavedContent = data.content;
 
             // Update editor without triggering save
             this._skipSave = { filename: this._currentFile, content: data.content };
@@ -1422,6 +1432,7 @@ class CADEditor {
             const data = await response.json();
             this._currentFile = data.filename;
             this._fileMtime = data.mtime;
+            this._lastSavedContent = data.content;
             this.editor.setValue(data.content);
             this._updateFilenameDisplay();
             this._closeFileDropdown();
@@ -1516,6 +1527,7 @@ result;
             // can mistake the previous file's mtime for an external change.
             this._currentFile = filename;
             this._fileMtime = metadata.mtime;
+            this._lastSavedContent = templateContent;
             this.editor.setValue(templateContent);
             this._updateFilenameDisplay();
             this._newFileInput.value = '';
@@ -1562,6 +1574,7 @@ result;
                 if (skipSave && metadata.content !== source.content) return;
                 if (this._currentFile === source.filename && requestId === this._renderRequestId) {
                     this._fileMtime = metadata.mtime;
+                    this._lastSavedContent = source.content;
                 }
             }
             this._fileMetadata.set(source.filename, metadata);
@@ -1741,21 +1754,31 @@ result;
         });
     }
 
-    async validateJoinerySource(code, generated = false) {
+    async validateJoinerySource(code, generated = false, printability = false) {
         // Start the validation timeout only after the worker's current render
         // has settled; large models must not consume it while queued.
         if (this._isRendering) {
-            const settled = await this._nextRenderResult();
-            if (!settled.ok) return { ok: false, error: settled.error || 'Current render failed.' };
+            // Printability may be reapplied immediately after undo/redo. Wait for
+            // an already queued render rather than rejecting the user's action
+            // when a new render starts between completion and this check.
+            do {
+                const settled = await this._nextRenderResult();
+                if (!settled.ok) return { ok: false, error: settled.error || 'Current render failed.' };
+            } while (printability && this._isRendering);
             if (this._isRendering) return { ok: false, error: 'The model changed and another render started; wait for it to finish.' };
         }
-        if (!this._workerReady) return Promise.resolve({ ok: false, error: 'CAD engine is still starting; wait for Ready before applying Cut/Join.' });
-        const id = `joinery-${Date.now()}-${Math.random()}`;
+        if (!this._workerReady) return Promise.resolve({ ok: false, error: 'CAD engine is still starting; wait for Ready before applying the transform.' });
+        const id = `${printability ? 'printability' : 'joinery'}-${Date.now()}-${Math.random()}`;
         return new Promise((resolve) => {
             this._joineryValidationRequests.set(id, resolve);
-            this._worker.postMessage({ type: 'validateJoinery', code, id, generated });
-            setTimeout(() => this._resolveJoineryValidation(id, { ok: false, error: 'Cut/Join validation timed out; your source was not changed.' }), 30000);
+            this._worker.postMessage({ type: 'validateJoinery', code, id, generated, printability });
+            const operation = printability ? 'Printability' : 'Cut/Join';
+            setTimeout(() => this._resolveJoineryValidation(id, { ok: false, error: `${operation} validation timed out; your source was not changed.` }), 30000);
         });
+    }
+
+    async validatePrintabilitySource(code) {
+        return this.validateJoinerySource(code, false, true);
     }
 
     _resolveJoineryValidation(id, result) {

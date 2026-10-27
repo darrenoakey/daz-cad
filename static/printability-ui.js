@@ -50,7 +50,7 @@ export class PrintabilityUI {
     }
 
     _generatedCode(source, options) {
-        return `// Printability generated from the editable model below.\nconst __printabilitySettings = ${JSON.stringify(options)};\nconst __printabilitySource = (() => {\n// BEGIN DAZ-CAD PRINTABILITY SOURCE\n${source}\n// END DAZ-CAD PRINTABILITY SOURCE\n    return typeof result !== 'undefined' ? result : null;\n})();\nif (!__printabilitySource || __printabilitySource.isAssembly) throw new Error('Printability requires one Workplane result, not an Assembly.');\n// Chamfer bed-contact edges to relieve first-layer flare; fillet vertical edges except mating selectors.\nconst result = __printabilitySource.optimizeForPrinting(__printabilitySettings);\nfor (const change of result.printReport.changes) console.log(\`Printability: \${change.rule}, \${change.edges} edges, \${change.millimetres} mm\`);\nfor (const warning of result.printReport.warnings) console.warn(\`Printability: \${warning}\`);\nresult;\n`;
+        return `// Printability generated from the editable model below.\nconst __printabilitySettings = ${JSON.stringify(options)};\nconst __printabilitySource = (() => {\n// BEGIN DAZ-CAD PRINTABILITY SOURCE\n${source}\n// END DAZ-CAD PRINTABILITY SOURCE\n    return typeof result !== 'undefined' ? result : null;\n})();\n// Chamfer bed-contact edges to relieve first-layer flare; fillet vertical edges except mating selectors. Assemblies are optimized part by part.\nconst result = __printabilitySource.optimizeForPrinting(__printabilitySettings);\nfor (const change of result.printReport.changes) console.log('Printability: ' + (change.part ? 'part ' + change.part + ', ' : '') + change.rule + ', ' + change.edges + ' edges, ' + change.millimetres + ' mm');\nfor (const warning of result.printReport.warnings) console.warn(\`Printability: \${warning}\`);\nresult;\n`;
     }
 
     async apply() {
@@ -65,12 +65,12 @@ export class PrintabilityUI {
             const editorSource = this.editor.editor.getValue();
             const source = this._source(editorSource);
             this._diagnose('Checking the current model before generating printability code…');
-            const original = await this.editor.validateJoinerySource(source);
+            const original = await this.editor.validatePrintabilitySource(source);
             if (this.editor.editor.getValue() !== editorSource) return this._diagnose('The editor changed; nothing was applied.', true);
             if (!original.ok) return this._diagnose(original.error.replace('Cut/Join', 'Printability'), true);
             const code = this._generatedCode(source, options);
             this._diagnose('Checking the optimized solid before changing your editor…');
-            const generated = await this.editor.validateJoinerySource(code);
+            const generated = await this.editor.validatePrintabilitySource(code);
             if (this.editor.editor.getValue() !== editorSource) return this._diagnose('The editor changed; nothing was applied.', true);
             if (!generated.ok) return this._diagnose(`${generated.error.replace('Cut/Join', 'Printability')} Your source remains unchanged.`, true);
             const model = this.editor.editor.getModel();

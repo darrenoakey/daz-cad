@@ -94,7 +94,7 @@ This requires Docker to be installed and running.
 
 ### Printability optimization
 
-Click **Print for FDM** to add a base chamfer and vertical fillets with explicit mating-edge exclusions. Apply validates both the original and generated solid before replacing the editor source. The generated block preserves the model, settings, explanatory comments, and a console change report; reapplying updates it without nesting wrappers. The operation does not replace orientation, support, tolerance, or slicer review.
+Click **Print for FDM** to add a base chamfer and vertical fillets with explicit mating-edge exclusions. Workplane solids and every part of an Assembly are supported without flattening colors, placement, or print settings. Apply validates both the original and generated geometry before replacing the editor source. The generated block preserves the model, settings, explanatory comments, and a console change report; reapplying updates it without nesting wrappers. The operation does not replace orientation, support, tolerance, or slicer review.
 
 ### Multi-Material Export
 

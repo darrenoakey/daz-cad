@@ -7,6 +7,7 @@ def printability_page(init_page):
         const cad = await import('/static/cad.js');
         cad.initCAD(window.oc);
         window.Workplane = cad.Workplane;
+        window.Assembly = cad.Assembly;
         await import('/static/printability.js');
     }""")
     return init_page
@@ -54,6 +55,40 @@ def test_printability_transforms_real_solids_and_preserves_mating_edges(printabi
     assert fillet["preserved"] == 1 and fillet["edges"] == 3
     assert [change["rule"] for change in result["baseChanges"]] == ["base-chamfer"]
     assert result["warnings"] and "do not certify" in result["warnings"][0]
+
+
+# ##################################################################
+# assemblies optimize every solid independently without flattening the model
+# or losing project settings, part metadata, colors, and source geometry.
+def test_printability_optimizes_assembly_parts_and_preserves_metadata(printability_page):
+    result = printability_page.evaluate("""() => {
+        const first = new Workplane('XY').box(30, 20, 12).walls(4).color('#e74c3c');
+        const second = new Workplane('XY').box(16, 14, 10).translate(40, 0, 0).color('#2ecc71');
+        const originalShapes = [first._shape, second._shape];
+        const source = new Assembly().printSettings({ walls: 3, infillDensity: 20 }).add(first).add(second);
+        const optimized = source.optimizeForPrinting({
+            verticalFillet: 1, baseChamfer: 0.4, preserveEdges: ['<X and <Y'],
+        });
+        return {
+            isAssembly: optimized.isAssembly,
+            partCount: optimized._parts.length,
+            colors: optimized._parts.map((part) => part._color),
+            projectSettings: optimized._printSettings,
+            firstWalls: optimized._parts[0]._meta.walls,
+            originalsUnchanged: originalShapes.every((shape, index) => shape === source._parts[index]._shape),
+            transformed: optimized._parts.every((part, index) => part._shape !== originalShapes[index]),
+            reportParts: optimized.printReport.parts,
+            reportPartIndexes: [...new Set(optimized.printReport.changes.map((change) => change.part))],
+            warnings: optimized.printReport.warnings,
+        };
+    }""")
+    assert result["isAssembly"] and result["partCount"] == 2
+    assert result["colors"] == ["#e74c3c", "#2ecc71"]
+    assert result["projectSettings"] == {"walls": 3, "infillDensity": 20}
+    assert result["firstWalls"] == 4
+    assert result["originalsUnchanged"] and result["transformed"]
+    assert result["reportParts"] == 2 and result["reportPartIndexes"] == [1, 2]
+    assert len(result["warnings"]) == 1
 
 
 # ##################################################################

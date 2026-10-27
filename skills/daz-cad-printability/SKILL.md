@@ -10,7 +10,7 @@ Apply this skill to the **parametric source**, not merely its exported mesh. Pre
 ## Workflow
 
 1. Read the current model and identify bed orientation, mating/datum edges, load direction, moving fits, cosmetic faces, minimum walls, holes, overhangs, bridges, and assembly access.
-2. For a single `Workplane`, use **Print for FDM** or call `optimizeForPrinting`. Keep the original source inside the generated block and read `result.printReport`.
+2. For a `Workplane` or multi-part `Assembly`, use **Print for FDM** or call `optimizeForPrinting`. Assemblies are optimized part by part without flattening colors, placement, modifiers, or print settings. Keep the original source inside the generated block and read `result.printReport`.
 3. List mating selectors in `preserveEdges`; never infer that every sharp edge is unwanted. A vertical edge may be a butt-joint datum, and a bed-contact chamfer may alter a required footprint.
 4. Use `splitAndJoin` for oversized or support-heavy models that should become multiple parts. Choose the joint from assembly motion, available insertion/twist space, layer-direction loads, and whether a replaceable spring is preferable.
 5. Make larger design changes explicitly in named, commented functions. Keep parameters near the top of the source. Explain why every changed feature exists.
@@ -28,7 +28,7 @@ for (const change of result.printReport.changes) console.log(change);
 for (const warning of result.printReport.warnings) console.warn(warning);
 ```
 
-The operation chamfers edges at the model's minimum Z, then fillets non-preserved Z-parallel straight edges. It requires one valid solid and fails instead of silently returning the original when a requested geometric operation fails. It does **not** detect or repair every printable-design problem. Do not apply it blindly to an `Assembly`; optimize the intended solid before constructing the assembly.
+The operation chamfers edges at the model's minimum Z, then fillets non-preserved Z-parallel straight edges. On an Assembly it repeats this independently for every solid and adds a one-based `part` field to each reported change. It fails instead of silently returning the original when a requested geometric operation fails. It does **not** detect or repair every printable-design problem. Use `splitAndJoin` when support reduction or assembly requires different geometry.
 
 ## Design rule summary
 

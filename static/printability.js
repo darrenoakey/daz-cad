@@ -1,5 +1,5 @@
 /** Conservative, deterministic FDM finishing rules for editable Workplane solids. */
-import { Workplane, getOC } from './cad.js';
+import { Assembly, Workplane, getOC } from './cad.js';
 import { valid } from './joinery-kernel.js';
 
 const SELECTOR_PART = /^[|><][XYZ]$/i;
@@ -83,6 +83,30 @@ Workplane.prototype.optimizeForPrinting = function optimizeForPrinting(options =
     }
 
     optimized.printReport = { settings, changes, warnings };
+    return optimized;
+};
+
+/** Optimize every assembly part independently, preserving placement, colors,
+ * modifiers, per-part metadata, and project-wide 3MF print settings. */
+Assembly.prototype.optimizeForPrinting = function optimizeAssemblyForPrinting(options = {}) {
+    const settings = optionsFor(options);
+    if (!this._parts.length) throw new Error('optimizeForPrinting requires at least one assembly part');
+    const optimized = new Assembly();
+    optimized._printSettings = { ...this._printSettings };
+    const changes = [];
+    const warnings = [];
+    this._parts.forEach((part, index) => {
+        let result;
+        try {
+            result = part.optimizeForPrinting(settings);
+        } catch (error) {
+            throw new Error(`optimizeForPrinting: part ${index + 1}: ${error.message}`);
+        }
+        optimized.add(result);
+        changes.push(...result.printReport.changes.map((change) => ({ ...change, part: index + 1 })));
+        warnings.push(...result.printReport.warnings);
+    });
+    optimized.printReport = { settings, changes, warnings: [...new Set(warnings)], parts: this._parts.length };
     return optimized;
 };
 

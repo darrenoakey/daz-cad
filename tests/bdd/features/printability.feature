@@ -49,3 +49,12 @@ Feature: FDM printability optimization
     And I click "Apply Printability"
     Then the panel displays a printability validation error
     And the editor script remains unchanged
+
+  Scenario: Optimize every solid in an assembly
+    Given the 3D preview shows the optimized solid
+    When I enter a multi-part Assembly model
+    And I open Print for FDM again
+    And I click "Apply Printability"
+    Then every assembly solid is optimized independently
+    And the generated source retains the Assembly, colors, and print settings
+    And the Worker Console identifies the transformed part numbers

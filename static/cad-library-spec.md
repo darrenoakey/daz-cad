@@ -73,7 +73,7 @@ new Workplane(plane)
 
 ### Deterministic FDM printability
 
-**optimizeForPrinting(options)** applies conservative finishing rules to one valid Workplane solid and returns a Workplane with `printReport` containing `settings`, `changes`, and `warnings`.
+**optimizeForPrinting(options)** applies conservative finishing rules to a valid Workplane solid or independently to every part of an Assembly. It returns the same model kind with `printReport` containing `settings`, `changes`, and `warnings`; assembly changes also identify their one-based `part`.
 
 ```javascript
 const result = body.optimizeForPrinting({
@@ -85,7 +85,7 @@ for (const change of result.printReport.changes) console.log(change);
 result;
 ```
 
-The operation chamfers edges at minimum Z to relieve first-layer flare, then fillets non-preserved straight Z-parallel edges. Use comma-separated selectors in the **Print for FDM** panel. Preserve functional mating/datum corners and any required footprint. Invalid dimensions, selectors, assemblies, or failed geometry raise an error rather than silently returning an unchanged model.
+The operation chamfers edges at minimum Z to relieve first-layer flare, then fillets non-preserved straight Z-parallel edges. Use comma-separated selectors in the **Print for FDM** panel. Preserve functional mating/datum corners and any required footprint. Assemblies retain separate parts, placements, colors, modifiers, per-part metadata, and project-wide print settings. Invalid dimensions, selectors, empty assemblies, or failed geometry raise an error rather than silently returning an unchanged model.
 
 This is not a complete printability certification. Review orientation, overhangs, bridges, wall thickness, anisotropic loads, clearances, and the slicer preview. Use `splitAndJoin` when support reduction or assembly requires multiple parts. See `docs/printability.md` for the full AI design-review skill and references.
 
