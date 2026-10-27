@@ -29,6 +29,13 @@ Feature: FDM printability optimization
     Then the generated settings contain the mating-edge selector
     And the source model expression remains in the editor script
 
+  Scenario: Undo printability in one editor step
+    Given the 3D preview shows the optimized solid
+    When I undo the Printability source edit once
+    Then the exact original model source is restored
+    When I redo the Printability source edit
+    Then the editor script contains one Printability generated source block
+
   Scenario: Reapply printability without nesting generated wrappers
     Given the Printability panel is visible
     When I click "Apply Printability"

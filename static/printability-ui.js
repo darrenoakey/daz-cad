@@ -73,7 +73,14 @@ export class PrintabilityUI {
             const generated = await this.editor.validateJoinerySource(code);
             if (this.editor.editor.getValue() !== editorSource) return this._diagnose('The editor changed; nothing was applied.', true);
             if (!generated.ok) return this._diagnose(`${generated.error.replace('Cut/Join', 'Printability')} Your source remains unchanged.`, true);
-            this.editor.editor.setValue(code);
+            const model = this.editor.editor.getModel();
+            this.editor.editor.pushUndoStop();
+            this.editor.editor.executeEdits('printability', [{
+                range: model.getFullModelRange(),
+                text: code,
+                forceMoveMarkers: true,
+            }]);
+            this.editor.editor.pushUndoStop();
             this._diagnose('Applied deterministic FDM rules. Review the console report and slicer preview.');
             this.hide();
         } catch (error) {

@@ -1,11 +1,10 @@
 {
-  "last_run": "2026-10-27T04:22:59.400026+00:00",
-  "total_duration_ms": 11557,
+  "last_run": "2026-10-27T05:08:10.260131+00:00",
+  "total_duration_ms": 175399,
   "scenarios": {
     "file_browser.feature::Reach the CAD editor from the application root": {
-      "duration_ms": 55824,
+      "duration_ms": 62523,
       "history": [
-        79065,
         81493,
         68531,
         69596,
@@ -14,13 +13,13 @@
         69697,
         32497,
         94671,
-        55824
+        55824,
+        62523
       ]
     },
     "file_browser.feature::Open the file browser panel": {
-      "duration_ms": 55824,
+      "duration_ms": 62523,
       "history": [
-        79065,
         81493,
         68531,
         69596,
@@ -29,13 +28,13 @@
         69697,
         32497,
         94671,
-        55824
+        55824,
+        62523
       ]
     },
     "file_browser.feature::Example models without previews invite a render": {
-      "duration_ms": 144,
+      "duration_ms": 568,
       "history": [
-        750,
         85,
         1193,
         1231,
@@ -44,13 +43,13 @@
         43,
         1195,
         81,
-        144
+        144,
+        568
       ]
     },
     "file_browser.feature::Create a new model from the browser": {
-      "duration_ms": 12691,
+      "duration_ms": 15744,
       "history": [
-        18570,
         15475,
         22764,
         20060,
@@ -59,13 +58,13 @@
         14279,
         26623,
         20440,
-        12691
+        12691,
+        15744
       ]
     },
     "file_browser.feature::A successful render caches a transparent thumbnail": {
-      "duration_ms": 12691,
+      "duration_ms": 15744,
       "history": [
-        18570,
         15475,
         22764,
         20060,
@@ -74,13 +73,13 @@
         14279,
         26623,
         20440,
-        12691
+        12691,
+        15744
       ]
     },
     "file_browser.feature::Editing a model refreshes its cached thumbnail once": {
-      "duration_ms": 12691,
+      "duration_ms": 15744,
       "history": [
-        18570,
         15475,
         22764,
         20060,
@@ -89,13 +88,13 @@
         14279,
         26623,
         20440,
-        12691
+        12691,
+        15744
       ]
     },
     "file_browser.feature::Sort by name uses natural alphabetical order": {
-      "duration_ms": 18562,
+      "duration_ms": 32868,
       "history": [
-        49494,
         41928,
         42338,
         37627,
@@ -104,13 +103,13 @@
         26249,
         38407,
         57555,
-        18562
+        18562,
+        32868
       ]
     },
     "file_browser.feature::Reverse name sort lists Z to A": {
-      "duration_ms": 18562,
+      "duration_ms": 32868,
       "history": [
-        49494,
         41928,
         42338,
         37627,
@@ -119,13 +118,13 @@
         26249,
         38407,
         57555,
-        18562
+        18562,
+        32868
       ]
     },
     "file_browser.feature::Sort by recent lists newest modified first": {
-      "duration_ms": 18562,
+      "duration_ms": 32868,
       "history": [
-        49494,
         41928,
         42338,
         37627,
@@ -134,13 +133,13 @@
         26249,
         38407,
         57555,
-        18562
+        18562,
+        32868
       ]
     },
     "file_browser.feature::Sort preference persists across reload": {
-      "duration_ms": 18843,
+      "duration_ms": 152852,
       "history": [
-        260823,
         255934,
         224403,
         75270,
@@ -149,13 +148,13 @@
         152229,
         246109,
         250017,
-        18843
+        18843,
+        152852
       ]
     },
     "file_browser.feature::Search filters filenames and updates the count": {
-      "duration_ms": 4424,
+      "duration_ms": 7063,
       "history": [
-        9587,
         15754,
         10563,
         10224,
@@ -164,13 +163,13 @@
         3781,
         10979,
         7371,
-        4424
+        4424,
+        7063
       ]
     },
     "file_browser.feature::Escape closes the panel and refocuses the selector": {
-      "duration_ms": 1849,
+      "duration_ms": 2720,
       "history": [
-        3673,
         7674,
         4488,
         7060,
@@ -179,13 +178,13 @@
         1774,
         2504,
         2821,
-        1849
+        1849,
+        2720
       ]
     },
     "file_browser.feature::Clicking outside closes the panel": {
-      "duration_ms": 1849,
+      "duration_ms": 2720,
       "history": [
-        3673,
         7674,
         4488,
         7060,
@@ -194,13 +193,13 @@
         1774,
         2504,
         2821,
-        1849
+        1849,
+        2720
       ]
     },
     "file_browser.feature::Selecting a card loads the model and persists across reload": {
-      "duration_ms": 243732,
+      "duration_ms": 175399,
       "history": [
-        234933,
         254881,
         245842,
         230509,
@@ -209,13 +208,13 @@
         301041,
         160807,
         246449,
-        243732
+        243732,
+        175399
       ]
     },
     "file_browser.feature::A failed render keeps the last saved preview and source": {
-      "duration_ms": 20423,
+      "duration_ms": 177761,
       "history": [
-        268538,
         258442,
         223429,
         89624,
@@ -224,13 +223,13 @@
         160464,
         255150,
         240749,
-        20423
+        20423,
+        177761
       ]
     },
     "file_browser.feature::Reopening an unchanged model reuses its cached preview": {
-      "duration_ms": 46349,
+      "duration_ms": 50026,
       "history": [
-        73375,
         165923,
         54625,
         68522,
@@ -239,13 +238,13 @@
         62558,
         25882,
         80494,
-        46349
+        46349,
+        50026
       ]
     },
     "file_browser.feature::Browsing and sorting never re-render models": {
-      "duration_ms": 2317,
+      "duration_ms": 4657,
       "history": [
-        7994,
         8419,
         8224,
         6611,
@@ -254,7 +253,8 @@
         7736,
         6537,
         4196,
-        2317
+        2317,
+        4657
       ]
     },
     "gridfinity-generator.feature::Reach the generator menu from the CAD editor": {
@@ -282,93 +282,103 @@
       ]
     },
     "printability.feature::Reach printability controls from the application root": {
-      "duration_ms": 11557,
+      "duration_ms": 85720,
       "history": [
-        96912,
-        80918,
-        62043,
-        112422,
-        185887,
         90858,
         53093,
         101192,
         60475,
-        11557
+        11557,
+        102292,
+        92929,
+        94584,
+        6433,
+        85720
       ]
     },
     "printability.feature::Open the printability panel": {
-      "duration_ms": 11557,
+      "duration_ms": 85720,
       "history": [
-        96912,
-        80918,
-        62043,
-        112422,
-        185887,
         90858,
         53093,
         101192,
         60475,
-        11557
+        11557,
+        102292,
+        92929,
+        94584,
+        6433,
+        85720
       ]
     },
     "printability.feature::Apply deterministic printability transforms": {
-      "duration_ms": 11557,
+      "duration_ms": 85720,
       "history": [
-        96912,
-        80918,
-        62043,
-        112422,
-        185887,
         90858,
         53093,
         101192,
         60475,
-        11557
+        11557,
+        102292,
+        92929,
+        94584,
+        6433,
+        85720
       ]
     },
     "printability.feature::Preserve explicitly identified mating edges": {
-      "duration_ms": 11557,
+      "duration_ms": 85720,
       "history": [
-        96912,
-        80918,
-        62043,
-        112422,
-        185887,
         90858,
         53093,
         101192,
         60475,
-        11557
+        11557,
+        102292,
+        92929,
+        94584,
+        6433,
+        85720
       ]
     },
     "printability.feature::Reapply printability without nesting generated wrappers": {
-      "duration_ms": 11557,
+      "duration_ms": 85720,
       "history": [
-        96912,
-        80918,
-        62043,
-        112422,
-        185887,
         90858,
         53093,
         101192,
         60475,
-        11557
+        11557,
+        102292,
+        92929,
+        94584,
+        6433,
+        85720
       ]
     },
     "printability.feature::Preserve editable source after invalid settings": {
-      "duration_ms": 11557,
+      "duration_ms": 85720,
       "history": [
-        96912,
-        80918,
-        62043,
-        112422,
-        185887,
         90858,
         53093,
         101192,
         60475,
-        11557
+        11557,
+        102292,
+        92929,
+        94584,
+        6433,
+        85720
+      ]
+    },
+    "printability.feature::Undo printability in one editor step": {
+      "duration_ms": 85720,
+      "history": [
+        102292,
+        92929,
+        94584,
+        6433,
+        85720
       ]
     }
   }

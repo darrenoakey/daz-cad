@@ -59,6 +59,7 @@ SCENARIO_NAMES = {
         "Open the printability panel",
         "Apply deterministic printability transforms",
         "Preserve explicitly identified mating edges",
+        "Undo printability in one editor step",
         "Reapply printability without nesting generated wrappers",
         "Preserve editable source after invalid settings",
     ],
@@ -685,7 +686,18 @@ def test_printability_button_applies_audited_reversible_code(browser_page):
     expect(page.locator("#printability-chamfer")).to_be_visible()
     page.locator("#printability-preserve").fill("<X and <Y")
     page.locator("#printability-apply").click()
-    expect(surface).to_contain_text("optimizeForPrinting", timeout=90000)
+    page.wait_for_function(
+        """() => monaco.editor.getModels()[0].getValue().includes('optimizeForPrinting') ||
+            document.querySelector('#printability-diagnostics').classList.contains('error')""",
+        timeout=240000,
+    )
+    try:
+        expect(surface).to_contain_text("optimizeForPrinting", timeout=90000)
+    except AssertionError as error:
+        diagnostics = page.locator("#printability-diagnostics").inner_text()
+        raise AssertionError(
+            f"Printability did not apply: {diagnostics}; browser={page._fb_diagnostics[-20:]}"
+        ) from error
     expect(surface).to_contain_text("BEGIN DAZ-CAD PRINTABILITY SOURCE")
     expect(surface).to_contain_text("Chamfer bed-contact edges")
     expect(surface).to_contain_text("new Workplane")
@@ -693,6 +705,17 @@ def test_printability_button_applies_audited_reversible_code(browser_page):
     expect(page.locator("#console-output")).to_contain_text("base-chamfer", timeout=240000)
     expect(page.locator("#console-output")).to_contain_text("vertical-fillet", timeout=240000)
     expect(page.locator("#download-stl-btn")).to_be_enabled(timeout=30000)
+
+    # One editor undo restores the exact source; redo returns the same audited
+    # transform so the following idempotence check still starts optimized.
+    surface.click(position={"x": 20, "y": 10})
+    page.keyboard.press("Meta+Z")
+    expect(surface).not_to_contain_text("BEGIN DAZ-CAD PRINTABILITY SOURCE", timeout=10000)
+    assert page.evaluate("() => monaco.editor.getModels()[0].getValue()") == (
+        'const result = new Workplane("XY").box(30, 20, 12);\nresult;'
+    )
+    page.keyboard.press("Meta+Shift+Z")
+    expect(surface).to_contain_text("BEGIN DAZ-CAD PRINTABILITY SOURCE", timeout=10000)
 
     page.locator("#printability-btn").click()
     expect(page.locator("#printability-preserve")).to_have_value("<X and <Y")

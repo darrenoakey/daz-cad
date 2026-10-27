@@ -1510,9 +1510,12 @@ result;
             });
 
             if (!response.ok) throw new Error('Failed to create file');
+            const metadata = await response.json();
 
-            // Load the new file
+            // Load the new file and bind its actual revision before the watcher
+            // can mistake the previous file's mtime for an external change.
             this._currentFile = filename;
+            this._fileMtime = metadata.mtime;
             this.editor.setValue(templateContent);
             this._updateFilenameDisplay();
             this._newFileInput.value = '';
