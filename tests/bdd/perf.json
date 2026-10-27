@@ -1,12 +1,10 @@
 {
-  "last_run": "2026-10-17T21:34:12.180535+00:00",
-  "total_duration_ms": 116890,
+  "last_run": "2026-10-26T23:22:55.014437+00:00",
+  "total_duration_ms": 402498,
   "scenarios": {
     "file_browser.feature::Reach the CAD editor from the application root": {
-      "duration_ms": 9164,
+      "duration_ms": 19493,
       "history": [
-        6201,
-        5589,
         4256,
         4935,
         8349,
@@ -14,14 +12,14 @@
         29277,
         7725,
         6011,
-        9164
+        9164,
+        10952,
+        19493
       ]
     },
     "file_browser.feature::Open the file browser panel": {
-      "duration_ms": 9164,
+      "duration_ms": 19493,
       "history": [
-        6201,
-        5589,
         4256,
         4935,
         8349,
@@ -29,13 +27,14 @@
         29277,
         7725,
         6011,
-        9164
+        9164,
+        10952,
+        19493
       ]
     },
     "file_browser.feature::Example models without previews invite a render": {
-      "duration_ms": 18,
+      "duration_ms": 275,
       "history": [
-        5058,
         10,
         11,
         15,
@@ -43,11 +42,13 @@
         150,
         260,
         23,
-        18
+        18,
+        24,
+        275
       ]
     },
     "file_browser.feature::Create a new model from the browser": {
-      "duration_ms": 5375,
+      "duration_ms": 6353,
       "history": [
         5793,
         6303,
@@ -56,11 +57,13 @@
         10663,
         5772,
         6541,
-        5375
+        5375,
+        9315,
+        6353
       ]
     },
     "file_browser.feature::A successful render caches a transparent thumbnail": {
-      "duration_ms": 5375,
+      "duration_ms": 6353,
       "history": [
         5793,
         6303,
@@ -69,11 +72,13 @@
         10663,
         5772,
         6541,
-        5375
+        5375,
+        9315,
+        6353
       ]
     },
     "file_browser.feature::Editing a model refreshes its cached thumbnail once": {
-      "duration_ms": 5375,
+      "duration_ms": 6353,
       "history": [
         5793,
         6303,
@@ -82,11 +87,13 @@
         10663,
         5772,
         6541,
-        5375
+        5375,
+        9315,
+        6353
       ]
     },
     "file_browser.feature::Sort by name uses natural alphabetical order": {
-      "duration_ms": 10932,
+      "duration_ms": 12067,
       "history": [
         1960,
         6309,
@@ -95,11 +102,13 @@
         18857,
         8944,
         12115,
-        10932
+        10932,
+        10391,
+        12067
       ]
     },
     "file_browser.feature::Reverse name sort lists Z to A": {
-      "duration_ms": 10932,
+      "duration_ms": 12067,
       "history": [
         1960,
         6309,
@@ -108,11 +117,13 @@
         18857,
         8944,
         12115,
-        10932
+        10932,
+        10391,
+        12067
       ]
     },
     "file_browser.feature::Sort by recent lists newest modified first": {
-      "duration_ms": 10932,
+      "duration_ms": 12067,
       "history": [
         1960,
         6309,
@@ -121,75 +132,110 @@
         18857,
         8944,
         12115,
-        10932
+        10932,
+        10391,
+        12067
       ]
     },
     "file_browser.feature::Sort preference persists across reload": {
-      "duration_ms": 41521,
+      "duration_ms": 100414,
       "history": [
         35485,
         95390,
         91754,
         38320,
         52712,
-        41521
+        41521,
+        76624,
+        100414
       ]
     },
     "file_browser.feature::Search filters filenames and updates the count": {
-      "duration_ms": 431,
+      "duration_ms": 1571,
       "history": [
         1163,
         396,
         1650,
-        431
+        431,
+        1571
       ]
     },
     "file_browser.feature::Escape closes the panel and refocuses the selector": {
-      "duration_ms": 164,
+      "duration_ms": 321,
       "history": [
         30740,
         136,
         506,
-        164
+        164,
+        321
       ]
     },
     "file_browser.feature::Clicking outside closes the panel": {
-      "duration_ms": 164,
+      "duration_ms": 321,
       "history": [
         30740,
         136,
         506,
-        164
+        164,
+        321
       ]
     },
     "file_browser.feature::Selecting a card loads the model and persists across reload": {
-      "duration_ms": 24808,
+      "duration_ms": 58146,
       "history": [
         34808,
         27948,
-        24808
+        24808,
+        58146
       ]
     },
     "file_browser.feature::A failed render keeps the last saved preview and source": {
-      "duration_ms": 23774,
+      "duration_ms": 52165,
       "history": [
         21486,
         31791,
-        23774
+        23774,
+        52165
       ]
     },
     "file_browser.feature::Reopening an unchanged model reuses its cached preview": {
-      "duration_ms": 668,
+      "duration_ms": 2380,
       "history": [
         1304,
-        668
+        668,
+        2380
       ]
     },
     "file_browser.feature::Browsing and sorting never re-render models": {
-      "duration_ms": 35,
+      "duration_ms": 135,
       "history": [
         152,
-        35
+        35,
+        135
+      ]
+    },
+    "gridfinity-generator.feature::Reach the generator menu from the CAD editor": {
+      "duration_ms": 402498,
+      "history": [
+        402498
+      ]
+    },
+    "gridfinity-generator.feature::Open the Gridfinity baseplate generator": {
+      "duration_ms": 402498,
+      "history": [
+        402498
+      ]
+    },
+    "gridfinity-generator.feature::Plan balanced segments and reject invalid dimensions": {
+      "duration_ms": 402498,
+      "history": [
+        402498
+      ]
+    },
+    "gridfinity-generator.feature::Generate balanced baseplate segments and export every part": {
+      "duration_ms": 402498,
+      "history": [
+        402498
       ]
     }
   }

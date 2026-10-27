@@ -13,6 +13,8 @@ import './patterns.js';  // Extends Workplane with unified cutPattern()
 import './naming.js';    // Extends Workplane with named references
 import { Joinery } from './joinery.js';
 import { JoineryUI } from './joinery-ui.js';
+import './gridfinity-generator.js';
+import { GeneratorUI } from './generator-ui.js';
 import { appBase, appUrl } from './app-base.js';
 import { loadOpenCascade } from './opencascade.js';
 import * as acorn from 'https://cdn.jsdelivr.net/npm/acorn@8.14.1/+esm';
@@ -39,6 +41,7 @@ class CADEditor {
         this._downloadSTLBtn = null;
         this._download3MFBtn = null;
         this.joineryUI = null;
+        this.generatorUI = null;
         this._joineryValidationRequests = new Map();
 
         // Web Worker for background rendering
@@ -119,6 +122,7 @@ class CADEditor {
 
         // The plane is visible in the Three.js viewer; methods come from the library.
         this.joineryUI = new JoineryUI(this, Joinery.methods);
+        this.generatorUI = new GeneratorUI(this);
 
         // Initialize file manager
         this._initFileManager();
@@ -249,6 +253,15 @@ class CADEditor {
                              * @example Gridfinity.baseplate({ x: 3, y: 2 })
                              */
                             baseplate(options: { x: number; y: number; fillet?: boolean; chamfer?: boolean }): Workplane;
+
+                            /** Plan balanced Gridfinity baseplate segments for the available build area. */
+                            planBaseplateSegments(options: { x: number; y: number; buildArea?: number; margin?: number; snapConnectors?: boolean; extraConnectors?: number }): {
+                                xSegments: number[]; ySegments: number[]; maxUnits: number; seamConnectors: number; extraConnectors: number; totalConnectors: number;
+                                segments: Array<{ x: number; y: number; xStart: number; yStart: number; xIndex: number; yIndex: number }>;
+                            };
+
+                            /** Create a balanced baseplate assembly with snap-key seams and optional corner mouse ears. */
+                            segmentedBaseplate(options: { x: number; y: number; buildArea?: number; margin?: number; mouseEars?: boolean; snapConnectors?: boolean; extraConnectors?: number }): Assembly;
                         };
 
                         /** CAD Workplane for creating 3D shapes */
@@ -419,7 +432,7 @@ class CADEditor {
                             cutAbove(axis: "X" | "Y" | "Z"): Workplane;
 
                             /** Split this Workplane on a plane and add a printable connector system. */
-                            splitAndJoin(options: { plane: { origin: [number, number, number]; normal: [number, number, number]; up?: [number, number, number] }; method: JoineryMethod; size?: number; depth?: number; clearance?: number; positions?: Array<[number, number]>; count?: number; wall?: number; detent?: boolean; wedgePreload?: number }): JointResult;
+                            splitAndJoin(options: { plane: { origin: [number, number, number]; normal: [number, number, number]; up?: [number, number, number] }; method: JoineryMethod; size?: number; depth?: number; clearance?: number; positions?: Array<[number, number]>; count?: number; wall?: number; detent?: boolean; wedgePreload?: number; allowPartialAnchors?: boolean }): JointResult;
 
                             /** Export to STL */
                             toSTL(linearDeflection?: number, angularDeflection?: number): Blob;

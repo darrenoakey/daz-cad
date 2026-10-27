@@ -765,6 +765,7 @@
         }
     </style>
     <link rel="stylesheet" href="/static/joinery-ui.css">
+    <link rel="stylesheet" href="/static/generator-ui.css?v=5a29fbd72a88" data-app-style="generator-ui.css">
     <link rel="stylesheet" href="/static/file-browser.css?v=724b1078bf12" data-app-style="file-browser.css">
     <!-- Dynamic import map with cache busters for local modules -->
     <script>
@@ -774,6 +775,10 @@
         const appBase = (location.pathname.match(/^(\/proxy\/[^/]+)(?:\/|$)/) || ['', ''])[1];
         const joineryCss = document.querySelector('link[href="/static/joinery-ui.css"]');
         if (joineryCss) joineryCss.href = `${appBase}/static/joinery-ui.css`;
+        const generatorCss = document.querySelector('[data-app-style="generator-ui.css"]');
+        if (generatorCss && appBase && generatorCss.getAttribute('href').startsWith('/static/')) {
+            generatorCss.href = `${appBase}${generatorCss.getAttribute('href')}`;
+        }
         const browserCss = document.querySelector('[data-app-style="file-browser.css"]');
         if (browserCss && appBase && browserCss.getAttribute('href').startsWith('/static/')) {
             browserCss.href = `${appBase}${browserCss.getAttribute('href')}`;
@@ -870,6 +875,7 @@
                             </div>
                         </div>
                         <button id="cut-join-btn" class="toolbar-btn" title="Split a Workplane and add printable joinery">Cut &amp; Join</button>
+                        <button id="generator-btn" class="toolbar-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="generator-panel">Generators</button>
                         <div class="opacity-control">
                             <label for="opacity-slider">Opacity:</label>
                             <input type="range" id="opacity-slider" min="10" max="100" value="100">
@@ -894,6 +900,21 @@
                     </div>
                 </div>
                 <div id="viewer-container"></div>
+                <section id="generator-panel" class="generator-panel" hidden aria-label="Generators">
+                    <header><strong>Generators</strong><button id="generator-close" aria-label="Close Generators">×</button></header>
+                    <label for="generator-kind">Choose a generator</label>
+                    <select id="generator-kind" aria-label="Generator"></select>
+                    <div class="generator-fields" id="generator-fields-segmented-gridfinity" data-generator-fields="segmented-gridfinity">
+                        <label for="generator-x">Width (grid units)<input id="generator-x" type="number" min="1" max="100" value="8" step="1"></label>
+                        <label for="generator-y">Depth (grid units)<input id="generator-y" type="number" min="1" max="100" value="6" step="1"></label>
+                        <label for="generator-bed-area">Build area (mm)<input id="generator-bed-area" type="number" min="42" max="500" value="200" step="1"></label>
+                        <label class="generator-check"><input id="generator-mouse-ears" type="checkbox" checked> Add corner mouse ears</label>
+                        <label class="generator-check"><input id="generator-snap-connectors" type="checkbox" checked> Add snap-fit connectors at segment seams</label>
+                        <label for="generator-extra-connectors">Extra connectors<input id="generator-extra-connectors" type="number" min="0" max="12" value="3" step="1"></label>
+                    </div>
+                    <p id="generator-summary" role="status"></p>
+                    <button id="generator-create" class="toolbar-btn">Generate baseplate</button>
+                </section>
                 <section id="joinery-panel" class="joinery-panel" hidden aria-label="Cut and Join">
                     <header><strong>Cut / Join</strong><button id="joinery-close" aria-label="Close Cut and Join">×</button></header>
                     <label>Connector <select id="joinery-method"></select></label>

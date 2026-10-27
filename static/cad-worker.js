@@ -15,6 +15,9 @@ import { Joinery } from './joinery.js'; // Extends Workplane with splitAndJoin()
 let oc = null;
 let isInitialized = false;
 let isRendering = false;
+// Reuse the successful preview object for exports of the exact same source.
+let lastRenderedCode = null;
+let lastRenderedResult = null;
 
 // Intercept console to forward to main thread
 const originalConsole = {
@@ -120,6 +123,7 @@ function executeCode(code) {
     }
 
     // Convert to mesh data
+    let meshData;
     if (result.isAssembly) {
         const meshes = result.toMesh(0.1, 0.5);
         // Collect face labels from each part
@@ -131,12 +135,15 @@ function executeCode(code) {
                 }
             }
         }
-        return { isAssembly: true, meshes, faceLabels: assemblyFaceLabels.length > 0 ? assemblyFaceLabels[0] : null };
+        meshData = { isAssembly: true, meshes, faceLabels: assemblyFaceLabels.length > 0 ? assemblyFaceLabels[0] : null };
     } else {
         const mesh = result.toMesh(0.1, 0.5);
         const faceLabels = typeof result.getFaceLabels === 'function' ? result.getFaceLabels() : null;
-        return { isAssembly: false, mesh, faceLabels };
+        meshData = { isAssembly: false, mesh, faceLabels };
     }
+    lastRenderedCode = code;
+    lastRenderedResult = result;
+    return meshData;
 }
 
 // Execute code and return the raw CAD result (for exports)
@@ -147,6 +154,14 @@ function executeForExport(code) {
 
     const fn = new Function('Workplane', 'Assembly', 'Profiler', 'loadFont', 'getDefaultFont', 'Gridfinity', 'Joinery', 'oc', code + '\nreturn result;');
     return fn(Workplane, Assembly, Profiler, loadFont, getDefaultFont, Gridfinity, Joinery, oc);
+}
+
+function resultForExport(code) {
+    if (lastRenderedCode === code && lastRenderedResult) {
+        console.log('[Worker] Reusing the rendered CAD result for export');
+        return lastRenderedResult;
+    }
+    return executeForExport(code);
 }
 
 // Handle messages from main thread
@@ -171,6 +186,8 @@ self.onmessage = async function(e) {
             return;
         }
 
+        lastRenderedCode = null;
+        lastRenderedResult = null;
         isRendering = true;
         postStatus('compiling', 'Compiling...');
         console.log('[Worker] Started rendering');
@@ -213,7 +230,7 @@ self.onmessage = async function(e) {
         }
 
         try {
-            const result = executeForExport(code);
+            const result = resultForExport(code);
             if (!result || !result.toSTL) {
                 throw new Error('No exportable result');
             }
@@ -231,7 +248,7 @@ self.onmessage = async function(e) {
         }
 
         try {
-            const result = executeForExport(code);
+            const result = resultForExport(code);
             if (!result || !result.to3MF) {
                 throw new Error('No exportable result (3MF requires Assembly)');
             }

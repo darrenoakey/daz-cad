@@ -158,8 +158,11 @@ function verifyPlacement(oc, source, split, o) {
       throw new Error("splitAndJoin: connector placement misses material");
     }
     const expected = volume(oc, probe);
+    // Open-frame connector sites are intentionally porous, but must retain a
+    // meaningful material fraction and independently anchor both cut halves.
+    const minimumProbeFraction = o.allowPartialAnchors ? 0.12 : 1 - 1e-6;
     if (
-      volume(oc, total) < expected * (1 - 1e-6) ||
+      volume(oc, total) < expected * minimumProbeFraction ||
       volume(oc, lower) < expected * 0.025 ||
       volume(oc, upper) < expected * 0.025
     )
@@ -270,6 +273,9 @@ function parseOptions(options) {
     (Array.isArray(options.positions) ? options.positions.length : 1);
   if (!Number.isInteger(count) || count < 1 || count > 4)
     throw new Error("splitAndJoin: count must be an integer from 1 to 4");
+  const allowPartialAnchors = options.allowPartialAnchors ?? false;
+  if (typeof allowPartialAnchors !== "boolean")
+    throw new Error("splitAndJoin: allowPartialAnchors must be a boolean");
   const autoPlacement = options.positions === undefined;
   let positions;
   if (options.positions !== undefined) {
@@ -315,6 +321,7 @@ function parseOptions(options) {
     wedgePreload: options.wedgePreload ?? 0,
     positions,
     autoPlacement,
+    allowPartialAnchors,
     frame: frameFor(options.plane),
   };
 }

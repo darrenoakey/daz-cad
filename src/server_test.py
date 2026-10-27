@@ -1803,7 +1803,7 @@ def test_monaco_type_definitions_match_library(cad_page):
                 'extrudeOn', 'cutInto', 'centerOn', 'alignTo', 'attachTo'
             ];
 
-            const expectedGridfinityMethods = ['baseplate', 'bin', 'fitBin', 'plug'];
+            const expectedGridfinityMethods = ['baseplate', 'bin', 'fitBin', 'planBaseplateSegments', 'segmentedBaseplate', 'plug'];
             const expectedGridfinityConstants = ['UNIT_SIZE', 'UNIT_HEIGHT', 'BASE_HEIGHT', 'BP_HEIGHT', 'BP_FLOOR'];
 
             const expectedAssemblyMethods = ['add', 'printSettings', 'toMesh', 'toSTL', 'to3MF'];

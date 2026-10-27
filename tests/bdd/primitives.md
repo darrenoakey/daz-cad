@@ -36,6 +36,28 @@ each `*_test.py`, not a separate runner.
 | `I record network requests` | `_attach_recorders(page)` tracks request lifecycle and writes |
 | `no render or thumbnail save requests were made` | `_await_quiet` then assert the writes list is empty |
 
+## Gridfinity generator primitives (`src/gridfinity_generator_test.py`)
+
+| Step phrase | Implementation |
+| --- | --- |
+| `the editor toolbar contains "Generators"` | visible `#generator-btn` |
+| `I click "Generators" in the toolbar` | click `#generator-btn` |
+| `the Generators panel is visible` | expect `#generator-panel` visible |
+| `the generator menu offers "Segmented Gridfinity baseplate"` | selected option text in `#generator-kind` |
+| `I set the Gridfinity width to "N" units` / `depth` | fill `#generator-x` / `#generator-y` |
+| `I set the printer build area to "N" mm` | fill `#generator-bed-area` |
+| `the panel reports four balanced segments with remainder units distributed evenly` | inspect `#generator-summary` for balanced axis partitions |
+| `the panel shows a positive-integer validation error` | fill `#generator-x` with zero; assert summary error state |
+| `I click "Generate baseplate"` | click `#generator-create`; assert editable Monaco source and rendered preview |
+| `I click the "3MF" export button` | click `#download-3mf-btn` while recording a browser download |
+| `one 3MF download contains both baseplate segments and their snap connectors` | inspect the downloaded real 3MF package's mesh objects and names |
+
+The module maps these four scenarios to its Playwright test and records per-run durations in `tests/bdd/perf.json`. New generator modules register through `static/generator-registry.js`; the registry-backed UI test in `src/startup_path_test.py` proves late registration adds a selectable form and source generator without changing the menu controller.
+
+## Long-running geometry checks
+
+`src/gridfinity_generator_test.py::test_generator_ui_creates_segmented_model_and_one_complete_3mf` runs real OpenCascade segmentation, snap booleans, mouse-ear unions, and 3MF export; a cold run has exceeded five minutes. Always launch this test detached with a logfile and durable exit-code file, then use the AgentD3 `sleep` tool to resume and inspect that exact job's verdict/log. Never run it inline, poll it, or concurrently with another OpenCascade browser test. A failed result must be diagnosed before another run.
+
 ## Recording primitives
 
 - `_attach_recorders(page)` tracks the actual in-flight requests in

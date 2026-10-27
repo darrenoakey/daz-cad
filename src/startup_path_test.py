@@ -88,6 +88,33 @@ def test_file_browser_stylesheet_prefixing_is_idempotent(server, shared_browser)
 
 
 # ##################################################################
+# generator stylesheet proxy prefixing
+# preserve content hash while mapping the app stylesheet through auto-gui proxy
+
+def test_generator_stylesheet_proxy_prefixing(server, shared_browser):
+    html = (STATIC / "editor.html").read_text()
+    initializer = re.search(r"const generatorCss = .*?\n        }", html, re.DOTALL)
+    assert initializer is not None
+    page = shared_browser.new_page()
+    try:
+        page.goto(server + "/health", wait_until="domcontentloaded")
+        actual = page.evaluate(
+            """({initializer, initial}) => {
+                const link = document.createElement('link');
+                link.dataset.appStyle = 'generator-ui.css';
+                link.setAttribute('href', initial);
+                document.head.append(link);
+                new Function('appBase', initializer)('/proxy/daz-cad');
+                return link.getAttribute('href');
+            }""",
+            {"initializer": initializer.group(), "initial": "/static/generator-ui.css?v=asset-version"},
+        )
+        assert actual == "/proxy/daz-cad/static/generator-ui.css?v=asset-version"
+    finally:
+        page.close()
+
+
+# ##################################################################
 # file browser stylesheet version
 # the checked-in URL must change with CSS bytes rather than remaining a stale literal
 def test_file_browser_stylesheet_version_matches_content():
@@ -95,6 +122,125 @@ def test_file_browser_stylesheet_version_matches_content():
     digest = hashlib.sha256((STATIC / "file-browser.css").read_bytes()).hexdigest()[:12]
     versions = re.findall(r'href="/static/file-browser\.css\?v=([0-9a-f]+)"', html)
     assert versions == [digest]
+
+
+def test_generator_stylesheet_version_matches_content():
+    html = (STATIC / "editor.html").read_text()
+    digest = hashlib.sha256((STATIC / "generator-ui.css").read_bytes()).hexdigest()[:12]
+    versions = re.findall(r'href="/static/generator-ui\.css\?v=([0-9a-f]+)"', html)
+    assert versions == [digest]
+
+
+def test_generator_registry_accepts_future_generators_and_drives_the_menu():
+    script = """
+import { listGenerators, registerGenerator } from './static/generator-registry.js';
+const future = {
+  id: 'future-example', label: 'Future example', fieldsId: 'future-example',
+  readOptions: () => ({}), summarize: () => 'Ready',
+  generate: () => ({ source: 'result;', summary: 'Generated.' }),
+};
+registerGenerator(future);
+const registered = listGenerators();
+if (registered.length !== 1 || registered[0].id !== future.id || registered[0].label !== future.label) {
+  throw new Error(JSON.stringify(registered));
+}
+let duplicateRejected = false;
+try { registerGenerator(future); } catch (error) { duplicateRejected = error.message.includes('already registered'); }
+if (!duplicateRejected) throw new Error('duplicate generator registration was accepted');
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    html = (STATIC / "editor.html").read_text()
+    ui = (STATIC / "generator-ui.js").read_text()
+    gridfinity_generator = (STATIC / "gridfinity-generator.js").read_text()
+    selector = re.search(r'<select id="generator-kind"[^>]*>(.*?)</select>', html, re.DOTALL)
+    assert selector is not None and "<option" not in selector.group(1)
+    fields = re.search(
+        r'<div class="generator-fields"[^>]*data-generator-fields="segmented-gridfinity">(.*?)</div>', html, re.DOTALL
+    )
+    assert fields is not None
+    for control in ("generator-x", "generator-y", "generator-bed-area", "generator-mouse-ears", "generator-snap-connectors", "generator-extra-connectors"):
+        assert f'id="{control}"' in fields.group(1)
+    assert "const options = listGenerators().map" in ui
+    assert "this.kind?.addEventListener('change'" in ui
+    assert "group.hidden = group.dataset.generatorFields !== id" in ui
+    assert "id: 'segmented-gridfinity'" in gridfinity_generator
+
+
+def test_generator_ui_switches_registered_forms_and_generates_source(server, shared_browser):
+    page = shared_browser.new_page()
+    page.goto(f"{server}/health", wait_until="domcontentloaded")
+    page.set_content("""<!doctype html><body>
+<button id="generator-btn"></button>
+<section id="generator-panel">
+  <button id="generator-close"></button>
+  <select id="generator-kind"></select>
+  <div data-generator-fields="first"><input value="alpha"></div>
+  <div data-generator-fields="second" hidden><input value="beta"></div>
+  <p id="generator-summary"></p>
+  <button id="generator-create"></button>
+</section></body>""")
+    try:
+        page.evaluate("""async () => {
+            const { registerGenerator } = await import('/static/generator-registry.js');
+            const definition = (id) => ({
+                id, label: `${id} generator`, fieldsId: id,
+                readOptions: fields => ({ value: fields.querySelector('input').value }),
+                summarize: options => `${id}: ${options.value}`,
+                generate: options => ({ source: `${id}(${options.value});`, summary: `Generated ${id}.` })
+            });
+            registerGenerator(definition('first'));
+            const { GeneratorUI } = await import('/static/generator-ui.js');
+            window.generatorTestUI = new GeneratorUI({ editor: { setValue: source => { window.generatedSource = source; } } });
+            registerGenerator(definition('second'));
+        }""")
+        options = page.locator("#generator-kind option").all_text_contents()
+        assert options == ["first generator", "second generator"]
+        assert page.locator('[data-generator-fields="first"]').is_visible()
+        page.locator("#generator-kind").select_option("second")
+        assert page.locator("#generator-summary").inner_text() == "second: beta"
+        assert page.locator('[data-generator-fields="second"]').is_visible()
+        assert not page.locator('[data-generator-fields="first"]').is_visible()
+        page.locator("#generator-create").click()
+        page.wait_for_function("() => window.generatedSource === 'second(beta);'")
+    finally:
+        page.close()
+
+
+def test_gridfinity_y_seam_connectors_are_centered_in_each_column():
+    script = """
+import { connectorPositionsForSeam } from './static/gridfinity-seam-positions.js';
+const left = connectorPositionsForSeam(2, 42, 'y', { minX: -42, maxX: 0 });
+const right = connectorPositionsForSeam(2, 42, 'y', { minX: 0, maxX: 42 });
+const xSeam = connectorPositionsForSeam(2, 42, 'x', null);
+const actual = JSON.stringify({ left, right, xSeam });
+const expected = JSON.stringify({ left: [[21, 0]], right: [[-21, 0]], xSeam: [[0, 0]] });
+if (actual !== expected) throw new Error(`unexpected seam positions: ${actual}`);
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_gridfinity_generator_api_types_match_implementation_and_ui():
+    editor = (STATIC / "editor.js").read_text()
+    gridfinity = (STATIC / "gridfinity.js").read_text()
+    generator_ui = (STATIC / "generator-ui.js").read_text()
+    gridfinity_generator = (STATIC / "gridfinity-generator.js").read_text()
+    server_tests = (ROOT / "src" / "server_test.py").read_text()
+    expected_methods = re.search(r"const expectedGridfinityMethods = \[(.*?)\];", server_tests, re.DOTALL)
+    assert expected_methods is not None
+    for method in ("planBaseplateSegments", "segmentedBaseplate"):
+        assert f"{method}(options:" in editor
+        assert f"Gridfinity.{method} =" in gridfinity
+        assert f"'{method}'" in expected_methods.group(1)
+    assert "import './gridfinity-generator.js';" in editor
+    assert "Gridfinity.segmentedBaseplate(${JSON.stringify(options, null, 4)})" in gridfinity_generator
+    assert "listGenerators().map" in generator_ui
 
 
 # ##################################################################
@@ -129,13 +275,21 @@ def test_standalone_bundle_includes_file_browser_assets(tmp_path):
     bundler = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bundler)
     assert "file-browser.css" in bundler.CSS_FILES
+    assert "generator-ui.css" in bundler.CSS_FILES
+    assert "generator-ui.js" in bundler._collect_js_files(STATIC)
+    assert "generator-registry.js" in bundler._collect_js_files(STATIC)
+    assert "gridfinity-generator.js" in bundler._collect_js_files(STATIC)
+    assert "gridfinity-seam-positions.js" in bundler._collect_js_files(STATIC)
     assert "app-base.js" in bundler._collect_js_files(STATIC)
     bundler.bundle(ROOT, tmp_path)
     build_hash = bundler._compute_build_hash(STATIC)
     html = (tmp_path / "editor-standalone.html").read_text()
     assert f'href="./static/file-browser.css?v={build_hash}"' in html
+    assert f'href="./static/generator-ui.css?v={build_hash}"' in html
     assert 'href="/static/file-browser.css' not in html
+    assert 'href="/static/generator-ui.css' not in html
     assert (tmp_path / "static/file-browser.css").read_bytes() == (STATIC / "file-browser.css").read_bytes()
+    assert (tmp_path / "static/generator-ui.css").read_bytes() == (STATIC / "generator-ui.css").read_bytes()
     assert (tmp_path / "static/app-base.js").is_file()
     editor = (tmp_path / "static/editor.js").read_text()
     assert f"from './app-base.js?v={build_hash}'" in editor

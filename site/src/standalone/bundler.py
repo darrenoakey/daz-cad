@@ -87,6 +87,7 @@ JS_FILES = [
     "naming.js",
     "joinery.js",
     "joinery-ui.js",
+    "generator-ui.js",
     "gridfinity.js",
     "cad-worker.js",
     "opentype.module.js",
@@ -95,6 +96,7 @@ JS_FILES = [
 
 CSS_FILES = [
     "joinery-ui.css",
+    "generator-ui.css",
     "file-browser.css",
 ]
 
@@ -165,11 +167,13 @@ def _build_editor_html(source_html: str, examples: dict[str, str], build_hash: s
         flags=re.DOTALL,
     )
 
-    # Version the Cut/Join stylesheet too; it is copied beside the JS bundle.
-    html = html.replace(
-        'href="/static/joinery-ui.css"',
-        f'href="./static/joinery-ui.css?v={build_hash}"',
-    )
+    # Version the generator and Cut/Join stylesheets too; they are copied beside the JS bundle.
+    for stylesheet in ("joinery-ui", "generator-ui"):
+        html = re.sub(
+            rf'href="/static/{stylesheet}\.css(?:\?v=[^"]*)?"',
+            f'href="./static/{stylesheet}.css?v={build_hash}"',
+            html,
+        )
 
     html = re.sub(
         r'href="/static/file-browser\.css\?v=[^"]+"',

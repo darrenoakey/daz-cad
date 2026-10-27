@@ -100,7 +100,7 @@ Available method IDs (all implemented, not aliases):
 
 `Joinery.methods` is the catalogue of `{id,label,description}` objects.
 
-Options: `plane.origin`, `plane.normal`, and `plane.up` are three-element vectors. Normal must be nonzero, optional up must be nonparallel (a stable axis is chosen when omitted), and the plane must cut through the solid. Sliding methods use `detent: true` by default; `detent: false` allows free reverse sliding. `positions: [[u,v], ...]` optionally specifies local connector centers; otherwise placement uses `count`. Dimensions and `clearance` are millimetres. Invalid cuts, dimensions, or unsuitable placement raise errors rather than silently returning the original shape.
+Options: `plane.origin`, `plane.normal`, and `plane.up` are three-element vectors. Normal must be nonzero, optional up must be nonparallel (a stable axis is chosen when omitted), and the plane must cut through the solid. Sliding methods use `detent: true` by default; `detent: false` allows free reverse sliding. `positions: [[u,v], ...]` optionally specifies local connector centers; otherwise placement uses `count`. `allowPartialAnchors` (default false) is only for intentional open-frame parts: it permits voids in the placement probe while still requiring at least 12% probe material and at least 2.5% anchoring on each half. Dimensions and `clearance` are millimetres. Invalid cuts, dimensions, or unsuitable placement raise errors rather than silently returning the original shape.
 
 Result fields: `parts`, `keys` (Workplanes), `method`, `plane`, `connectors`, `instructions`, `warnings`. Render/export the result directly, or call `toAssembly({mode:'assembled'|'exploded'|'print',gap:20})`. Print view separates parts and loose keys; assembled view must not be mistaken for a print-plate layout. Check bed fit and slice preview before printing. The API does not promise automatic multi-plate nesting or physically calibrated strength/fit.
 
@@ -531,6 +531,37 @@ const result = Gridfinity.baseplate({ x: 3, y: 2 })
     .color("#95a5a6");
 result;
 ```
+
+### Gridfinity.planBaseplateSegments(options)
+
+Returns the balanced, minimum-count partition for a Gridfinity baseplate. The default printer area is 200 mm square with a 10 mm edge margin, so segments fit at most four 42 mm grid units per side. Axis partitions distribute remainder units instead of leaving a one-unit strip when a balanced split fits.
+
+- `x`, `y`: positive integer grid-unit dimensions
+- `buildArea` (optional, default 200): square build-area size in millimeters
+- `margin` (optional, default 10): reserved edge margin in millimeters
+- `snapConnectors` (optional, default true): include seam snap counts in the plan
+- `extraConnectors` (optional, default 3): spare connectors included in the assembly
+
+### Gridfinity.segmentedBaseplate(options)
+
+Creates one `Assembly` containing every baseplate segment and snap-key connector for one 3MF export. The baseplate is split with the existing `splitAndJoin()` snap-key joint system. Corner mouse ears are added by default; snap connectors are printed beside the assembled segments, with optional spares.
+
+- `x`, `y`: positive integer grid-unit dimensions
+- `buildArea`, `margin`: same as `planBaseplateSegments`
+- `mouseEars` (optional, default true): fuse 11 mm diameter corner ears for bed adhesion
+- `snapConnectors` (optional, default true): create snap-fit joints between segments
+- `extraConnectors` (optional, default 3): additional separate snap keys when a seam exists
+
+```javascript
+const result = Gridfinity.segmentedBaseplate({
+    x: 8, y: 6, buildArea: 200, mouseEars: true, snapConnectors: true, extraConnectors: 3
+});
+result;
+```
+
+### Adding a generator-menu entry
+
+Generator forms are registered through `registerGenerator()` from `generator-registry.js`; the Generators menu is populated from that registry and switches the matching form group. Add a form group with `data-generator-fields="<fieldsId>"`, then register a unique `id`, `label`, and `fieldsId` together with `readOptions(fields)`, `summarize(options)`, and `generate(options)`. `generate` returns editable JavaScript source and a status summary; it does not render or export directly, so normal preview and 3MF export remain available.
 
 ### Gridfinity.fitBin(options)
 

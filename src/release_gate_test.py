@@ -42,7 +42,7 @@ def test_shared_and_geometry_changes_retain_geometry_coverage(path):
 # ##################################################################
 # lane partition
 # the original stateful modules stay intact, selected tests occur exactly once,
-# and the browser bottleneck no longer serializes unrelated CAD/preview fixtures
+# and OpenCascade browser work shares one lane to prevent competing WASM render pools.
 @pytest.mark.parametrize("paths", [[], ["run"], ["src/agentd3_chat.py"], ["static/editor.js", "src/server.py"]])
 def test_gate_lanes_preserve_every_selected_target_once(paths):
     selected = GATE["_selected_gate_tests"](paths)
@@ -53,20 +53,46 @@ def test_gate_lanes_preserve_every_selected_target_once(paths):
     for name, targets in lanes.items():
         if name == "chat":
             assert all(target.startswith("src/agentd3_chat_test.py") for target in targets)
-        elif name == "browser":
-            assert targets == ["src/file_browser_test.py"]
         else:
             assert name == "cad"
-            assert "src/file_browser_test.py" not in targets
     if "src/file_browser_test.py" in selected:
+        assert "src/file_browser_test.py" in lanes["cad"]
         assert "src/preview_race_test.py" in lanes["cad"]
-        assert "browser" in lanes
+
+
+# ##################################################################
+# Gridfinity generator impact
+# retain real generator/export, API type synchronization, startup/standalone assets,
+# while avoiding unrelated geometry and browser suites for feature-only changes
+@pytest.mark.parametrize("path", sorted(GATE["GRIDFINITY_GENERATOR_PATHS"]))
+def test_gridfinity_generator_change_selects_focused_real_coverage(path):
+    selected = GATE["_selected_gate_tests"]([path, "run"])
+    assert selected == [
+        "src/startup_path_test.py",
+        "src/gridfinity_generator_test.py",
+        "src/release_gate_test.py",
+    ]
+    assert "src/file_browser_test.py" not in selected
+    assert "src/preview_race_test.py" not in selected
+    assert "src/cdn_cache_test.py" not in selected
+
+
+def test_gridfinity_mixed_changes_keep_conservative_coverage():
+    selected = GATE["_selected_gate_tests"](["static/gridfinity.js", "src/server.py"])
+    assert selected != [
+        "src/startup_path_test.py",
+        "src/gridfinity_generator_test.py",
+        "src/release_gate_test.py",
+    ]
+    assert any(target.startswith("src/server_test.py") for target in selected)
+    assert "src/file_browser_test.py" in selected
+    assert "src/preview_race_test.py" in selected
 
 
 # ##################################################################
 # runner-change coverage
-# changes to scheduling must still exercise all eight targets from the measured
-# slow release, rather than appearing fast by omitting its expensive validations
+# changes to scheduling must still exercise the measured release coverage,
+# rather than appearing fast by omitting its expensive validations
 def test_runner_change_keeps_the_measured_release_coverage():
     selected = GATE["_selected_gate_tests"](["run", "src/release_gate_test.py"])
     previous = {

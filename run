@@ -128,6 +128,7 @@ GATE_TESTS = [
     "src/joinery_kernel_test.py",
     "src/joinery_test.py",
     "src/joinery_ui_test.py",
+    "src/gridfinity_generator_test.py",
     "src/model_preview_test.py",
     "src/file_browser_test.py",
     "src/preview_race_test.py",
@@ -139,6 +140,34 @@ GEOMETRY_TESTS = [
     "src/joinery_kernel_test.py",
     "src/joinery_test.py::test_all_joinery_methods_create_valid_complementary_solids",
 ]
+
+# The generator's end-to-end scenario covers the new CAD menu, snap geometry,
+# mouse ears, and 3MF export. Restrict the focused impact set to this known
+# feature-only change group; mixed/unrelated paths retain conservative coverage.
+GRIDFINITY_GENERATOR_PATHS = {
+    "static/gridfinity.js",
+    "static/generator-ui.js",
+    "static/generator-registry.js",
+    "static/gridfinity-generator.js",
+    "static/gridfinity-seam-positions.js",
+    "static/generator-ui.css",
+    "src/gridfinity_generator_test.py",
+    "tests/bdd/features/gridfinity-generator.feature",
+}
+GRIDFINITY_GENERATOR_ONLY_PATHS = GRIDFINITY_GENERATOR_PATHS | {
+    "run",
+    "site/src/standalone/bundler.py",
+    "src/release_gate_test.py",
+    "src/server_test.py",
+    "src/startup_path_test.py",
+    "static/cad-library-spec.md",
+    "static/cad-worker.js",
+    "static/editor.html",
+    "static/editor.js",
+    "static/joinery.js",
+    "tests/bdd/perf.json",
+    "tests/bdd/primitives.md",
+}
 
 # These consumers never feed back into the geometry modules. Unknown paths
 # retain the conservative geometry selection until their ownership is known.
@@ -175,6 +204,12 @@ def _selected_gate_tests(paths: list[str]) -> list[str]:
     # UI consumers cannot change upstream geometry; shared/unknown paths can.
     if not paths:
         return list(GATE_TESTS)
+    if GRIDFINITY_GENERATOR_PATHS.intersection(paths) and set(paths) <= GRIDFINITY_GENERATOR_ONLY_PATHS:
+        return [
+            "src/startup_path_test.py",
+            "src/gridfinity_generator_test.py",
+            "src/release_gate_test.py",
+        ]
     selected: list[str] = []
     chat = any(path.startswith("src/agentd3_chat") for path in paths)
     cad = any(
@@ -202,17 +237,13 @@ def _selected_gate_tests(paths: list[str]) -> list[str]:
 
 # ##################################################################
 # gate lanes
-# keep stateful browser scenarios together and run their independent peers
-# concurrently; each pytest process owns isolated session fixtures
+# OpenCascade-backed UI suites share one browser/WASM lane because running
+# separate Chromium+worker pools concurrently can starve their real renders.
+# Independent AgentD3 chat tests remain parallel in their own session.
 def _gate_lanes(selected: list[str]) -> dict[str, list[str]]:
     lanes: dict[str, list[str]] = {}
     for target in selected:
-        if target.startswith("src/agentd3_chat_test.py"):
-            lane = "chat"
-        elif target.startswith("src/file_browser_test.py"):
-            lane = "browser"
-        else:
-            lane = "cad"
+        lane = "chat" if target.startswith("src/agentd3_chat_test.py") else "cad"
         lanes.setdefault(lane, []).append(target)
     return lanes
 
@@ -241,6 +272,7 @@ def command_check(_: argparse.Namespace) -> int:
             "src/server_test.py",
             "src/joinery_kernel_test.py",
             "src/joinery_test.py",
+            "src/gridfinity_generator_test.py",
             "run",
         ]
     )

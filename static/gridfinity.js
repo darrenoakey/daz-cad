@@ -17,7 +17,8 @@
  */
 
 // Absolute path for import map cache busting
-import { Workplane, getOC } from './cad.js';
+import { Workplane, Assembly, getOC } from './cad.js';
+import { connectorCountForSeam, connectorPositionsForSeam } from './gridfinity-seam-positions.js';
 
 // ============================================================
 // GRIDFINITY CONSTANTS
@@ -726,6 +727,199 @@ const Gridfinity = {
 // ============================================================
 // GRID OPTIMIZATION ALGORITHMS
 // ============================================================
+
+function balancedAxisSegments(totalUnits, maxUnits) {
+    const count = Math.ceil(totalUnits / maxUnits);
+    const base = Math.floor(totalUnits / count);
+    const remainder = totalUnits % count;
+    return Array.from({ length: count }, (_, index) => base + (index < remainder ? 1 : 0));
+}
+
+function segmentPlan(options = {}) {
+    const { x, y, buildArea = 200, margin = 10, extraConnectors = 3, snapConnectors = true } = options;
+    for (const [name, value] of [['x', x], ['y', y]]) {
+        if (!Number.isInteger(value) || value < 1) throw new Error(`Gridfinity segmented baseplate ${name} must be a positive integer`);
+    }
+    if (!Number.isFinite(buildArea) || buildArea <= 0) throw new Error('Gridfinity buildArea must be a positive number');
+    if (!Number.isFinite(margin) || margin < 0 || margin * 2 >= buildArea) throw new Error('Gridfinity margin must be non-negative and less than half the build area');
+    if (!Number.isInteger(extraConnectors) || extraConnectors < 0 || extraConnectors > 12) throw new Error('Gridfinity extraConnectors must be an integer from 0 to 12');
+
+    const maxUnits = Math.floor((buildArea - 2 * margin) / Gridfinity.UNIT_SIZE);
+    if (maxUnits < 1) throw new Error(`Gridfinity build area must fit at least one ${Gridfinity.UNIT_SIZE} mm grid unit after margins`);
+    const xSegments = balancedAxisSegments(x, maxUnits);
+    const ySegments = balancedAxisSegments(y, maxUnits);
+    const segments = [];
+    for (let xi = 0, xStart = 0; xi < xSegments.length; xStart += xSegments[xi], xi++) {
+        for (let yi = 0, yStart = 0; yi < ySegments.length; yStart += ySegments[yi], yi++) {
+            segments.push({ x: xSegments[xi], y: ySegments[yi], xStart, yStart, xIndex: xi, yIndex: yi });
+        }
+    }
+
+    const seamConnectors = snapConnectors && segments.length > 1
+        ? (xSegments.length - 1) * connectorCountForSeam(y)
+            + (ySegments.length - 1) * xSegments.reduce((sum, units) => sum + connectorCountForSeam(units), 0)
+        : 0;
+    return {
+        xSegments,
+        ySegments,
+        segments,
+        maxUnits,
+        seamConnectors,
+        extraConnectors: seamConnectors > 0 ? extraConnectors : 0,
+        totalConnectors: seamConnectors > 0 ? seamConnectors + extraConnectors : 0,
+        maxSegmentMm: maxUnits * Gridfinity.UNIT_SIZE
+    };
+}
+
+function printBounds(part) {
+    const bounds = part?._getBoundingBox?.();
+    if (!bounds) throw new Error('Could not measure generated Gridfinity snap connector');
+    return bounds;
+}
+
+function putOnBed(part, x, y) {
+    const bounds = printBounds(part);
+    return part.translate(x - bounds.minX, y - bounds.minY, -bounds.minZ);
+}
+
+function cutSegment(source, axis, boundary, seamUnits) {
+    if (typeof source.splitAndJoin !== 'function') {
+        throw new Error('Snap connectors require the CAD joinery module to be loaded');
+    }
+    const z = Gridfinity.BP_HEIGHT / 2;
+    const normal = axis === 'x' ? [1, 0, 0] : [0, 1, 0];
+    const origin = axis === 'x' ? [boundary, 0, z] : [0, boundary, z];
+    const sourceBounds = axis === 'y' ? source._getBoundingBox?.() : null;
+    const positions = connectorPositionsForSeam(seamUnits, Gridfinity.UNIT_SIZE, axis, sourceBounds);
+    return source.splitAndJoin({
+        plane: { origin, normal, up: [0, 0, 1] },
+        method: 'snap-key',
+        size: 5.5,
+        depth: 2.4,
+        clearance: 0.2,
+        positions,
+        count: positions.length,
+        wall: 0.5,
+        allowPartialAnchors: true
+    });
+}
+
+function withMouseEars(part, segment, options) {
+    if (!options.mouseEars) return part;
+    const pitch = Gridfinity.UNIT_SIZE;
+    const totalX = options.x * pitch;
+    const totalY = options.y * pitch;
+    const minX = -totalX / 2 + segment.xStart * pitch;
+    const maxX = minX + segment.x * pitch;
+    const minY = -totalY / 2 + segment.yStart * pitch;
+    const maxY = minY + segment.y * pitch;
+    const ears = [];
+    if (segment.xStart === 0 && segment.yStart === 0) ears.push([minX + 3.5, minY + 3.5]);
+    if (segment.xStart + segment.x === options.x && segment.yStart === 0) ears.push([maxX - 3.5, minY + 3.5]);
+    if (segment.xStart === 0 && segment.yStart + segment.y === options.y) ears.push([minX + 3.5, maxY - 3.5]);
+    if (segment.xStart + segment.x === options.x && segment.yStart + segment.y === options.y) ears.push([maxX - 3.5, maxY - 3.5]);
+    const bedFaceZ = -Gridfinity.BP_HEIGHT / 2;
+    for (const [cx, cy] of ears) {
+        // Cylinders start at Z=0; align the mouse ear with the baseplate's bed-facing surface.
+        const ear = new Workplane('XY').cylinder(5.5, 0.8).translate(cx, cy, bedFaceZ);
+        part = part.union(ear);
+    }
+    return part;
+}
+
+function generateSegmentedBaseplate(options = {}) {
+    const normalized = {
+        x: options.x,
+        y: options.y,
+        buildArea: options.buildArea ?? 200,
+        margin: options.margin ?? 10,
+        mouseEars: options.mouseEars ?? true,
+        snapConnectors: options.snapConnectors ?? true,
+        extraConnectors: options.extraConnectors ?? 3
+    };
+    const plan = segmentPlan(normalized);
+    const segments = [];
+    const joints = [];
+
+    if (normalized.snapConnectors && plan.segments.length > 1) {
+        const whole = Gridfinity.baseplate({ x: normalized.x, y: normalized.y, fillet: true, chamfer: false });
+        let remainder = whole;
+        let consumedX = 0;
+        const columns = [];
+        for (const width of plan.xSegments.slice(0, -1)) {
+            consumedX += width;
+            const boundary = (consumedX - normalized.x / 2) * Gridfinity.UNIT_SIZE;
+            const joint = cutSegment(remainder, 'x', boundary, normalized.y);
+            columns.push({ part: joint.parts[0], x: width, xStart: consumedX - width, xIndex: columns.length });
+            joints.push(joint);
+            remainder = joint.parts[1];
+        }
+        const lastWidth = plan.xSegments[plan.xSegments.length - 1];
+        columns.push({ part: remainder, x: lastWidth, xStart: normalized.x - lastWidth, xIndex: columns.length });
+
+        for (const column of columns) {
+            remainder = column.part;
+            let consumedY = 0;
+            for (let yIndex = 0; yIndex < plan.ySegments.length - 1; yIndex++) {
+                const height = plan.ySegments[yIndex];
+                consumedY += height;
+                const boundary = (consumedY - normalized.y / 2) * Gridfinity.UNIT_SIZE;
+                const joint = cutSegment(remainder, 'y', boundary, column.x);
+                segments.push({ ...column, part: joint.parts[0], y: height, yStart: consumedY - height, yIndex });
+                joints.push(joint);
+                remainder = joint.parts[1];
+            }
+            const yIndex = plan.ySegments.length - 1;
+            const lastHeight = plan.ySegments[yIndex];
+            segments.push({ ...column, part: remainder, y: lastHeight, yStart: normalized.y - lastHeight, yIndex });
+        }
+    } else {
+        for (const segment of plan.segments) {
+            const part = Gridfinity.baseplate({ x: segment.x, y: segment.y, fillet: true, chamfer: false });
+            const centerX = (segment.xStart + segment.x / 2 - normalized.x / 2) * Gridfinity.UNIT_SIZE;
+            const centerY = (segment.yStart + segment.y / 2 - normalized.y / 2) * Gridfinity.UNIT_SIZE;
+            segments.push({ ...segment, part: part.translate(centerX, centerY, 0) });
+        }
+    }
+
+    const assembly = new Assembly();
+    for (const segment of segments) {
+        let part = withMouseEars(segment.part, segment, normalized);
+        part = part.partName(`Gridfinity baseplate ${segment.x}x${segment.y} section ${segment.xIndex + 1}-${segment.yIndex + 1}`);
+        assembly.add(part);
+    }
+
+    const allConnectors = [];
+    for (const joint of joints) {
+        const printAssembly = joint.toAssembly({ mode: 'print', gap: 8 });
+        allConnectors.push(...printAssembly._parts.slice(joint.parts.length));
+    }
+    if (allConnectors.length > 0) {
+        const plateWidth = normalized.x * Gridfinity.UNIT_SIZE;
+        const plateHeight = normalized.y * Gridfinity.UNIT_SIZE;
+        const columns = Math.max(1, Math.floor(plateWidth / 14));
+        const rackOriginX = -plateWidth / 2 + 3;
+        const rackOriginY = -plateHeight / 2 - 12;
+        const placeConnector = (part, index) => {
+            const column = index % columns;
+            const row = Math.floor(index / columns);
+            const placed = putOnBed(part, rackOriginX + column * 14, rackOriginY - row * 14)
+                .partName(`Gridfinity snap connector ${index + 1}`);
+            assembly.add(placed);
+            return placed;
+        };
+        allConnectors.forEach(placeConnector);
+        const sparePrototype = allConnectors[0];
+        for (let index = 0; index < plan.extraConnectors; index++) {
+            placeConnector(sparePrototype, allConnectors.length + index);
+        }
+    }
+
+    return assembly;
+}
+
+Gridfinity.planBaseplateSegments = segmentPlan;
+Gridfinity.segmentedBaseplate = generateSegmentedBaseplate;
 
 /**
  * Find optimal grid layout for rectangular cutouts
