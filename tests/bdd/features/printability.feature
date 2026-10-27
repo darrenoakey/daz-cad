@@ -50,11 +50,12 @@ Feature: FDM printability optimization
     Then the panel displays a printability validation error
     And the editor script remains unchanged
 
-  Scenario: Optimize every solid in an assembly
+  Scenario: Optimize assembly parts and preserve incompatible geometry
     Given the 3D preview shows the optimized solid
-    When I enter a multi-part Assembly model
+    When I enter a multi-part Assembly model with an incompatible first part
     And I open Print for FDM again
     And I click "Apply Printability"
-    Then every assembly solid is optimized independently
+    Then every compatible assembly solid is optimized independently
+    And the incompatible part remains unchanged with a numbered warning
     And the generated source retains the Assembly, colors, and print settings
-    And the Worker Console identifies the transformed part numbers
+    And the Worker Console identifies the transformed and unchanged part numbers

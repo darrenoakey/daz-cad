@@ -92,6 +92,33 @@ def test_printability_optimizes_assembly_parts_and_preserves_metadata(printabili
 
 
 # ##################################################################
+# incompatible assembly members are explicit skips, not a total-model rejection
+# or a silent partial optimization. Other valid parts must still improve.
+def test_printability_preserves_failed_assembly_part_with_warning(printability_page):
+    result = printability_page.evaluate("""() => {
+        const difficult = new Workplane('XY').cylinder(8, 25).color('#e74c3c');
+        const simple = new Workplane('XY').box(12, 12, 15).translate(30, 0, 0).color('#2ecc71');
+        const difficultShape = difficult._shape;
+        const simpleShape = simple._shape;
+        const optimized = new Assembly().add(difficult).add(simple).optimizeForPrinting({
+            verticalFillet: 1, baseChamfer: 0.4, preserveEdges: ['<X and <Y'],
+        });
+        return {
+            difficultUnchanged: optimized._parts[0]._shape === difficultShape,
+            simpleTransformed: optimized._parts[1]._shape !== simpleShape,
+            colors: optimized._parts.map((part) => part._color),
+            unchangedParts: optimized.printReport.unchangedParts,
+            warnings: optimized.printReport.warnings,
+            changedParts: [...new Set(optimized.printReport.changes.map((change) => change.part))],
+        };
+    }""")
+    assert result["difficultUnchanged"] and result["simpleTransformed"]
+    assert result["colors"] == ["#e74c3c", "#2ecc71"]
+    assert result["unchangedParts"] == [1] and result["changedParts"] == [2]
+    assert any("Part 1 unchanged" in warning and "vertical fillet failed" in warning for warning in result["warnings"])
+
+
+# ##################################################################
 # invalid optimizer requests fail before returning an unchanged solid
 # checks zero/negative/unknown selectors and geometric overreach so callers can
 # preserve the user's editor instead of receiving silent partial success.

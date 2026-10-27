@@ -28,7 +28,7 @@ for (const change of result.printReport.changes) console.log(change);
 for (const warning of result.printReport.warnings) console.warn(warning);
 ```
 
-The operation chamfers edges at the model's minimum Z, then fillets non-preserved Z-parallel straight edges. On an Assembly it repeats this independently for every solid and adds a one-based `part` field to each reported change. It fails instead of silently returning the original when a requested geometric operation fails. It does **not** detect or repair every printable-design problem. Use `splitAndJoin` when support reduction or assembly requires different geometry.
+The operation chamfers edges at the model's minimum Z, then fillets non-preserved Z-parallel straight edges. On an Assembly it repeats this independently for every solid and adds a one-based `part` field to each reported change. If one part cannot accept a rule, that exact part remains unchanged with an explicit warning and an `unchangedParts` entry while other parts still improve; if no part improves, the operation fails. A single Workplane failure always fails instead of silently returning the original. These rules do **not** detect or repair every printable-design problem. Use `splitAndJoin` when support reduction or assembly requires different geometry.
 
 ## Design rule summary
 

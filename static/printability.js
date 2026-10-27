@@ -95,18 +95,30 @@ Assembly.prototype.optimizeForPrinting = function optimizeAssemblyForPrinting(op
     optimized._printSettings = { ...this._printSettings };
     const changes = [];
     const warnings = [];
+    const unchangedParts = [];
     this._parts.forEach((part, index) => {
         let result;
         try {
             result = part.optimizeForPrinting(settings);
         } catch (error) {
-            throw new Error(`optimizeForPrinting: part ${index + 1}: ${error.message}`);
+            // One incompatible part must not block safe improvements to every
+            // other solid. Keep its exact original geometry and make the skipped
+            // operation loud in both printReport and the generated console audit.
+            unchangedParts.push(index + 1);
+            warnings.push(`Part ${index + 1} unchanged: ${error.message}`);
+            optimized.add(part);
+            return;
         }
         optimized.add(result);
         changes.push(...result.printReport.changes.map((change) => ({ ...change, part: index + 1 })));
         warnings.push(...result.printReport.warnings);
     });
-    optimized.printReport = { settings, changes, warnings: [...new Set(warnings)], parts: this._parts.length };
+    if (!changes.length && unchangedParts.length) {
+        throw new Error(`optimizeForPrinting: no assembly part could be improved: ${warnings.join(' | ')}`);
+    }
+    optimized.printReport = {
+        settings, changes, warnings: [...new Set(warnings)], parts: this._parts.length, unchangedParts,
+    };
     return optimized;
 };
 
