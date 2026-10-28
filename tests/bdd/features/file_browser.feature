@@ -34,7 +34,8 @@ Feature: File browser with thumbnails and sorting
     When I create a new model "test-fb-{uuid}.js"
     And I change the source from a box to a cylinder
     And the model finishes rendering
-    And I open the file browser
+    Then the 3D preview is not covered by the startup loading overlay
+    When I open the file browser
     Then the "test-fb-{uuid}.js" card shows a loaded thumbnail image
     And the thumbnail is a real transparent PNG
 

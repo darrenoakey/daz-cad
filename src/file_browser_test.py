@@ -404,6 +404,10 @@ def test_successful_render_caches_transparent_thumbnail(browser_page):
         second_put = put_info.value
     assert second_put.ok
 
+    # The worker is the production engine; its readiness must clear the
+    # startup overlay even though the main-thread runtime never starts.
+    expect(page.locator("#loading-overlay")).to_be_hidden()
+
     revisions = _thumbnail_revisions(page, filename)
     assert len(revisions) == 2, f"expected the box then the cylinder preview, got {revisions}"
     assert revisions[0] != revisions[1], "editing the model must cache a new revision"

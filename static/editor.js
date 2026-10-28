@@ -837,6 +837,9 @@ class CADEditor {
         this._worker = mainWorker;
         this._workerReady = true;
         this.isReady = true;
+        // The worker is the production engine, so its readiness (not the
+        // test-only main-thread runtime) must clear the startup overlay.
+        this._hideLoading();
         this._attachWorkerHandlers(this._worker);
     }
 
