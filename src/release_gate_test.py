@@ -61,8 +61,12 @@ def test_gate_lanes_preserve_every_selected_target_once(paths):
     assert sorted(flattened) == sorted(expected)
     assert len(flattened) == len(set(flattened))
     for name, targets in lanes.items():
-        if name == "chat":
-            assert all(target.startswith("src/agentd3_chat_test.py") for target in targets)
+        if name == "chat" or name == "chat-queue":
+            assert all(
+                target.startswith("src/agentd3_chat_test.py")
+                or target == "src/chat_queue_test.py"
+                for target in targets
+            )
         elif name == "cad" or name.startswith("cad-"):
             assert all(not target.startswith("src/agentd3_chat_test.py") for target in targets)
         else:

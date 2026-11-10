@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -8,6 +9,7 @@ from time import monotonic
 
 PROJECT_ROOT = Path(__file__).parent
 TEST_OUT = PROJECT_ROOT / "output" / "testing"
+ROOT = PROJECT_ROOT
 PORT = 8766
 
 
@@ -142,6 +144,256 @@ GEOMETRY_TESTS = [
     "src/joinery_test.py::test_all_joinery_methods_create_valid_complementary_solids",
 ]
 
+# The AI-assistant chat subsystem. Chat code never alters geometry kernels or
+# non-chat editor behavior, so a diff whose changed paths all belong to it can
+# run the focused chat suites instead of the CAD geometry lanes. Anything that
+# is not clearly chat — including non-chat hunks in the shared files below —
+# keeps the conservative full selection.
+CHAT_SUBSYSTEM_PATHS = {
+    "src/agentd3_chat.py",
+    "src/agentd3_chat_test.py",
+    "src/chat_queue_test.py",
+}
+# documentation seeds assistant context at most; it cannot alter runtime code
+CHAT_DOC_MARKER = re.compile(r"^(AGENTS\.md|README\.md|claude\.md|docs/)")
+# every chat member, constant and id in the editor carries one of these words;
+# the generic timeout helpers sit in the chat-deadlines block whose comment says
+# "Deadlines for chat traffic", so their enclosing comment anchors them to chat
+CHAT_MARKER = re.compile(r"chat|assistant|agentd3|agent", re.IGNORECASE)
+# scope names of editor methods whose behavior belongs to the chat subsystem
+# even though their names don't carry a chat word: the typing indicator, the
+# pre-turn render wait, and the retry-prompt builder are chat UX only
+CHAT_SCOPE_MARKER = re.compile(
+    r"chat|assistant|agentd3|agent|typing|_waitForRenderComplete|_buildFixPrompt|"
+    r"fetchWithTimeout|withTimeout",
+    re.IGNORECASE,
+)
+# editor.js top-level functions between the chat constants and the class
+CHAT_EDITOR_TOPLEVEL = {"fetchWithTimeout", "withTimeout"}
+# server.py banner sections owned by chat (the '# name' line under '#####')
+CHAT_SERVER_SECTIONS = {
+    "agentd3 chat client",
+    "chat jobs",
+    "describe error",
+    "run chat turn",
+    "chat message endpoint",
+    "chat job endpoint",
+}
+
+
+def _revision_source(path: str, ref: str | None) -> list[str]:
+    """Lines of one revision of a file; None reads the working tree."""
+    command = ["git", "show", f"{ref}:{path}"] if ref else ["cat", str(ROOT / path)]
+    result = subprocess.run(command, capture_output=True, text=True, check=False, cwd=ROOT)
+    if result.returncode != 0:
+        return []
+    return result.stdout.splitlines()
+
+
+_SCOPE_CACHE: dict[tuple[str, str | None], list[str]] = {}
+
+
+def _scope_at(path: str, line_no: int, source: list[str]) -> str:
+    """Name of the banner section / def / method containing a source line."""
+    if not source:
+        return "<unknown-scope>"
+    if path == "src/server.py":
+        banner = ""
+        definition = ""
+        for index, line in enumerate(source[:line_no], start=1):
+            if line.startswith("# ##"):
+                # banner: the '# name' line directly below the ruler; a new
+                # section resets any stale enclosing definition
+                definition = ""
+                if index < len(source):
+                    name = source[index].lstrip("# ")
+                    if name and not name.startswith("#"):
+                        banner = name
+            elif line.startswith(("async def", "def ", "class ")):
+                definition = line.strip()
+        return f"{banner} :: {definition}"
+    if path == "static/editor.js":
+        scope = ""
+        for line in source[:line_no]:
+            # method definitions only (4-space indent, `name(...) {`); this
+            # excludes nested if/while blocks inside a method body
+            match = re.match(r"\s{4}(?:async )?(_?[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{", line)
+            if match:
+                scope = match.group(1)
+            elif re.match(r"(?:async )?function\s+([A-Za-z_$][\w$]*)", line):
+                top = re.match(r"(?:async )?function\s+([A-Za-z_$][\w$]*)", line).group(1)
+                scope = top if top in CHAT_EDITOR_TOPLEVEL else ""
+        return scope
+    # test modules: nearest top-level def above the line
+    scope = ""
+    for line in source[:line_no]:
+        if line.startswith("def "):
+            scope = line
+    return scope
+
+
+def _scope_of(path: str, ref: str | None, line_no: int) -> str:
+    key = (path, ref)
+    if key not in _SCOPE_CACHE:
+        _SCOPE_CACHE[key] = _revision_source(path, ref)
+    return _scope_at(path, line_no, _SCOPE_CACHE[key])
+
+
+def _diff_hunks(path: str, base: str) -> list[list[str]]:
+    """Diff hunks of one file: each a list of `scope\nline` contexts.
+
+    server.py and editor.js are organized into banner sections and named
+    methods; a hunk entirely inside chat sections proves chat-only impact even
+    when its added lines (``return {...}``) carry no marker themselves. The
+    `-` side line numbers index the old revision and the `+` side the new
+    one, so each side is scoped against its own revision's content. The
+    working tree is diffed too, because candidate paths include uncommitted
+    and untracked files.
+    """
+    hunks: list[list[str]] = []
+    for old_ref, new_ref in ((base, "HEAD"), ("HEAD", None)):
+        rev_range = f"{old_ref}...{new_ref}" if new_ref else old_ref
+        result = subprocess.run(
+            ["git", "diff", "-U0", rev_range, "--", path],
+            capture_output=True, text=True, check=False, cwd=ROOT,
+        )
+        if result.returncode != 0:
+            return [["<unresolvable-diff>"]]
+        hunk: list[str] = []
+        add_line = 0
+        del_line = 0
+        for line in result.stdout.splitlines():
+            if line.startswith("@@"):
+                if hunk:
+                    hunks.append(hunk)
+                hunk = []
+                match = re.match(r"@@@? -(\d+)(?:,\d+)? \+(\d+)", line)
+                add_line = int(match.group(2)) if match else 0
+                del_line = int(match.group(1)) if match else 0
+            elif line.startswith("+") and not line.startswith("+++"):
+                hunk.append(f"{_scope_of(path, new_ref, add_line)}\n{line[1:]}")
+                add_line += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                hunk.append(f"{_scope_of(path, old_ref, del_line)}\n{line[1:]}")
+                del_line += 1
+        if hunk:
+            hunks.append(hunk)
+    # an unmodified file has no chat impact to assert; it must not focus the
+    # selection (a diff-less path is a test artifact, not a chat-only change)
+    if not hunks:
+        return [["<no-changes>"]]
+    return hunks
+
+
+# a changed line that cannot itself alter behavior: blanks, bare punctuation,
+# comments, and (in html/css) a property declaration inside a marked rule
+FEATURELESS_LINE = re.compile(r"^\s*$|^\s*[}\]\);,]+\s*$|^\s*(//|#)")
+FEATURELESS_CSS = re.compile(r"^\s*[\w.#\[\]-]+\s*:[^;]*;\s*$")
+
+
+def _hunk_is_chat(hunk: list[str], scope_is_chat) -> bool:
+    """One diff hunk is chat-owned when it has a chat-identified line and every
+    other line in it is either chat-identified itself or featureless (blank,
+    punctuation, comment, or a CSS declaration inside the marked rule)."""
+    def identified(context: str) -> bool:
+        scope = context.partition("\n")[0]
+        return bool(CHAT_MARKER.search(context) or (scope and scope_is_chat(scope)))
+
+    if not any(identified(context) for context in hunk):
+        return False
+    return all(
+        identified(context)
+        or FEATURELESS_LINE.match(context.partition("\n")[2])
+        or FEATURELESS_CSS.match(context.partition("\n")[2])
+        or _paired_signature(hunk, context)
+        for context in hunk
+    )
+
+
+def _paired_signature(hunk: list[str], context: str) -> bool:
+    """A rewritten def signature line qualifies when the same hunk adds the
+    new signature carrying a chat marker (e.g. the server fixture gaining
+    agentd3_state_path)."""
+    line = context.partition("\n")[2]
+    stripped = line.strip()
+    if not stripped.startswith(("def ", "async def ")):
+        return False
+    name = re.match(r"(?:async )?def\s+([A-Za-z_]\w*)", stripped)
+    if not name:
+        return False
+    return any(
+        re.match(rf"(?:async )?def\s+{re.escape(name.group(1))}\b", other.partition("\n")[2].strip())
+        and CHAT_MARKER.search(other)
+        for other in hunk
+    )
+
+
+def _candidate_is_chat_only(paths: list[str]) -> bool:
+    """True when every changed path is provably part of the chat subsystem.
+
+    Dedicated chat modules always qualify. The shared files qualify only when
+    their hunks are all inside chat-owned scopes/lines: server.py in a
+    CHAT_SERVER_SECTIONS banner or a chat-named def/class, editor.js in a
+    chat-named method, editor.html additions all inside chat markup, conftest
+    hunks all matching the chat marker. Anything else stays conservative.
+    """
+    for base in ("master", "origin/master"):
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode == 0:
+            break
+    else:
+        return False
+    hunks_of = lambda path: _diff_hunks(path, base)
+    for path in paths:
+        if path in CHAT_SUBSYSTEM_PATHS or CHAT_DOC_MARKER.match(path):
+            continue
+        if path == "src/server.py":
+            scope_ok = lambda scope: any(
+                part.strip() in CHAT_SERVER_SECTIONS for part in scope.split("::")
+            ) or bool(CHAT_MARKER.search(scope))
+            if not all(_hunk_is_chat(hunk, scope_ok) for hunk in hunks_of(path)):
+                return False
+        elif path == "src/server_test.py":
+            scope_ok = lambda scope: bool(CHAT_MARKER.search(scope))
+            if not all(_hunk_is_chat(hunk, scope_ok) for hunk in hunks_of(path)):
+                return False
+        elif path == "static/editor.js":
+            scope_ok = lambda scope: bool(CHAT_SCOPE_MARKER.search(scope))
+            if not all(_hunk_is_chat(hunk, scope_ok) for hunk in hunks_of(path)):
+                return False
+        elif path == "static/editor.html":
+            if not all(_hunk_is_chat(hunk, lambda _: False) for hunk in hunks_of(path)):
+                return False
+        elif path == "src/conftest.py":
+            scope_ok = lambda scope: bool(CHAT_MARKER.search(scope))
+            if not all(_hunk_is_chat(hunk, scope_ok) for hunk in hunks_of(path)):
+                return False
+        else:
+            return False
+    return True
+
+def _editor_html_hunks_are_chat(path: str, base: str) -> bool:
+    """True when every added/removed line of editor.html is chat markup."""
+    result = subprocess.run(
+        ["git", "diff", "-U0", f"{base}...HEAD", "--", path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    changed = [
+        line[1:]
+        for line in result.stdout.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    ]
+    return bool(changed) and all(CHAT_MARKER.search(line) for line in changed)
+
+
 # The generator's end-to-end scenario covers the new CAD menu, snap geometry,
 # mouse ears, and 3MF export. Restrict the focused impact set to this known
 # feature-only change group; mixed/unrelated paths retain conservative coverage.
@@ -210,6 +462,13 @@ def _selected_gate_tests(paths: list[str]) -> list[str]:
             "src/startup_path_test.py",
             "src/gridfinity_generator_test.py",
             "src/release_gate_test.py",
+        ]
+    if _candidate_is_chat_only(paths):
+        return [
+            "src/agentd3_chat_test.py::test_chat_endpoint_round_trip",
+            "src/chat_queue_test.py",
+            "src/release_gate_test.py",
+            "src/cdn_cache_test.py",
         ]
     selected: list[str] = []
     chat = any(path.startswith("src/agentd3_chat") for path in paths)
@@ -286,6 +545,8 @@ def _gate_lanes(selected: list[str]) -> dict[str, list[str]]:
             add("cad-geometry", target)
         elif target.startswith("src/agentd3_chat_test.py"):
             add("chat", target)
+        elif target == "src/chat_queue_test.py":
+            add("chat-queue", target)
         else:
             add("cad", target)
     return lanes
@@ -317,6 +578,7 @@ def command_check(_: argparse.Namespace) -> int:
             "src/joinery_test.py",
             "src/gridfinity_generator_test.py",
             "src/printability_test.py",
+            "src/chat_queue_test.py",
             "run",
         ]
     )
