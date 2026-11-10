@@ -2271,7 +2271,7 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
         const count = this._chatQueue.length;
         status.hidden = count === 0;
         status.textContent = count === 1
-            ? '1 message queued. It will be sent when the assistant finishes.'
+            ? '1 message queued. It will go out when the assistant finishes.'
             : `${count} messages queued. They will be sent together when the assistant finishes.`;
     }
 

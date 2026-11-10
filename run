@@ -347,7 +347,7 @@ def _candidate_is_chat_only(paths: list[str]) -> bool:
             break
     else:
         return False
-    hunks_of = lambda path: _diff_hunks(path, base)
+    hunks_of = lambda path: _diff_hunks(path, base) or [["<no-changes>"]]
     for path in paths:
         if path in CHAT_SUBSYSTEM_PATHS or CHAT_DOC_MARKER.match(path):
             continue

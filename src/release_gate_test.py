@@ -5,6 +5,16 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = runpy.run_path(str(ROOT / "run"))
+# run_path returns a snapshot dict; the classifier reads its globals from the
+# module namespace the functions were defined in, reached through __globals__
+_GATE_LIVE = GATE["_candidate_is_chat_only"].__globals__
+_REAL_DIFF_HUNKS = GATE["_diff_hunks"]
+
+
+def _no_diff_hunks(path: str, base: str):
+    """Stand-in for an unresolvable hunk computation: a path whose diff content
+    cannot be proven chat-owned must never focus the selection."""
+    return []
 
 
 # ##################################################################
@@ -17,7 +27,17 @@ GATE = runpy.run_path(str(ROOT / "run"))
     "site/src/standalone/bundler.py",
 ])
 def test_browser_impact_preserves_preview_and_worker_coverage(path):
-    selected = GATE["_selected_gate_tests"]([path])
+    # selection is hunk-aware: these path-only assertions model a shared file
+    # whose diff, whatever it is, is not provably chat-owned in this checkout
+    # (monkeypatch the hunk source to empty: no diff content, no chat proof)
+    GATE["_diff_hunks"] = _no_diff_hunks
+    _GATE_LIVE["_diff_hunks"] = _no_diff_hunks
+    try:
+        assert GATE["_candidate_is_chat_only"]([path]) is False
+        selected = GATE["_selected_gate_tests"]([path])
+    finally:
+        GATE["_diff_hunks"] = _REAL_DIFF_HUNKS
+        _GATE_LIVE["_diff_hunks"] = _REAL_DIFF_HUNKS
     assert "src/file_browser_test.py" in selected
     assert "src/preview_race_test.py" in selected
     assert "src/model_preview_test.py" in selected
