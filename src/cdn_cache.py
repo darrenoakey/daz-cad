@@ -69,6 +69,81 @@ def recorded_resource(directory: Path, url: str) -> tuple[Path, dict[str, str]]:
 
 
 # ##################################################################
+# recorded prefix
+# monaco's AMD loader discovers content-hashed chunk URLs at runtime, so the
+# exact-URL recorder cannot pre-enumerate them. Record/replay every GET under a
+# pinned immutable prefix instead: first lane to ask for a chunk records the
+# real response under its own content hash; every later lane (and every later
+# release) replays those exact bytes with zero network.
+def recorded_prefix_handler(directory: Path, prefix: str, fetch_timeout_ms: int = 30000):
+    """Route handler recording/replaying any GET under prefix from the CDN.
+
+    Contention rules, learned from a deadlocked gate release: never hold the
+    cross-process lock across network I/O, and never let a slow or failed CDN
+    fetch stall the page. A lane that misses in cache fetches upstream with a
+    bounded deadline (a miss may always re-fetch later), takes the lock only
+    for the atomic metadata/content write, and any fetch failure falls back
+    to passing the request straight through to the real network.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+
+    def _recorded(url: str):
+        key = hashlib.sha256(url.encode()).hexdigest()
+        metadata = directory / f"{key}.json"
+        if not metadata.exists():
+            return None
+        try:
+            record = json.loads(metadata.read_text())
+            content = directory / record["sha256"]
+            body = content.read_bytes()
+            if body and hashlib.sha256(body).hexdigest() == record["sha256"]:
+                return record["headers"], body
+        except (KeyError, ValueError, OSError):
+            pass  # corrupt entry: treat as a miss and re-record below
+        return None
+
+    def _store(url: str, headers: dict, body: bytes) -> None:
+        key = hashlib.sha256(url.encode()).hexdigest()
+        with (directory / f"{key}.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            digest = hashlib.sha256(body).hexdigest()
+            _atomic_bytes(directory / digest, body)
+            _atomic_bytes(directory / f"{key}.json", json.dumps(
+                {"url": url, "sha256": digest, "headers": headers}, sort_keys=True,
+            ).encode())
+
+    def handler(route):
+        request = route.request
+        url = request.url
+        if request.method != "GET":
+            return route.continue_()
+        hit = _recorded(url)
+        if hit is not None:
+            headers, body = hit
+            content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), None)
+            return route.fulfill(status=200, headers=headers, content_type=content_type, body=body)
+        try:
+            upstream = route.fetch(url=url, timeout=fetch_timeout_ms)
+            try:
+                body = upstream.body()
+            finally:
+                upstream.dispose()
+            if not body:
+                raise ValueError(f"empty recorded-prefix response: {url}")
+            headers = {name: value for name, value in upstream.headers.items() if name.lower() in (
+                "content-type", "access-control-allow-origin", "cache-control", "etag",
+            )}
+        except (OSError, ValueError, RuntimeError):
+            # a recording miss must never break the live page: pass through
+            return route.continue_()
+        _store(url, headers, body)
+        content_type = next((v for k, v in headers.items() if k.lower() == "content-type"), None)
+        route.fulfill(status=200, headers=headers, content_type=content_type, body=body)
+
+    return handler
+
+
+# ##################################################################
 # driver-side replay
 # fulfill from the driver's response UID, then release its large buffer promptly
 
@@ -85,9 +160,10 @@ def _replay_recording(route, *, local_url, headers, content_type):
 # replay only exact immutable CDN bytes; contexts, workers, kernel execution,
 # WebGL and all app/API traffic remain real and independently isolated
 class RecordedBrowser:
-    def __init__(self, browser, recordings):
+    def __init__(self, browser, recordings, prefix_handlers=()):
         self.browser = browser
         self.recordings = recordings
+        self.prefix_handlers = list(prefix_handlers)
         paths = {f"/{path.name}": path for path, _ in recordings.values()}
 
         class AssetHandler(BaseHTTPRequestHandler):
@@ -118,6 +194,12 @@ class RecordedBrowser:
 
     def new_page(self, **options):
         page = self.browser.new_page(**options)
+        for prefix, handler in self.prefix_handlers:
+            # a bare string pattern matches one exact URL; extend it to the
+            # whole subtree so every content-hashed chunk under the pinned
+            # prefix is recorded/replayed
+            glob = prefix if prefix.endswith("**") else f"{prefix}**"
+            page.context.route(glob, handler)
         for url, (path, headers) in self.recordings.items():
             # Playwright guesses MIME from path even when headers contain it;
             # content-addressed filenames have no suffix, so pass MIME explicitly.

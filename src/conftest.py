@@ -10,7 +10,7 @@ import httpx
 import pytest
 from playwright.sync_api import sync_playwright
 
-from src.cdn_cache import RecordedBrowser, recorded_resource
+from src.cdn_cache import RecordedBrowser, recorded_prefix_handler, recorded_resource
 
 
 # ##################################################################
@@ -139,10 +139,18 @@ def shared_browser(playwright_runtime):
         url: recorded_resource(cache, url)
         for url in (f"{base}/opencascade.full.js", f"{base}/opencascade.full.wasm")
     }
+    # the editor's AMD loader pulls dozens of content-hashed monaco chunks at
+    # page boot; record/replay the whole pinned prefix so every lane and every
+    # release boots the real recorded bytes instead of hitting the CDN
+    monaco_version = re.search(
+        r"monaco-editor@([0-9.]+)/", (root / "static/editor.js").read_text(),
+    ).group(1)
+    monaco_prefix = f"https://cdn.jsdelivr.net/npm/monaco-editor@{monaco_version}/"
+    prefix_handlers = [(monaco_prefix, recorded_prefix_handler(cache / f"monaco-{monaco_version}", monaco_prefix))]
     browser = playwright_runtime.chromium.launch(
         headless=True, args=["--enable-webgl", "--use-gl=angle", "--enable-gpu"],
     )
-    recorded = RecordedBrowser(browser, recordings)
+    recorded = RecordedBrowser(browser, recordings, prefix_handlers)
     try:
         yield recorded
     finally:
