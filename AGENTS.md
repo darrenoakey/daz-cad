@@ -52,3 +52,19 @@ Diagnose with `greenline status` and `greenline doctor` (`--fix` to reconcile).
 - `src/agentd3_chat_test.py` and `src/chat_queue_test.py` drive real turns on the standing TEST daemon (port 18620). Each turn takes seconds to minutes, and a full module run takes 2-3 minutes. Always run them detached with a durable log under `output/testing/`, then check the `EXIT=` line after a `sleep`. Never hold a foreground tool call open on them, because a tool call is killed at 10 minutes and a killed run leaves unarchived test conversations on the daemon.
 - A turn's `turn.started` event carries no `message_id`. Link a sent message to its turn through the `user.message` event, which carries both `message_id` and `turn_id`.
 - Interrupt tests must target a turn that is provably still running, such as an open `tool.started` for a fixed `sleep`. A short counting reply can finish before the interrupt lands.
+
+## Release-speed invariants learned from the gate
+
+- Never hold a cross-process lock across network I/O in the CDN record/replay
+  handler: under the gate's concurrent lanes one slow fetch pins the lock and
+  every lane deadlocks until the 600s deadline kills the release. Hits read
+  lock-free (immutable atomic files); misses fetch with a bounded deadline and
+  take the lock only for the atomic write; any failure passes through to the
+  real network.
+- Lock convoys only reproduce under concurrency: verify cache/fixture code with
+  simultaneous cold and warm processes, not a single run.
+- `runpy.run_path` returns a snapshot dict; gate code reads its real module
+  namespace, so tests must patch through `func.__globals__`.
+- `greenline submit` must be launched detached (`nohup ... < /dev/null & disown`);
+  a plain background submit dies with the launching turn and greenline abandons
+  it `start_only`.
