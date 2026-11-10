@@ -31,6 +31,38 @@ const result = new Workplane("XY").box(20, 20, 20);
 result;
 `;
 
+// Deadlines for chat traffic. A request that never answers must not hold the
+// chat forever: each one fails after its limit and the error reaches the user.
+const CHAT_REQUEST_TIMEOUT_MS = 15000;
+const CHAT_MAX_TRANSIENT_FAILURES = 60;
+const CHAT_LOCAL_TIMEOUT_MS = 300000;
+const CHAT_RENDER_WAIT_MS = 120000;
+
+// fetch that gives up after timeoutMs instead of waiting indefinitely
+async function fetchWithTimeout(url, options, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        if (controller.signal.aborted) {
+            throw new Error(`no response within ${Math.round(timeoutMs / 1000)}s`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+// Rejects with message when promise has not settled within timeoutMs
+function withTimeout(promise, timeoutMs, message) {
+    let timer;
+    const deadline = new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
 class CADEditor {
     constructor() {
         this.editor = null;
@@ -61,7 +93,9 @@ class CADEditor {
         this._spareWorkerReady = false;
 
         // Chat state
-        this._isProcessing = false; // True when waiting for agent response
+        this._isProcessing = false; // True while an assistant turn (and its queue) is running
+        this._chatQueue = []; // {text, element}: messages typed while a turn runs
+        this._chatTurnStartedAt = 0; // when the current assistant turn began, for elapsed time
         this._skipSave = null; // Exact already-saved source supplied by an external update
         this._chatInput = null;
         this._chatSendBtn = null;
@@ -2209,10 +2243,36 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
             : 'Ask to modify the model...';
     }
 
-    _disableChat() {
-        if (!this._chatActive()) return;
-        this._chatInput.disabled = true;
-        this._chatSendBtn.disabled = true;
+    // Messages typed while a turn runs wait here. Each one shows at once, dimmed
+    // until it is sent; the whole queue then goes out as one message.
+    _enqueueChatMessage(message) {
+        const element = this._addChatMessage('user', message);
+        if (element) element.classList.add('queued');
+        this._chatQueue.push({ text: message, element });
+        this._updateChatQueueStatus();
+    }
+
+    // Empties the queue into one message, each text on its own paragraph in the
+    // order typed. Returns null when nothing is queued.
+    _takeQueuedChatMessages() {
+        if (this._chatQueue.length === 0) return null;
+        const batch = this._chatQueue;
+        this._chatQueue = [];
+        for (const item of batch) {
+            if (item.element) item.element.classList.remove('queued');
+        }
+        this._updateChatQueueStatus();
+        return batch.map(item => item.text).join('\n\n');
+    }
+
+    _updateChatQueueStatus() {
+        const status = document.getElementById('chat-queue-status');
+        if (!status) return;
+        const count = this._chatQueue.length;
+        status.hidden = count === 0;
+        status.textContent = count === 1
+            ? '1 message queued. It will be sent when the assistant finishes.'
+            : `${count} messages queued. They will be sent together when the assistant finishes.`;
     }
 
     _lockEditor() {
@@ -2228,22 +2288,36 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
     }
 
     _addChatMessage(role, content) {
-        if (!this._chatActive()) return;
+        if (!this._chatActive()) return null;
         const messageEl = document.createElement('div');
         messageEl.className = `chat-message ${role}`;
         messageEl.textContent = content;
-        this._chatMessages.appendChild(messageEl);
+        // the typing indicator, while shown, stays the last line of the chat
+        this._chatMessages.insertBefore(messageEl, document.getElementById('chat-typing-indicator'));
         this._chatMessages.scrollTop = this._chatMessages.scrollHeight;
+        return messageEl;
     }
 
     _showTypingIndicator() {
         if (!this._chatActive()) return;
+        this._hideTypingIndicator();
+        this._chatTurnStartedAt = Date.now();
         const indicator = document.createElement('div');
         indicator.className = 'chat-typing';
         indicator.id = 'chat-typing-indicator';
-        indicator.innerHTML = '<span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span>';
+        indicator.innerHTML = '<span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-dot"></span><span class="chat-typing-text"></span>';
         this._chatMessages.appendChild(indicator);
         this._chatMessages.scrollTop = this._chatMessages.scrollHeight;
+        this._updateTypingIndicator('Sending to the assistant');
+    }
+
+    // Shows the current stage line with the seconds elapsed since the turn began,
+    // so a long wait visibly progresses instead of sitting silent.
+    _updateTypingIndicator(stage) {
+        const indicator = document.getElementById('chat-typing-indicator');
+        if (!indicator) return;
+        const seconds = Math.floor((Date.now() - this._chatTurnStartedAt) / 1000);
+        indicator.querySelector('.chat-typing-text').textContent = `${stage} (${seconds}s)`;
     }
 
     _hideTypingIndicator() {
@@ -2254,8 +2328,13 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
     }
 
     async _waitForRenderComplete() {
-        // Wait for any pending render to complete
+        // Wait for any pending render to complete. A render that never reports back
+        // must not hold the chat forever, so the wait has a deadline.
+        const deadline = Date.now() + CHAT_RENDER_WAIT_MS;
         while (this._isRendering) {
+            if (Date.now() > deadline) {
+                throw new Error('the model is still rendering after ' + Math.round(CHAT_RENDER_WAIT_MS / 1000) + 's; wait for it to finish or reload the page');
+            }
             await new Promise(resolve => setTimeout(resolve, 50));
         }
         // Also wait for debounce timer to clear
@@ -2266,31 +2345,42 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
 
     async _sendChatMessage() {
         if (!this._chatActive()) return;
-        // Lock SYNCHRONOUSLY, before any await, so a fast [Enter] followed by a
-        // Send click (or vice versa) can't both pass the guard and start two
-        // concurrent requests.
-        if (this._isProcessing) return;
         const message = this._chatInput.value.trim();
         if (!message) return;
-
-        this._isProcessing = true;
-        this._disableChat();
-        this._lockEditor();
-
-        // Show user message
-        this._addChatMessage('user', message);
         this._chatInput.value = '';
 
+        // A turn is already running: the message waits in the queue and goes out
+        // with the rest of the queue, as one message, once that turn has finished.
+        if (this._isProcessing) {
+            this._enqueueChatMessage(message);
+            return;
+        }
+
+        // Lock SYNCHRONOUSLY, before any await, so a fast [Enter] followed by a
+        // Send click (or vice versa) can't both pass the guard and start two
+        // concurrent turns.
+        this._isProcessing = true;
+        this._lockEditor();
+        this._chatInput.placeholder = 'Assistant is working. Messages you send now are queued.';
+        this._addChatMessage('user', message);
+
         try {
-            // Wait for any pending render to settle before we start.
-            await this._waitForRenderComplete();
-            await this._runAssistantTurn(message);
-        } catch (error) {
-            this._hideTypingIndicator();
-            this._addChatMessage('error', `Error: ${error.message}`);
+            let next = message;
+            while (next !== null) {
+                try {
+                    // Wait for any pending render to settle before each turn.
+                    await this._waitForRenderComplete();
+                    await this._runAssistantTurn(next);
+                } catch (error) {
+                    this._hideTypingIndicator();
+                    const detail = error && error.message ? error.message : String(error);
+                    this._addChatMessage('error', `Error: ${detail}`);
+                }
+                // Whatever was queued while that turn ran goes out now, as one message.
+                next = this._takeQueuedChatMessages();
+            }
         } finally {
-            // Only here — after the change compiled successfully or we gave up —
-            // do we unlock the editor and re-enable chat input.
+            // Only with nothing queued do we unlock the editor and re-enable chat.
             this._isProcessing = false;
             this._enableChat();
             this._unlockEditor();
@@ -2308,12 +2398,18 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
 
         while (true) {
             this._showTypingIndicator();
-            const result = this._useLocalLLM
-                ? await this._chatViaLocalLLM(prompt)
-                : await this._chatViaServer(prompt);
-            this._hideTypingIndicator();
+            let result;
+            try {
+                result = this._useLocalLLM
+                    ? await this._chatViaLocalLLM(prompt)
+                    : await this._chatViaServer(prompt);
+            } finally {
+                this._hideTypingIndicator();
+            }
 
-            if (result.response) {
+            if (result.error) {
+                this._addChatMessage('error', `The assistant could not finish: ${result.error}`);
+            } else if (result.response) {
                 this._addChatMessage('assistant', result.response);
             }
 
@@ -2331,6 +2427,13 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
             const outcome = await settled;
 
             if (outcome.ok) return; // Clean compile → release the lock.
+
+            // A turn that failed after editing is reported, not retried: the
+            // assistant did not finish, so asking it again is not a fix.
+            if (result.error) {
+                this._addChatMessage('error', `The partial change does not compile:\n${outcome.error}`);
+                return;
+            }
 
             // Compile/runtime error: feed it back to the assistant and retry.
             fixAttempt++;
@@ -2356,9 +2459,10 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
 
     // An assistant turn runs for minutes, longer than any proxy in front of the
     // app holds a request open, so the server runs it as a job: POST starts it
-    // and this polls the job with short GETs until the reply is ready.
+    // and this polls the job with short GETs, showing its stage line, until the
+    // reply is ready. Every request has its own deadline, so nothing waits forever.
     async _chatViaServer(message) {
-        const started = await fetch('/api/chat/message', {
+        const started = await fetchWithTimeout('/api/chat/message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2366,34 +2470,43 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
                 current_file: this._currentFile,
                 current_code: this.editor.getValue()
             })
-        });
+        }, CHAT_REQUEST_TIMEOUT_MS);
         if (!started.ok) {
-            throw new Error(`Server error: ${started.status}`);
+            throw new Error(`the server did not accept the request (HTTP ${started.status})`);
         }
         const { job_id: jobId } = await started.json();
 
-        // The turn has no time limit, so a poll may span a network blip or a
-        // proxy hiccup; those are retried for a while instead of abandoning a
-        // turn that is still running on the server.
+        let stage = 'Sending to the assistant';
+        // A poll may span a network blip or a proxy hiccup; those are retried for a
+        // while instead of abandoning a turn that is still running on the server.
         let transientFailures = 0;
         while (true) {
             await new Promise(resolve => setTimeout(resolve, 1000));
             let response;
             try {
-                response = await fetch(`/api/chat/jobs/${encodeURIComponent(jobId)}`);
+                response = await fetchWithTimeout(
+                    `/api/chat/jobs/${encodeURIComponent(jobId)}`, {}, CHAT_REQUEST_TIMEOUT_MS
+                );
             } catch (err) {
-                if (++transientFailures > 60) throw err;
+                if (++transientFailures > CHAT_MAX_TRANSIENT_FAILURES) {
+                    throw new Error(`lost contact with the server (${err.message})`);
+                }
                 continue;
             }
-            if ([502, 503, 504].includes(response.status) && ++transientFailures <= 60) {
+            if ([502, 503, 504].includes(response.status) && ++transientFailures <= CHAT_MAX_TRANSIENT_FAILURES) {
                 continue;
+            }
+            if (response.status === 404) {
+                throw new Error('the server no longer knows this request (it may have restarted); send your message again');
             }
             if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
+                throw new Error(`the server returned HTTP ${response.status} while the assistant was working`);
             }
             transientFailures = 0;
             const job = await response.json();
             if (job.status === 'done') return job;
+            stage = job.progress || stage;
+            this._updateTypingIndicator(stage);
         }
     }
 
@@ -2401,7 +2514,12 @@ Do not include any other code blocks. Keep changes minimal and targeted.`;
         const currentCode = this.editor.getValue();
         const prompt = `Current code:\n\`\`\`javascript\n${currentCode}\n\`\`\`\n\nUser request: ${message}`;
 
-        const raw = await this._localLLMSession.prompt(prompt);
+        this._updateTypingIndicator('Thinking on this device');
+        const raw = await withTimeout(
+            this._localLLMSession.prompt(prompt),
+            CHAT_LOCAL_TIMEOUT_MS,
+            'the on-device model did not respond',
+        );
 
         // Extract the first fenced javascript/js code block as the new code.
         const fence = raw.match(/```(?:javascript|js)?\s*\n([\s\S]*?)```/);

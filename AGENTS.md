@@ -46,3 +46,9 @@ Diagnose with `greenline status` and `greenline doctor` (`--fix` to reconcile).
 - The worker is the production CAD engine; main-thread OpenCascade is initialized only by direct-API tests. Worker readiness must therefore hide `#loading-overlay` (`_initWorker`), and the successful-render file-browser scenario asserts that the preview is never left covered.
 - Threads in model scripts: build them as planar-triangle ring solids (shared `BRep_Builder` vertices/edges, `BRepBuilderAPI_MakeFace_16` on a Newell-normal plane), and build nuts directly with annular caps instead of a boolean. A helix sweep plus union costs 17-31 s per thread, a `ThruSections` loft about 25 s, and `MakePipeShell` with an auxiliary helix hung indefinitely. See `local/models/desk-magazine-holder.js`.
 - Evaluating a heavy model (threads, many parts) can exceed a minute. Run probes detached with a durable output file and sleep on them; never hold a tool call open on one.
+
+## Assistant chat tests
+
+- `src/agentd3_chat_test.py` and `src/chat_queue_test.py` drive real turns on the standing TEST daemon (port 18620). Each turn takes seconds to minutes, and a full module run takes 2-3 minutes. Always run them detached with a durable log under `output/testing/`, then check the `EXIT=` line after a `sleep`. Never hold a foreground tool call open on them, because a tool call is killed at 10 minutes and a killed run leaves unarchived test conversations on the daemon.
+- A turn's `turn.started` event carries no `message_id`. Link a sent message to its turn through the `user.message` event, which carries both `message_id` and `turn_id`.
+- Interrupt tests must target a turn that is provably still running, such as an open `tool.started` for a fixed `sleep`. A short counting reply can finish before the interrupt lands.

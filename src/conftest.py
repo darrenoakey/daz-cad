@@ -35,7 +35,17 @@ def server_port():
 # server fixture
 # starts fastapi server as subprocess and yields url when ready
 @pytest.fixture(scope="session")
-def server(server_port, tmp_path_factory):
+def agentd3_state_path(tmp_path_factory):
+    # the one persistent agentd3 chat identity the test server writes; exposed so
+    # browser scenarios can find the daemon conversation a turn is running in
+    return tmp_path_factory.mktemp("agentd3-state") / "agentd3-chat.json"
+
+
+# ##################################################################
+# server fixture
+# starts fastapi server as subprocess and yields url when ready
+@pytest.fixture(scope="session")
+def server(server_port, tmp_path_factory, agentd3_state_path):
     project_root = Path(__file__).parent.parent
 
     # isolate the test server's ONE persistent agentd3 chat conversation from
@@ -44,7 +54,7 @@ def server(server_port, tmp_path_factory):
     # production conversation at local/agentd3-chat.json
     import os
 
-    state_path = tmp_path_factory.mktemp("agentd3-state") / "agentd3-chat.json"
+    state_path = agentd3_state_path
     models_path = tmp_path_factory.mktemp("cad-models") / "models"
     log_path = project_root / "output" / "testing" / f"server-{server_port}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,6 +79,8 @@ def server(server_port, tmp_path_factory):
             "DAZCAD_AGENTD3_STATE": str(state_path),
             "DAZCAD_AGENTD3_SOURCE": "daz-cad-test",
             "DAZCAD_AGENTD3_MODEL": "agentic-low",
+            # the test server talks to the standing TEST daemon, never production
+            "DAZCAD_AGENTD3_BASE_URL": "http://127.0.0.1:18620",
         },
     )
 

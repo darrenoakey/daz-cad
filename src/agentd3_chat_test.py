@@ -38,6 +38,7 @@ def make_chat(
     source: str = TEST_SOURCE,
     timeout_seconds: float | None = 240.0,
     model: str = "agentic-low",
+    extra_config: str = "",
 ) -> Agentd3Chat:
     config_path = state_path.parent / "config.toml"
     timeout_line = f"timeout_seconds = {timeout_seconds}\n" if timeout_seconds else ""
@@ -47,6 +48,7 @@ def make_chat(
         f'source = "{source}"\n'
         f'model = "{model}"\n'
         f"{timeout_line}"
+        f"{extra_config}"
     )
     return Agentd3Chat(base_dir=base_dir, state_path=state_path, config_path=config_path)
 
@@ -520,8 +522,10 @@ async def test_next_chat_settles_outstanding_turn(tmp_path: Path):
     try:
         hasty = make_chat(state_path, timeout_seconds=1.0)
         try:
+            # a turn that outlives the 1s cap: a one-word reply can finish inside
+            # the cap on a fast daemon, which would make the timeout a race
             with pytest.raises(Agentd3ChatError, match="timed out"):
-                await hasty.send_message("Reply with exactly the word BANANA and nothing else.")
+                await hasty.send_message("Count slowly from 1 to 200, one number per line.")
         finally:
             await hasty.close()
         conversation_id = conversation_id_of(state_path)
@@ -534,6 +538,92 @@ async def test_next_chat_settles_outstanding_turn(tmp_path: Path):
         assert "CHERRY" in reply.upper()
         assert conversation_id_of(state_path) == conversation_id
     finally:
+        archive_conversation(conversation_id)
+
+
+# ##################################################################
+# test tracker reports stages and open tools
+# pure correlation: a started tool call is open until it completes, each stage
+# names what the turn is doing, and another turn's events are neither our stage
+# nor evidence that our turn is alive
+def test_tracker_reports_stages_and_open_tools():
+    tracker = TurnReplyTracker("msg-1")
+    tracker.feed({"type": "user.message", "data": {"message_id": "msg-1", "turn_id": "turn-1"}})
+    assert tracker.stage == "The assistant has your request"
+    tracker.feed(
+        {
+            "type": "tool.started",
+            "data": {
+                "turn_id": "turn-1",
+                "tool_call_id": "call-1",
+                "name": "write",
+                "arguments": {"path": "/tmp/models/box.js"},
+            },
+        }
+    )
+    assert tracker.open_tools == {"call-1": "write"}
+    assert tracker.stage == "Running write on box.js"
+    tracker.feed({"type": "tool.completed", "data": {"turn_id": "turn-1", "tool_call_id": "call-1"}})
+    assert tracker.open_tools == {}
+    tracker.feed({"type": "reasoning.delta", "data": {"turn_id": "turn-1", "delta": "hm"}})
+    assert tracker.stage == "The assistant is thinking"
+    other_turn = {"type": "tool.started", "data": {"turn_id": "turn-2", "tool_call_id": "x", "name": "bash"}}
+    assert not tracker.owns(other_turn)
+    tracker.feed(other_turn)
+    assert tracker.open_tools == {}
+    assert tracker.stage == "The assistant is thinking"
+
+
+# ##################################################################
+# test stalled tool turn fails loudly and is interrupted
+# a turn that goes silent while its shell tool is running must not hang the
+# chat: once the tool allowance passes, the client interrupts the daemon turn
+# and raises, so the editor shows an error instead of waiting forever
+async def test_stalled_turn_fails_loudly_and_is_interrupted(tmp_path: Path):
+    state_path = tmp_path / "agentd3-chat.json"
+    conversation_id = ""
+    chat = make_chat(state_path, timeout_seconds=None, extra_config="tool_stall_timeout_seconds = 4.0\n")
+    try:
+        with pytest.raises(Agentd3ChatError, match="stopped responding"):
+            await asyncio.wait_for(
+                chat.send_message(
+                    "Use the shell tool to run exactly `sleep 90`, wait for it to finish, then reply DONE."
+                ),
+                timeout=240,
+            )
+        conversation_id = conversation_id_of(state_path)
+        conversation: dict = {}
+        for _ in range(60):
+            conversation = await chat.fetch_conversation_required(conversation_id)
+            if not conversation.get("running"):
+                break
+            await asyncio.sleep(1.0)
+        assert not conversation.get("running"), conversation.get("status")
+    finally:
+        await chat.close()
+        archive_conversation(conversation_id)
+
+
+# ##################################################################
+# test progress reports turn stages in order
+# a real turn reports its stages as the daemon emits them: the first line is
+# the send, then the echo of our request, then the streamed reply
+async def test_progress_reports_turn_stages_in_order(tmp_path: Path):
+    state_path = tmp_path / "agentd3-chat.json"
+    conversation_id = ""
+    chat = make_chat(state_path)
+    stages: list[str] = []
+    try:
+        async with chat.exclusive_turn():
+            reply = await chat.send_message_locked("Reply with exactly the word PONG.", on_progress=stages.append)
+        conversation_id = conversation_id_of(state_path)
+        assert "PONG" in reply.upper(), reply
+        assert stages[0] == "Waiting for the assistant to pick up your request", stages[:3]
+        assert "The assistant has your request" in stages, stages
+        assert "The assistant is writing its reply" in stages, stages
+        assert stages.index("The assistant has your request") < stages.index("The assistant is writing its reply")
+    finally:
+        await chat.close()
         archive_conversation(conversation_id)
 
 
@@ -716,8 +806,9 @@ async def test_endpoint_serializes_same_file_chats(tmp_path: Path):
         version_one = f"// version-one marker alpha\n{base_code}"
         version_two = f"// version-two marker beta\n{base_code}"
         question = (
-            "Read the model file named in this message and reply with ONLY the exact text of its first line "
-            "comment - do not modify the file in any way."
+            "Call the Read tool on the model file named in this message now, and reply with ONLY the exact text of "
+            "its first line comment - do not modify the file in any way. Do not answer from an earlier turn: the "
+            "file may have changed since then."
         )
         try:
             async with server.lifespan(server.app):

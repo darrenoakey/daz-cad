@@ -3,6 +3,7 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -49,6 +50,13 @@ DEFAULT_TIMEOUT_SECONDS = None
 DEFAULT_SETTLE_TIMEOUT_SECONDS = 300.0
 EVENT_POLL_WAIT_SECONDS = 25.0
 SETTLE_POLL_WAIT_SECONDS = 10.0
+# a turn whose daemon events stop for this long is interrupted and failed; a
+# stalled daemon turn once left the editor waiting forever. a running tool
+# call gets the longer allowance because a shell command can be silent for minutes
+DEFAULT_STALL_TIMEOUT_SECONDS = 300.0
+DEFAULT_TOOL_STALL_TIMEOUT_SECONDS = 1800.0
+# silence this long is reported as progress so the wait is visible to the user
+SILENCE_NOTICE_SECONDS = 30.0
 # GETs are idempotent (the event cursor makes a re-poll return the same
 # events), so a read that hits a deploy-time front/daemon restart is retried
 # with backoff for this long before the failure is surfaced to the user
@@ -179,24 +187,57 @@ class TurnReplyTracker:
         self.reply_parts: list[str] = []
         self.completed_data: dict | None = None
         self.failure: Agentd3ChatError | None = None
+        # the latest human-readable stage of our turn, and the tool calls it has
+        # open (id -> name); an open tool may legitimately stay silent for minutes
+        self.stage = ""
+        self.open_tools: dict[str, str] = {}
 
     # ##################################################################
     # feed
     # folds one event into the tracker state
+    # owns turn
+    # true for events carrying our turn id, once that id is known
+    def owns_turn(self, data: dict) -> bool:
+        return bool(self.turn_id) and data.get("turn_id") == self.turn_id
+
+    # ##################################################################
+    # owns
+    # true for any event that shows our turn is alive: our own user.message
+    # echo, or any event carrying our turn id
+    def owns(self, event: dict) -> bool:
+        data = event.get("data") or {}
+        if event.get("type") == "user.message":
+            return data.get("message_id") == self.message_id
+        return self.owns_turn(data)
+
+    # ##################################################################
+    # feed
+    # folds one event into the tracker state and the stage it describes
     def feed(self, event: dict) -> None:
         event_type = event.get("type", "")
         data = event.get("data") or {}
         if event_type == "user.message" and data.get("message_id") == self.message_id:
             if not self.turn_id:
                 self.turn_id = str(data.get("turn_id", ""))
-        elif event_type == "message.completed" and self.turn_id and data.get("turn_id") == self.turn_id:
+            self.stage = "The assistant has your request"
+        elif event_type == "message.completed" and self.owns_turn(data):
             # a turn can speak more than once (answer, tool steps, then a
             # closing note); keeping only the last message drops the answer
             text = str(data.get("text") or "").strip()
             if text:
                 self.reply_parts.append(text)
-        elif event_type == "turn.completed" and self.turn_id and data.get("turn_id") == self.turn_id:
+        elif event_type == "turn.completed" and self.owns_turn(data):
             self.completed_data = data
+        elif event_type == "tool.started" and self.owns_turn(data):
+            self.open_tools[str(data.get("tool_call_id", ""))] = str(data.get("name", ""))
+            self.stage = tool_note(data)
+        elif event_type == "tool.completed" and self.owns_turn(data):
+            self.open_tools.pop(str(data.get("tool_call_id", "")), None)
+            self.stage = "The assistant is reviewing a tool result"
+        elif event_type == "reasoning.delta" and self.owns_turn(data):
+            self.stage = "The assistant is thinking"
+        elif event_type == "message.delta" and self.owns_turn(data):
+            self.stage = "The assistant is writing its reply"
         elif event_type == "error":
             self.consume_error_event(data)
 
@@ -239,6 +280,20 @@ class TurnReplyTracker:
 
 
 # ##################################################################
+# tool note
+# names the running tool and its target so the editor can say what the
+# assistant is doing, e.g. "Running write on bathroom.js"
+def tool_note(data: dict) -> str:
+    name = str(data.get("name") or "tool")
+    arguments = data.get("arguments") if isinstance(data.get("arguments"), dict) else {}
+    if arguments.get("path"):
+        return f"Running {name} on {Path(str(arguments['path'])).name}"
+    if arguments.get("command"):
+        return f"Running {name}: {str(arguments['command'])[:60]}"
+    return f"Running {name}"
+
+
+# ##################################################################
 # is settled
 # a conversation is safe to post into once no turn is running and nothing is
 # queued behind one. the status name is not enough: a turn that ended by
@@ -269,6 +324,10 @@ class Agentd3Chat:
         raw_timeout = merged.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
         self.timeout_seconds = float(raw_timeout) if raw_timeout else None
         self.settle_timeout_seconds = float(merged.get("settle_timeout_seconds", DEFAULT_SETTLE_TIMEOUT_SECONDS))
+        self.stall_timeout_seconds = float(merged.get("stall_timeout_seconds", DEFAULT_STALL_TIMEOUT_SECONDS))
+        self.tool_stall_timeout_seconds = float(
+            merged.get("tool_stall_timeout_seconds", DEFAULT_TOOL_STALL_TIMEOUT_SECONDS)
+        )
         self.read_retry_seconds = float(merged.get("read_retry_seconds", DEFAULT_READ_RETRY_SECONDS))
         self.source = str(merged.get("source", CONVERSATION_SOURCE))
         self.base_dir = base_dir.resolve()
@@ -643,18 +702,34 @@ class Agentd3Chat:
     # post-then-wait body of one chat turn; the caller MUST already hold the
     # chat lock (directly or via exclusive_turn) so the app can keep its
     # save-model-file / send / read-back sequence atomic
-    async def send_message_locked(self, text: str, conversation_id: str | None = None) -> str:
+    async def send_message_locked(
+        self,
+        text: str,
+        conversation_id: str | None = None,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> str:
         if conversation_id is None:
             conversation_id = await self.ensure_ready()
+        report = on_progress or (lambda _stage: None)
         cursor = await self.latest_event_seq(conversation_id)
         post = await self.post_message(conversation_id, text)
         tracker = TurnReplyTracker(post["message_id"])
+        report("Waiting for the assistant to pick up your request")
 
+        # silence is measured from our last sign of life on the turn; an open
+        # tool call earns the longer allowance, and a turn the daemon never
+        # admits is still bounded by the normal one
+        last_activity = time.monotonic()
         deadline = time.monotonic() + self.timeout_seconds if self.timeout_seconds else None
         while deadline is None or time.monotonic() < deadline:
             events, cursor = await self.poll_events(conversation_id, cursor)
             for event in events:
+                owned = tracker.owns(event)
                 tracker.feed(event)
+                if owned:
+                    last_activity = time.monotonic()
+                    if tracker.stage:
+                        report(tracker.stage)
                 if tracker.failure:
                     raise tracker.failure
                 if tracker.completed_data is not None:
@@ -673,6 +748,12 @@ class Agentd3Chat:
                     f"the assistant turn in conversation {conversation_id} stopped without a reply "
                     f"(daemon status {self.last_status!r}); retry your message"
                 )
+            silent_for = time.monotonic() - last_activity
+            limit = self.tool_stall_timeout_seconds if tracker.open_tools else self.stall_timeout_seconds
+            if silent_for >= limit:
+                await self.abort_stalled_turn(conversation_id, tracker, silent_for, limit)
+            if silent_for >= SILENCE_NOTICE_SECONDS:
+                report(f"No output from the assistant for {silent_for:.0f}s, still waiting")
         # an explicitly configured cap was hit; the daemon turn keeps running
         # unless we ask it to stop, so interrupt it now so the NEXT chat
         # usually finds an idle conversation instead of waiting out settle
@@ -694,3 +775,22 @@ class Agentd3Chat:
         conversation = await self.fetch_conversation_required(conversation_id)
         self.last_status = str(conversation.get("status", ""))
         return is_settled(conversation)
+
+    # ##################################################################
+    # abort stalled turn
+    # the daemon has gone silent on our turn past its allowance: request an
+    # interrupt so the turn stops, then fail loudly so the editor shows the
+    # error instead of waiting forever
+    async def abort_stalled_turn(
+        self, conversation_id: str, tracker: TurnReplyTracker, silent_for: float, limit: float
+    ) -> None:
+        where = f"turn {tracker.turn_id}" if tracker.turn_id else "the message queue"
+        message = (
+            f"the assistant stopped responding: no output for {silent_for:.0f}s (limit {limit:.0f}s) "
+            f"on {where} in conversation {conversation_id}; an interrupt was requested - send your message again"
+        )
+        try:
+            await self.interrupt_conversation(conversation_id)
+        except Agentd3ChatError as err:
+            raise Agentd3ChatError(f"{message}; the interrupt also failed: {err}") from err
+        raise Agentd3ChatError(message)

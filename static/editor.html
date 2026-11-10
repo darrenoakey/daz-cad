@@ -482,6 +482,27 @@
             border: 1px solid #f85149;
         }
 
+        .chat-message.queued {
+            opacity: 0.55;
+            border: 1px dashed #58a6ff;
+        }
+
+        .chat-queue-status {
+            padding: 6px 12px;
+            border-top: 1px solid #30363d;
+            background: #161b22;
+            color: #58a6ff;
+            font-size: 12px;
+        }
+
+        .chat-queue-status[hidden] {
+            display: none;
+        }
+
+        .chat-typing-text {
+            margin-left: 4px;
+        }
+
         .chat-input-area {
             display: flex;
             gap: 8px;
@@ -960,6 +981,7 @@
                     <span>CAD Assistant</span>
                 </div>
                 <div class="chat-messages" id="chat-messages"></div>
+                <div id="chat-queue-status" class="chat-queue-status" hidden></div>
                 <div class="chat-input-area">
                     <input type="text" id="chat-input" placeholder="Ask to modify the model..." disabled>
                     <button id="chat-send-btn" disabled>Send</button>

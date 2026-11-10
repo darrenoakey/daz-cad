@@ -1188,6 +1188,8 @@ def test_chat_message_endpoint(server):
     assert "response" in data
     assert len(data["response"]) > 0
     assert "file_changed" in data
+    # a turn that completes reports no error; a failed one reports why
+    assert data["error"] is None, data
     # the response should be a non-trivial reply (LLM output is non-deterministic,
     # so we only check it gave a substantive response, not specific keywords)
     assert len(data["response"]) > 10, f"Response too short: {data['response']}"

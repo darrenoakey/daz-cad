@@ -221,6 +221,8 @@ async def lifespan(_app: FastAPI):
         env_overrides["source"] = os.environ["DAZCAD_AGENTD3_SOURCE"]
     if os.environ.get("DAZCAD_AGENTD3_MODEL"):
         env_overrides["model"] = os.environ["DAZCAD_AGENTD3_MODEL"]
+    if os.environ.get("DAZCAD_AGENTD3_BASE_URL"):
+        env_overrides["base_url"] = os.environ["DAZCAD_AGENTD3_BASE_URL"]
     env_state = os.environ.get("DAZCAD_AGENTD3_STATE")
     agentd3_chat = Agentd3Chat(
         base_dir=BASE_DIR,
@@ -476,9 +478,14 @@ CHAT_JOB_RETENTION_SECONDS = 3600.0
 
 
 class ChatJob:
-    def __init__(self, task: asyncio.Task):
-        self.task = task
+    def __init__(self) -> None:
+        self.task: asyncio.Task | None = None
         self.finished_at: float | None = None
+        # the newest stage line from the agent turn, shown to the user while it runs
+        self.progress = "Starting"
+
+    def set_progress(self, stage: str) -> None:
+        self.progress = stage
 
 
 chat_jobs: dict[str, ChatJob] = {}
@@ -495,10 +502,17 @@ def prune_chat_jobs() -> None:
 
 
 # ##################################################################
+# describe error
+# an exception with an empty message still has to say what failed
+def describe_error(err: BaseException) -> str:
+    return str(err) or type(err).__name__
+
+
+# ##################################################################
 # run chat turn
 # sends one message to the cad assistant agent and returns the reply plus
 # any change the agent made to the model file
-async def run_chat_turn(request: ChatMessageRequest) -> dict:
+async def run_chat_turn(request: ChatMessageRequest, job: ChatJob) -> dict:
     safe_name = Path(request.current_file).name
     file_path = MODELS_DIR / safe_name
 
@@ -515,26 +529,30 @@ Please help them modify the CAD model as requested. Use the Read tool to see the
     # code is saved, the agent turn runs, and the updated file is read back -
     # all as one indivisible unit so a concurrent same-file request can never
     # overwrite the model file between this request's save and its agent turn
+    original_content = request.current_code
+    response_text = ""
     file_changed = False
     new_content = None
+    error = None
     try:
         async with agentd3_chat.exclusive_turn() as chat:
+            job.set_progress("Connecting to the assistant")
             conversation_id = await chat.ensure_ready()
-            file_path.write_text(request.current_code)
-            original_content = request.current_code
+            file_path.write_text(original_content)
+            try:
+                response_text = await chat.send_message_locked(prompt, conversation_id, on_progress=job.set_progress)
+            finally:
+                # the agent may have edited the file before a failure, so the read-back
+                # runs whenever this request saved the file, success or not
+                if file_path.exists():
+                    current_content = file_path.read_text()
+                    if current_content != original_content:
+                        file_changed = True
+                        new_content = current_content
+    except Exception as err:
+        error = describe_error(err)
 
-            response_text = await chat.send_message_locked(prompt, conversation_id)
-
-            # check if file was changed by agent, still under the same lock
-            if file_path.exists():
-                current_content = file_path.read_text()
-                if current_content != original_content:
-                    file_changed = True
-                    new_content = current_content
-    except Exception as e:
-        return {"response": f"Error communicating with assistant: {e!s}", "file_changed": False, "new_content": None}
-
-    return {"response": response_text, "file_changed": file_changed, "new_content": new_content}
+    return {"response": response_text, "file_changed": file_changed, "new_content": new_content, "error": error}
 
 
 # ##################################################################
@@ -544,7 +562,8 @@ Please help them modify the CAD model as requested. Use the Read tool to see the
 async def chat_message(request: ChatMessageRequest):
     prune_chat_jobs()
     job_id = uuid.uuid4().hex
-    job = ChatJob(asyncio.create_task(run_chat_turn(request)))
+    job = ChatJob()
+    job.task = asyncio.create_task(run_chat_turn(request, job))
     job.task.add_done_callback(lambda _task: setattr(job, "finished_at", time.monotonic()))
     chat_jobs[job_id] = job
     return {"job_id": job_id}
@@ -559,9 +578,15 @@ async def chat_job(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown chat job (the server may have restarted)")
     if not job.task.done():
-        return {"status": "running"}
+        return {"status": "running", "progress": job.progress}
     if job.task.cancelled():
-        return {"status": "done", "response": "Error communicating with assistant: the chat job was cancelled", "file_changed": False, "new_content": None}
+        return {
+            "status": "done",
+            "response": "",
+            "file_changed": False,
+            "new_content": None,
+            "error": "the chat job was cancelled",
+        }
     return {"status": "done", **job.task.result()}
 
 
